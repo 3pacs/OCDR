@@ -1,0 +1,59 @@
+/* OCDR — custom styles */
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f8f9fa;
+}
+
+main {
+  flex: 1;
+}
+
+/* Stat cards */
+.stat-card {
+  border-radius: .75rem;
+  border: none;
+  box-shadow: 0 2px 6px rgba(0,0,0,.08);
+  transition: transform .15s ease;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Vendor badge strip */
+.vendor-badge {
+  font-size: .75rem;
+  letter-spacing: .03em;
+  padding: .3em .7em;
+  border-radius: 1rem;
+}
+
+/* Upload drop zone */
+#drop-zone {
+  border: 2px dashed #adb5bd;
+  border-radius: .75rem;
+  padding: 2.5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  background: #fff;
+}
+#drop-zone.drag-over {
+  border-color: #0d6efd;
+  background: #e9f0ff;
+}
+#drop-zone input[type=file] {
+  display: none;
+}
+
+/* Table tweaks */
+.table-hover tbody tr:hover {
+  background-color: #eef2ff;
+}
+
+/* Status badge colours */
+.status-pending    { background-color: #ffc107; color: #000; }
+.status-ordered    { background-color: #0dcaf0; color: #000; }
+.status-received   { background-color: #198754; color: #fff; }
+.status-cancelled  { background-color: #dc3545; color: #fff; }

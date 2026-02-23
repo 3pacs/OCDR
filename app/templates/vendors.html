@@ -1,0 +1,292 @@
+{% extends "base.html" %}
+{% block title %}Vendors — OCDR{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0"><i class="bi bi-shop me-2 text-primary"></i>Vendors</h2>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addVendorModal">
+    <i class="bi bi-plus-lg me-1"></i>Add Vendor
+  </button>
+</div>
+
+{% for vendor in vendors %}
+<div class="card mb-4" id="vendor-{{ vendor.id }}">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <span class="fw-bold fs-5">{{ vendor.name }}</span>
+      <span class="badge bg-primary vendor-badge ms-2">{{ vendor.slug }}</span>
+      {% if not vendor.active %}
+      <span class="badge bg-secondary ms-1">Inactive</span>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary"
+              onclick="openEditVendor({{ vendor.to_dict()|tojson }})">
+        <i class="bi bi-pencil"></i>
+      </button>
+      <a href="{{ url_for('main.imports_page') }}?vendor_id={{ vendor.id }}"
+         class="btn btn-sm btn-outline-primary">
+        <i class="bi bi-cloud-upload me-1"></i>Import
+      </a>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row g-2 mb-3">
+      {% if vendor.contact_email %}
+      <div class="col-auto">
+        <small class="text-muted"><i class="bi bi-envelope me-1"></i>{{ vendor.contact_email }}</small>
+      </div>
+      {% endif %}
+      {% if vendor.contact_phone %}
+      <div class="col-auto">
+        <small class="text-muted"><i class="bi bi-telephone me-1"></i>{{ vendor.contact_phone }}</small>
+      </div>
+      {% endif %}
+      {% if vendor.website %}
+      <div class="col-auto">
+        <small><a href="{{ vendor.website }}" target="_blank" class="text-muted">
+          <i class="bi bi-globe me-1"></i>{{ vendor.website }}
+        </a></small>
+      </div>
+      {% endif %}
+      {% if vendor.account_number %}
+      <div class="col-auto">
+        <small class="text-muted"><i class="bi bi-hash me-1"></i>Acct: {{ vendor.account_number }}</small>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Purchases table for this vendor -->
+    <h6 class="fw-semibold mt-2">Purchase History</h6>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover" id="purchases-{{ vendor.id }}">
+        <thead class="table-light">
+          <tr>
+            <th>Order #</th>
+            <th>Invoice #</th>
+            <th>Order Date</th>
+            <th>Status</th>
+            <th>Items</th>
+            <th class="text-end">Total</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody data-vendor="{{ vendor.id }}">
+          <tr><td colspan="7" class="text-center text-muted py-2">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <button class="btn btn-sm btn-outline-success"
+            onclick="openAddPurchase({{ vendor.id }})">
+      <i class="bi bi-plus me-1"></i>Add Purchase
+    </button>
+  </div>
+</div>
+{% else %}
+<p class="text-muted">No vendors found.</p>
+{% endfor %}
+
+<!-- ======================== Add Vendor Modal ======================== -->
+<div class="modal fade" id="addVendorModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add New Vendor</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="addVendorForm">
+          <div class="mb-3">
+            <label class="form-label">Name <span class="text-danger">*</span></label>
+            <input type="text" class="form-control" name="name" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Slug <span class="text-danger">*</span>
+              <small class="text-muted">(lowercase, no spaces)</small>
+            </label>
+            <input type="text" class="form-control" name="slug" required
+                   pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, hyphens only">
+          </div>
+          <div class="row g-2">
+            <div class="col">
+              <label class="form-label">Contact Name</label>
+              <input type="text" class="form-control" name="contact_name">
+            </div>
+            <div class="col">
+              <label class="form-label">Contact Email</label>
+              <input type="email" class="form-control" name="contact_email">
+            </div>
+          </div>
+          <div class="row g-2 mt-1">
+            <div class="col">
+              <label class="form-label">Phone</label>
+              <input type="tel" class="form-control" name="contact_phone">
+            </div>
+            <div class="col">
+              <label class="form-label">Account #</label>
+              <input type="text" class="form-control" name="account_number">
+            </div>
+          </div>
+          <div class="mb-3 mt-2">
+            <label class="form-label">Website</label>
+            <input type="url" class="form-control" name="website">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            <textarea class="form-control" name="notes" rows="2"></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitAddVendor()">Save Vendor</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== Add Purchase Modal ======================== -->
+<div class="modal fade" id="addPurchaseModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Add Purchase</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="purchaseVendorId">
+        <div class="row g-2 mb-3">
+          <div class="col">
+            <label class="form-label">Order #</label>
+            <input type="text" class="form-control" id="purchaseOrderNum">
+          </div>
+          <div class="col">
+            <label class="form-label">Invoice #</label>
+            <input type="text" class="form-control" id="purchaseInvoiceNum">
+          </div>
+          <div class="col">
+            <label class="form-label">Order Date</label>
+            <input type="date" class="form-control" id="purchaseOrderDate">
+          </div>
+          <div class="col">
+            <label class="form-label">Status</label>
+            <select class="form-select" id="purchaseStatus">
+              <option>pending</option>
+              <option>ordered</option>
+              <option>received</option>
+              <option>cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col"><label class="form-label">Subtotal</label>
+            <input type="number" step="0.01" class="form-control" id="purchaseSubtotal" value="0"></div>
+          <div class="col"><label class="form-label">Tax</label>
+            <input type="number" step="0.01" class="form-control" id="purchaseTax" value="0"></div>
+          <div class="col"><label class="form-label">Shipping</label>
+            <input type="number" step="0.01" class="form-control" id="purchaseShipping" value="0"></div>
+          <div class="col"><label class="form-label">Total</label>
+            <input type="number" step="0.01" class="form-control" id="purchaseTotal" value="0"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Notes</label>
+          <textarea class="form-control" id="purchaseNotes" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-success" onclick="submitAddPurchase()">Save Purchase</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load purchases for all vendors on page load
+document.querySelectorAll("tbody[data-vendor]").forEach(async tbody => {
+  const vid = tbody.dataset.vendor;
+  try {
+    const purchases = await apiRequest("GET", `/api/vendors/${vid}/purchases`);
+    if (purchases.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-2">No purchases yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = purchases.map(p => `
+      <tr>
+        <td>${p.order_number || '—'}</td>
+        <td>${p.invoice_number || '—'}</td>
+        <td>${p.order_date ? formatDate(p.order_date) : '—'}</td>
+        <td>${statusBadge(p.status)}</td>
+        <td>${(p.items || []).length}</td>
+        <td class="text-end">${formatCurrency(p.total)}</td>
+        <td></td>
+      </tr>`).join("");
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${e.message}</td></tr>`;
+  }
+});
+
+function openAddPurchase(vendorId) {
+  document.getElementById("purchaseVendorId").value = vendorId;
+  new bootstrap.Modal(document.getElementById("addPurchaseModal")).show();
+}
+
+async function submitAddPurchase() {
+  const vid = document.getElementById("purchaseVendorId").value;
+  const data = {
+    order_number: document.getElementById("purchaseOrderNum").value,
+    invoice_number: document.getElementById("purchaseInvoiceNum").value,
+    order_date: document.getElementById("purchaseOrderDate").value,
+    status: document.getElementById("purchaseStatus").value,
+    subtotal: parseFloat(document.getElementById("purchaseSubtotal").value) || 0,
+    tax: parseFloat(document.getElementById("purchaseTax").value) || 0,
+    shipping: parseFloat(document.getElementById("purchaseShipping").value) || 0,
+    total: parseFloat(document.getElementById("purchaseTotal").value) || 0,
+    notes: document.getElementById("purchaseNotes").value,
+    items: [],
+  };
+  try {
+    await apiRequest("POST", `/api/vendors/${vid}/purchases`, data);
+    location.reload();
+  } catch(e) {
+    alert("Error saving purchase: " + e.message);
+  }
+}
+
+async function submitAddVendor() {
+  const form = document.getElementById("addVendorForm");
+  const fd = new FormData(form);
+  const data = Object.fromEntries(fd.entries());
+  try {
+    await apiRequest("POST", "/api/vendors/", data);
+    location.reload();
+  } catch(e) {
+    alert("Error adding vendor: " + e.message);
+  }
+}
+
+function openEditVendor(vendor) {
+  // Populate add vendor form for editing — simple approach
+  const form = document.getElementById("addVendorForm");
+  form.name.value = vendor.name;
+  form.slug.value = vendor.slug;
+  form.contact_name.value = vendor.contact_name || "";
+  form.contact_email.value = vendor.contact_email || "";
+  form.contact_phone.value = vendor.contact_phone || "";
+  form.account_number.value = vendor.account_number || "";
+  form.website.value = vendor.website || "";
+  form.notes.value = vendor.notes || "";
+  const modal = new bootstrap.Modal(document.getElementById("addVendorModal"));
+  document.querySelector("#addVendorModal .modal-title").textContent = "Edit Vendor";
+  document.querySelector("#addVendorModal .btn-primary").onclick = async () => {
+    const fd = new FormData(form);
+    const data = Object.fromEntries(fd.entries());
+    await apiRequest("PUT", `/api/vendors/${vendor.id}`, data);
+    location.reload();
+  };
+  modal.show();
+}
+</script>
+{% endblock %}

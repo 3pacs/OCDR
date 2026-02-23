@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — OCDR{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0"><i class="bi bi-speedometer2 me-2 text-primary"></i>Dashboard</h2>
+  <a href="{{ url_for('main.imports_page') }}" class="btn btn-primary">
+    <i class="bi bi-cloud-upload me-1"></i>Import File
+  </a>
+</div>
+
+<!-- Stat row -->
+<div class="row g-3 mb-4" id="stat-cards">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
+            <i class="bi bi-shop fs-4 text-primary"></i>
+          </div>
+          <div>
+            <div class="text-muted small">Active Vendors</div>
+            <div class="fs-3 fw-bold">{{ vendors|length }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="rounded-circle bg-success bg-opacity-10 p-3 me-3">
+            <i class="bi bi-cart-check fs-4 text-success"></i>
+          </div>
+          <div>
+            <div class="text-muted small">Recent Orders</div>
+            <div class="fs-3 fw-bold" id="stat-orders">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="rounded-circle bg-warning bg-opacity-10 p-3 me-3">
+            <i class="bi bi-currency-dollar fs-4 text-warning"></i>
+          </div>
+          <div>
+            <div class="text-muted small">Total Spend (all time)</div>
+            <div class="fs-3 fw-bold" id="stat-spend">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="rounded-circle bg-info bg-opacity-10 p-3 me-3">
+            <i class="bi bi-file-earmark-text fs-4 text-info"></i>
+          </div>
+          <div>
+            <div class="text-muted small">Documents</div>
+            <div class="fs-3 fw-bold" id="stat-docs">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Vendors summary -->
+<div class="row g-4 mb-4">
+  {% for vendor in vendors %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card stat-card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">{{ vendor.name }}</span>
+        <span class="badge bg-primary vendor-badge">{{ vendor.slug }}</span>
+      </div>
+      <div class="card-body">
+        {% if vendor.website %}
+        <a href="{{ vendor.website }}" target="_blank" class="text-decoration-none small text-muted">
+          <i class="bi bi-globe me-1"></i>{{ vendor.website }}
+        </a><br>
+        {% endif %}
+        {% if vendor.contact_email %}
+        <small class="text-muted"><i class="bi bi-envelope me-1"></i>{{ vendor.contact_email }}</small><br>
+        {% endif %}
+        {% if vendor.account_number %}
+        <small class="text-muted"><i class="bi bi-hash me-1"></i>Acct: {{ vendor.account_number }}</small><br>
+        {% endif %}
+        {% if vendor.notes %}
+        <p class="text-muted small mt-2 mb-0">{{ vendor.notes }}</p>
+        {% endif %}
+      </div>
+      <div class="card-footer bg-transparent d-flex gap-2">
+        <a href="{{ url_for('main.vendors_page') }}#vendor-{{ vendor.id }}" class="btn btn-sm btn-outline-primary">
+          View Purchases
+        </a>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="col-12">
+    <p class="text-muted">No vendors configured.</p>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Recent purchases -->
+<div class="card">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-clock-history me-1"></i>Recent Purchases
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Order #</th>
+          <th>Vendor</th>
+          <th>Date</th>
+          <th>Status</th>
+          <th class="text-end">Total</th>
+        </tr>
+      </thead>
+      <tbody id="recent-purchases-body">
+        {% for p in recent_purchases %}
+        <tr>
+          <td>{{ p.order_number or '—' }}</td>
+          <td>
+            {% if p.vendor %}
+              <span class="badge bg-secondary vendor-badge">{{ p.vendor.name }}</span>
+            {% endif %}
+          </td>
+          <td>{{ p.order_date or '—' }}</td>
+          <td>
+            <span class="badge status-{{ p.status }}">{{ p.status }}</span>
+          </td>
+          <td class="text-end">${{ "%.2f"|format(p.total or 0) }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-center text-muted py-3">No purchases yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load aggregate stats via API
+async function loadStats() {
+  try {
+    const vendors = await apiRequest("GET", "/api/vendors/");
+    document.getElementById("stat-orders").textContent = "—";
+
+    let totalSpend = 0;
+    for (const v of vendors) {
+      const purchases = await apiRequest("GET", `/api/vendors/${v.id}/purchases`);
+      totalSpend += purchases.reduce((s, p) => s + (p.total || 0), 0);
+    }
+    document.getElementById("stat-spend").textContent = formatCurrency(totalSpend);
+
+    const docs = await apiRequest("GET", "/api/imports/documents");
+    document.getElementById("stat-docs").textContent = docs.length;
+  } catch (e) {
+    console.warn("Stats load error:", e);
+  }
+}
+loadStats();
+</script>
+{% endblock %}
