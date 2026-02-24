@@ -1,0 +1,427 @@
+{% extends "base.html" %}
+{% block title %}Reconciliation — OCDR{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0"><i class="bi bi-bank me-2 text-primary"></i>Bank Reconciliation</h2>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#uploadStmtModal">
+      <i class="bi bi-upload me-1"></i>Upload Statement
+    </button>
+    <button class="btn btn-primary" onclick="runAutoReconcile()">
+      <i class="bi bi-arrow-repeat me-1"></i>Auto-Reconcile
+    </button>
+  </div>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4" id="recon-summary-cards">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-success" id="s-reconciled">—</div>
+        <div class="text-muted small">Payments Reconciled</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-warning" id="s-unreconciled">—</div>
+        <div class="text-muted small">Unreconciled Payments</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-info" id="s-bank-matched">—</div>
+        <div class="text-muted small">Bank Txns Matched</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card stat-card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold text-danger" id="s-unmatched-amt">—</div>
+        <div class="text-muted small">Unreconciled Amount</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Statement selector -->
+<div class="card mb-4">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-journal-text me-1"></i>Bank Statements</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr><th>Account</th><th>Period</th><th>Format</th><th>Transactions</th><th>Imported</th><th></th></tr>
+      </thead>
+      <tbody id="statements-body">
+        <tr><td colspan="6" class="text-center text-muted py-3">No statements imported yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Side-by-side unmatched table -->
+<div class="row g-4 mb-4">
+  <!-- Unmatched payments -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold bg-warning bg-opacity-25">
+        <i class="bi bi-exclamation-triangle me-1 text-warning"></i>
+        Unreconciled Payments
+        <span class="badge bg-warning text-dark ms-1" id="unmatched-pay-count">0</span>
+      </div>
+      <div class="card-body p-0 overflow-auto" style="max-height:400px">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light sticky-top">
+            <tr><th>Source</th><th>Payer</th><th>Date</th><th class="text-end">Amount</th><th></th></tr>
+          </thead>
+          <tbody id="unmatched-payments-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unmatched bank credits -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header fw-semibold bg-info bg-opacity-10">
+        <i class="bi bi-bank me-1 text-info"></i>
+        Unmatched Bank Credits
+        <span class="badge bg-info text-dark ms-1" id="unmatched-txn-count">0</span>
+      </div>
+      <div class="card-body p-0 overflow-auto" style="max-height:400px">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light sticky-top">
+            <tr><th>Date</th><th>Description</th><th class="text-end">Amount</th><th></th></tr>
+          </thead>
+          <tbody id="unmatched-txns-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reconciled matches -->
+<div class="card">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-check-circle me-1 text-success"></i>Reconciliation Matches
+    <span class="badge bg-success ms-1" id="match-count">0</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr><th>Match Type</th><th>Confidence</th><th>Payment Source</th><th>Amount</th><th>Bank Description</th><th>Date</th><th></th></tr>
+      </thead>
+      <tbody id="matches-body">
+        <tr><td colspan="7" class="text-center text-muted py-3">No matches yet. Import a statement and run Auto-Reconcile.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- =================== Upload Statement Modal =================== -->
+<div class="modal fade" id="uploadStmtModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Upload Bank Statement</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Statement File <span class="text-danger">*</span></label>
+          <input type="file" class="form-control" id="stmtFile"
+                 accept=".csv,.ofx,.qfx">
+          <div class="form-text">Supported: CSV, OFX (.ofx), QFX (.qfx)</div>
+        </div>
+        <div class="row g-2">
+          <div class="col">
+            <label class="form-label">Account Name</label>
+            <input type="text" class="form-control" id="stmtAcctName"
+                   placeholder="e.g. Business Checking">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Last 4 Digits</label>
+            <input type="text" class="form-control" id="stmtLast4"
+                   maxlength="4" placeholder="1234">
+          </div>
+        </div>
+        <div id="stmt-upload-result" class="mt-3"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" onclick="uploadStatement()">Upload</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =================== Manual Match Modal =================== -->
+<div class="modal fade" id="matchModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Manual Match</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="matchPaymentId">
+        <p class="text-muted small mb-3">Select a bank transaction to match against this payment:</p>
+        <div id="match-txn-list" class="overflow-auto" style="max-height:300px"></div>
+        <div class="mt-3">
+          <label class="form-label">Notes</label>
+          <input type="text" class="form-control" id="matchNotes" placeholder="Optional match notes">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="confirmMatchBtn" disabled onclick="confirmManualMatch()">
+          Confirm Match
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let unmatchedPayments = [];
+let unmatchedTxns = [];
+let selectedBankTxId = null;
+
+async function loadAll() {
+  await Promise.all([loadSummary(), loadStatements(), loadUnmatched(), loadMatches()]);
+}
+
+async function loadSummary() {
+  try {
+    const s = await apiRequest("GET", "/api/reconciliation/summary");
+    document.getElementById("s-reconciled").textContent = s.payments_reconciled;
+    document.getElementById("s-unreconciled").textContent = s.payments_unreconciled;
+    document.getElementById("s-bank-matched").textContent = s.bank_credits_matched;
+    document.getElementById("s-unmatched-amt").textContent = formatCurrency(s.total_unreconciled_amount);
+  } catch(e) { console.warn(e); }
+}
+
+async function loadStatements() {
+  try {
+    const stmts = await apiRequest("GET", "/api/reconciliation/statements");
+    const tbody = document.getElementById("statements-body");
+    if (!stmts.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">No statements yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = stmts.map(s => `
+      <tr>
+        <td>${s.account_name || '—'} ${s.account_number_last4 ? `(…${s.account_number_last4})` : ''}</td>
+        <td>${s.statement_start ? formatDate(s.statement_start) : '?'} – ${s.statement_end ? formatDate(s.statement_end) : '?'}</td>
+        <td><span class="badge bg-secondary">${s.file_format}</span></td>
+        <td id="txn-count-${s.id}">—</td>
+        <td>${formatDate(s.imported_at)}</td>
+        <td>
+          <button class="btn btn-xs btn-outline-primary btn-sm" onclick="reconcileStatement(${s.id})">
+            <i class="bi bi-arrow-repeat"></i>
+          </button>
+          <button class="btn btn-xs btn-outline-danger btn-sm ms-1" onclick="deleteStatement(${s.id})">
+            <i class="bi bi-trash"></i>
+          </button>
+        </td>
+      </tr>`).join("");
+    // Load txn counts
+    for (const s of stmts) {
+      apiRequest("GET", `/api/reconciliation/statements/${s.id}/transactions`)
+        .then(txns => {
+          const el = document.getElementById(`txn-count-${s.id}`);
+          if (el) el.textContent = txns.length;
+        }).catch(() => {});
+    }
+  } catch(e) { console.warn(e); }
+}
+
+async function loadUnmatched() {
+  try {
+    const data = await apiRequest("GET", "/api/reconciliation/unmatched");
+    unmatchedPayments = data.unmatched_payments;
+    unmatchedTxns = data.unmatched_bank_transactions;
+
+    document.getElementById("unmatched-pay-count").textContent = unmatchedPayments.length;
+    document.getElementById("unmatched-txn-count").textContent = unmatchedTxns.length;
+
+    // Render unmatched payments
+    const payTbody = document.getElementById("unmatched-payments-body");
+    payTbody.innerHTML = unmatchedPayments.length
+      ? unmatchedPayments.map(p => `
+          <tr>
+            <td><span class="badge bg-secondary">${p.source}</span></td>
+            <td class="small">${p.payer_name || '—'}</td>
+            <td>${p.payment_date ? formatDate(p.payment_date) : '—'}</td>
+            <td class="text-end fw-bold">${formatCurrency(p.amount)}</td>
+            <td>
+              <button class="btn btn-xs btn-sm btn-outline-primary"
+                      onclick="openMatchModal(${p.id})">Match</button>
+            </td>
+          </tr>`).join("")
+      : `<tr><td colspan="5" class="text-center text-muted py-3">None — great!</td></tr>`;
+
+    // Render unmatched bank transactions
+    const txnTbody = document.getElementById("unmatched-txns-body");
+    txnTbody.innerHTML = unmatchedTxns.length
+      ? unmatchedTxns.map(t => `
+          <tr>
+            <td>${t.transaction_date ? formatDate(t.transaction_date) : '—'}</td>
+            <td class="small">${(t.description || '').slice(0, 45)}</td>
+            <td class="text-end fw-bold">${formatCurrency(t.amount)}</td>
+            <td>
+              <button class="btn btn-xs btn-sm btn-outline-secondary"
+                      onclick="ignoreTransaction(${t.id})">Ignore</button>
+            </td>
+          </tr>`).join("")
+      : `<tr><td colspan="4" class="text-center text-muted py-3">None</td></tr>`;
+  } catch(e) { console.warn(e); }
+}
+
+async function loadMatches() {
+  try {
+    const matches = await apiRequest("GET", "/api/reconciliation/matches");
+    document.getElementById("match-count").textContent = matches.length;
+    const tbody = document.getElementById("matches-body");
+    tbody.innerHTML = matches.length
+      ? matches.map(m => `
+          <tr>
+            <td><span class="badge ${m.match_type==='auto'?'bg-info text-dark':'bg-success'}">${m.match_type}</span></td>
+            <td>
+              <div class="progress" style="height:6px;width:60px">
+                <div class="progress-bar bg-success" style="width:${(m.confidence*100).toFixed(0)}%"></div>
+              </div>
+              <small>${(m.confidence*100).toFixed(0)}%</small>
+            </td>
+            <td class="small">${m.payment_id ? `Pay #${m.payment_id}` : '—'}</td>
+            <td class="fw-bold" id="match-amt-${m.id}">—</td>
+            <td class="small" id="match-desc-${m.id}">—</td>
+            <td>${formatDate(m.matched_at)}</td>
+            <td>
+              <button class="btn btn-xs btn-sm btn-outline-danger"
+                      onclick="deleteMatch(${m.id})">Unmatch</button>
+            </td>
+          </tr>`).join("")
+      : `<tr><td colspan="7" class="text-center text-muted py-3">No matches yet.</td></tr>`;
+  } catch(e) { console.warn(e); }
+}
+
+async function runAutoReconcile() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running...';
+  try {
+    const result = await apiRequest("POST", "/api/reconciliation/run", {});
+    alert(`Auto-reconcile complete!\nMatched: ${result.matched}\nUnmatched payments: ${result.unmatched_payments}\nUnmatched bank txns: ${result.unmatched_bank_txns}`);
+    loadAll();
+  } catch(e) {
+    alert("Error: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Auto-Reconcile';
+  }
+}
+
+async function reconcileStatement(stmtId) {
+  try {
+    const result = await apiRequest("POST", "/api/reconciliation/run", { statement_id: stmtId });
+    alert(`Matched: ${result.matched}, Unmatched: ${result.unmatched_payments}`);
+    loadAll();
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+async function deleteStatement(stmtId) {
+  if (!confirm("Delete this statement and all its transactions?")) return;
+  try {
+    await apiRequest("DELETE", `/api/reconciliation/statements/${stmtId}`);
+    loadAll();
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+async function uploadStatement() {
+  const fileInput = document.getElementById("stmtFile");
+  if (!fileInput.files[0]) { alert("Please select a file."); return; }
+  const fd = new FormData();
+  fd.append("file", fileInput.files[0]);
+  fd.append("account_name", document.getElementById("stmtAcctName").value);
+  fd.append("account_last4", document.getElementById("stmtLast4").value);
+
+  const resultEl = document.getElementById("stmt-upload-result");
+  resultEl.innerHTML = '<div class="text-muted small">Uploading...</div>';
+  try {
+    const res = await fetch("/api/reconciliation/statements/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    resultEl.innerHTML = `<div class="alert alert-success p-2 small">
+      Imported ${data.transactions_imported} transactions.</div>`;
+    loadAll();
+  } catch(e) {
+    resultEl.innerHTML = `<div class="alert alert-danger p-2 small">${e.message}</div>`;
+  }
+}
+
+function openMatchModal(paymentId) {
+  document.getElementById("matchPaymentId").value = paymentId;
+  selectedBankTxId = null;
+  document.getElementById("confirmMatchBtn").disabled = true;
+
+  const listEl = document.getElementById("match-txn-list");
+  listEl.innerHTML = unmatchedTxns.map(t => `
+    <div class="list-group-item list-group-item-action d-flex justify-content-between"
+         style="cursor:pointer" onclick="selectBankTx(${t.id}, this)">
+      <div>
+        <div class="fw-semibold small">${t.description || '—'}</div>
+        <div class="text-muted small">${t.transaction_date ? formatDate(t.transaction_date) : '—'}</div>
+      </div>
+      <div class="fw-bold text-success">${formatCurrency(t.amount)}</div>
+    </div>`).join("") || "<p class='text-muted text-center py-3'>No unmatched bank credits available.</p>";
+
+  new bootstrap.Modal(document.getElementById("matchModal")).show();
+}
+
+function selectBankTx(id, el) {
+  document.querySelectorAll("#match-txn-list .list-group-item").forEach(e => e.classList.remove("active"));
+  el.classList.add("active");
+  selectedBankTxId = id;
+  document.getElementById("confirmMatchBtn").disabled = false;
+}
+
+async function confirmManualMatch() {
+  const paymentId = parseInt(document.getElementById("matchPaymentId").value);
+  const notes = document.getElementById("matchNotes").value;
+  try {
+    await apiRequest("POST", "/api/reconciliation/match",
+                     { payment_id: paymentId, bank_transaction_id: selectedBankTxId, notes });
+    bootstrap.Modal.getInstance(document.getElementById("matchModal")).hide();
+    loadAll();
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+async function deleteMatch(matchId) {
+  if (!confirm("Remove this match? Both records will return to unmatched.")) return;
+  try {
+    await apiRequest("DELETE", `/api/reconciliation/match/${matchId}`);
+    loadAll();
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+async function ignoreTransaction(txId) {
+  try {
+    await apiRequest("PUT", `/api/reconciliation/transactions/${txId}/ignore`);
+    loadUnmatched();
+  } catch(e) { alert("Error: " + e.message); }
+}
+
+loadAll();
+</script>
+{% endblock %}

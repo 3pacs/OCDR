@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block title %}Connectors — OCDR{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0"><i class="bi bi-plug me-2 text-primary"></i>Site Connectors</h2>
+  <button class="btn btn-outline-primary" onclick="syncAll()">
+    <i class="bi bi-arrow-repeat me-1"></i>Sync All
+  </button>
+</div>
+
+<div class="alert alert-info d-flex align-items-center mb-4">
+  <i class="bi bi-info-circle-fill me-2"></i>
+  <div>Credentials are encrypted at rest using AES-256 (Fernet). They are never stored in plain text.</div>
+</div>
+
+<!-- Connector cards grid -->
+<div class="row g-4 mb-5" id="connectors-grid">
+  <div class="col-12 text-center text-muted py-4">
+    <div class="spinner-border spinner-border-sm me-2"></div>Loading connectors...
+  </div>
+</div>
+
+<!-- Sync Log -->
+<div class="card">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-clock-history me-1"></i>Recent Sync Activity</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadLogs()">
+      <i class="bi bi-arrow-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Connector</th><th>Status</th><th>Fetched</th><th>New</th><th>Started</th><th>Duration</th><th>Error</th>
+        </tr>
+      </thead>
+      <tbody id="sync-log-body">
+        <tr><td colspan="7" class="text-center text-muted py-3">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Payments from connectors -->
+<div class="card mt-4">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-cash-stack me-1"></i>Imported Payments
+    <span class="badge bg-secondary ms-2" id="payment-count">0</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr><th>Source</th><th>Payer</th><th>Check/EFT #</th><th>Date</th><th class="text-end">Amount</th><th>Status</th></tr>
+      </thead>
+      <tbody id="payments-body">
+        <tr><td colspan="6" class="text-center text-muted py-3">No payments imported yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ======================== Credential Modal ======================== -->
+<div class="modal fade" id="credModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="credModalTitle">Configure Connector</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="credSlug">
+        <div class="mb-3">
+          <label class="form-label">Username / Email <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="credUsername" autocomplete="off">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Password <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="password" class="form-control" id="credPassword" autocomplete="new-password">
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePwd()"><i class="bi bi-eye" id="pwd-eye"></i></button>
+          </div>
+        </div>
+        <div class="mb-3" id="extraFieldsContainer">
+          <!-- Connector-specific extras injected here -->
+        </div>
+        <div class="alert alert-warning d-flex align-items-center p-2 small">
+          <i class="bi bi-lock-fill me-2"></i>
+          Credentials are encrypted with AES-256 before storage.
+        </div>
+      </div>
+      <div class="modal-footer d-flex justify-content-between">
+        <button class="btn btn-outline-danger btn-sm" onclick="removeCredentials()">
+          <i class="bi bi-trash me-1"></i>Remove
+        </button>
+        <div>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-primary" onclick="saveCredentials()">Save Credentials</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Extra fields shown for specific connectors
+const EXTRA_FIELDS = {
+  candalis: [
+    { key: "base_url", label: "Practice Base URL", placeholder: "https://yourpractice.candalis.com", type: "url" }
+  ],
+  purview: [
+    { key: "base_url", label: "Purview Base URL", placeholder: "https://app.purview.net", type: "url" },
+    { key: "login_url", label: "Login URL (if different)", placeholder: "", type: "url" }
+  ],
+};
+
+let currentConnectors = [];
+
+async function loadConnectors() {
+  try {
+    currentConnectors = await apiRequest("GET", "/api/connectors/");
+    renderConnectors(currentConnectors);
+  } catch(e) {
+    document.getElementById("connectors-grid").innerHTML =
+      `<div class="col-12 text-danger">Failed to load connectors: ${e.message}</div>`;
+  }
+}
+
+function renderConnectors(connectors) {
+  const grid = document.getElementById("connectors-grid");
+  grid.innerHTML = connectors.map(c => `
+    <div class="col-sm-6 col-xl-4">
+      <div class="card stat-card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">${c.display_name}</span>
+          <span class="badge ${c.configured ? 'bg-success' : 'bg-secondary'}">
+            ${c.configured ? 'Configured' : 'Not set up'}
+          </span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-2">
+            <i class="bi bi-globe me-1"></i>
+            <a href="${c.base_url || '#'}" target="_blank" class="text-muted">${c.base_url || '—'}</a>
+          </p>
+          ${c.last_sync_at ? `<p class="text-muted small mb-0">Last sync: ${formatDate(c.last_sync_at)}</p>` : ''}
+        </div>
+        <div class="card-footer bg-transparent d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary flex-fill"
+                  onclick="openCredModal('${c.slug}', '${c.display_name}')">
+            <i class="bi bi-key me-1"></i>${c.configured ? 'Edit Creds' : 'Add Creds'}
+          </button>
+          <button class="btn btn-sm btn-primary flex-fill ${c.configured ? '' : 'disabled'}"
+                  onclick="triggerSync('${c.slug}')" id="sync-btn-${c.slug}">
+            <i class="bi bi-arrow-repeat me-1"></i>Sync
+          </button>
+        </div>
+      </div>
+    </div>`).join("");
+}
+
+function openCredModal(slug, displayName) {
+  document.getElementById("credSlug").value = slug;
+  document.getElementById("credModalTitle").textContent = `Configure: ${displayName}`;
+  document.getElementById("credUsername").value = "";
+  document.getElementById("credPassword").value = "";
+  renderExtraFields(slug);
+  new bootstrap.Modal(document.getElementById("credModal")).show();
+}
+
+function renderExtraFields(slug) {
+  const container = document.getElementById("extraFieldsContainer");
+  const fields = EXTRA_FIELDS[slug] || [];
+  container.innerHTML = fields.map(f => `
+    <div class="mb-3">
+      <label class="form-label">${f.label}</label>
+      <input type="${f.type || 'text'}" class="form-control extra-field"
+             data-key="${f.key}" placeholder="${f.placeholder || ''}">
+    </div>`).join("");
+}
+
+async function saveCredentials() {
+  const slug = document.getElementById("credSlug").value;
+  const username = document.getElementById("credUsername").value.trim();
+  const password = document.getElementById("credPassword").value;
+
+  if (!username || !password) {
+    alert("Username and password are required.");
+    return;
+  }
+
+  const extra = {};
+  document.querySelectorAll(".extra-field").forEach(el => {
+    if (el.value) extra[el.dataset.key] = el.value.trim();
+  });
+
+  try {
+    await apiRequest("POST", `/api/connectors/${slug}/credentials`,
+                     { username, password, extra });
+    bootstrap.Modal.getInstance(document.getElementById("credModal")).hide();
+    await loadConnectors();
+  } catch(e) {
+    alert("Error saving credentials: " + e.message);
+  }
+}
+
+async function removeCredentials() {
+  const slug = document.getElementById("credSlug").value;
+  if (!confirm(`Remove credentials for ${slug}?`)) return;
+  try {
+    await apiRequest("DELETE", `/api/connectors/${slug}/credentials`);
+    bootstrap.Modal.getInstance(document.getElementById("credModal")).hide();
+    await loadConnectors();
+  } catch(e) {
+    alert("Error: " + e.message);
+  }
+}
+
+async function triggerSync(slug) {
+  const btn = document.getElementById(`sync-btn-${slug}`);
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Syncing...';
+  try {
+    const result = await apiRequest("POST", `/api/connectors/${slug}/sync`);
+    alert(`Sync complete!\nFetched: ${result.fetched}\nNew records: ${result.new}`);
+  } catch(e) {
+    alert("Sync failed: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sync';
+    loadLogs();
+    loadPayments();
+  }
+}
+
+async function syncAll() {
+  const configured = currentConnectors.filter(c => c.configured);
+  if (!configured.length) { alert("No connectors configured yet."); return; }
+  for (const c of configured) {
+    await triggerSync(c.slug).catch(() => {});
+  }
+}
+
+async function loadLogs() {
+  try {
+    const logs = await apiRequest("GET", "/api/connectors/logs/all");
+    const tbody = document.getElementById("sync-log-body");
+    if (!logs.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">No sync history yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = logs.map(l => {
+      const duration = l.started_at && l.finished_at
+        ? `${((new Date(l.finished_at) - new Date(l.started_at))/1000).toFixed(1)}s`
+        : '—';
+      return `<tr>
+        <td><span class="badge bg-primary vendor-badge">${l.connector_slug || '?'}</span></td>
+        <td><span class="badge ${l.status==='success'?'bg-success':l.status==='running'?'bg-info':'bg-danger'}">${l.status}</span></td>
+        <td>${l.records_fetched}</td>
+        <td>${l.records_new}</td>
+        <td>${l.started_at ? formatDate(l.started_at) : '—'}</td>
+        <td>${duration}</td>
+        <td class="text-danger small">${l.error || ''}</td>
+      </tr>`;
+    }).join("");
+  } catch(e) { console.warn(e); }
+}
+
+async function loadPayments() {
+  try {
+    const payments = await apiRequest("GET", "/api/connectors/payments?status=unreconciled");
+    const allPayments = await apiRequest("GET", "/api/connectors/payments");
+    document.getElementById("payment-count").textContent = allPayments.length;
+    const tbody = document.getElementById("payments-body");
+    if (!allPayments.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">No payments yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = allPayments.slice(0, 100).map(p => `
+      <tr>
+        <td><span class="badge bg-secondary">${p.source}</span></td>
+        <td>${p.payer_name || '—'}</td>
+        <td class="font-monospace small">${p.check_number || p.eft_trace_number || '—'}</td>
+        <td>${p.payment_date ? formatDate(p.payment_date) : '—'}</td>
+        <td class="text-end fw-bold">${formatCurrency(p.amount)}</td>
+        <td><span class="badge ${p.status==='reconciled'?'bg-success':'bg-warning text-dark'}">${p.status}</span></td>
+      </tr>`).join("");
+  } catch(e) { console.warn(e); }
+}
+
+function togglePwd() {
+  const input = document.getElementById("credPassword");
+  const eye = document.getElementById("pwd-eye");
+  if (input.type === "password") {
+    input.type = "text";
+    eye.className = "bi bi-eye-slash";
+  } else {
+    input.type = "password";
+    eye.className = "bi bi-eye";
+  }
+}
+
+// Init
+loadConnectors();
+loadLogs();
+loadPayments();
+</script>
+{% endblock %}

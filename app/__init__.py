@@ -21,10 +21,14 @@ def create_app(env: str | None = None) -> Flask:
     from app.routes.vendor_routes import vendors_bp
     from app.routes.import_routes import imports_bp
     from app.routes.main_routes import main_bp
+    from app.routes.connector_routes import connectors_bp
+    from app.routes.reconciliation_routes import recon_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(vendors_bp, url_prefix="/api/vendors")
     app.register_blueprint(imports_bp, url_prefix="/api/imports")
+    app.register_blueprint(connectors_bp, url_prefix="/api/connectors")
+    app.register_blueprint(recon_bp, url_prefix="/api/reconciliation")
 
     # Create tables
     with app.app_context():

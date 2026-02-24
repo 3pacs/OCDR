@@ -9,3 +9,11 @@ pytest==8.3.4
 pytest-flask==1.3.0
 python-dotenv==1.0.1
 requests==2.32.3
+# Connector / browser automation
+playwright==1.49.0
+# Credential encryption
+cryptography==43.0.3
+# Date parsing
+python-dateutil==2.9.0.post0
+# OFX/QFX bank statement parsing
+ofxparse==0.21

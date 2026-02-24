@@ -28,3 +28,13 @@ def vendors_page():
 @main_bp.route("/imports")
 def imports_page():
     return render_template("imports.html")
+
+
+@main_bp.route("/connectors")
+def connectors_page():
+    return render_template("connectors.html")
+
+
+@main_bp.route("/reconciliation")
+def reconciliation_page():
+    return render_template("reconciliation.html")
