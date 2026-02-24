@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, case, extract
 
-from app.models import db, BillingRecord, Payer, FeeSchedule, Physician
+from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord
 
 api_bp = Blueprint("api", __name__)
 
@@ -417,6 +417,227 @@ def duplicates():
             })
 
     return jsonify({"items": items, "total": len(items)})
+
+
+@api_bp.route("/schedule/stats")
+def schedule_stats():
+    """Schedule KPI summary."""
+    today = date.today()
+
+    total = ScheduleRecord.query.count()
+    upcoming = ScheduleRecord.query.filter(ScheduleRecord.scheduled_date >= today).count()
+    past = ScheduleRecord.query.filter(ScheduleRecord.scheduled_date < today).count()
+    completed = ScheduleRecord.query.filter_by(status="COMPLETED").count()
+    cancelled = ScheduleRecord.query.filter_by(status="CANCELLED").count()
+    no_show = ScheduleRecord.query.filter_by(status="NO_SHOW").count()
+
+    # Counts by modality group
+    mri_total = ScheduleRecord.query.filter(
+        ScheduleRecord.modality.in_(["MRI", "HMRI", "OPEN"])
+    ).count()
+    ct_pet_total = ScheduleRecord.query.filter(
+        ScheduleRecord.modality.in_(["CT", "PET"])
+    ).count()
+    mri_upcoming = ScheduleRecord.query.filter(
+        ScheduleRecord.modality.in_(["MRI", "HMRI", "OPEN"]),
+        ScheduleRecord.scheduled_date >= today,
+    ).count()
+    ct_pet_upcoming = ScheduleRecord.query.filter(
+        ScheduleRecord.modality.in_(["CT", "PET"]),
+        ScheduleRecord.scheduled_date >= today,
+    ).count()
+
+    return jsonify({
+        "total": total,
+        "upcoming": upcoming,
+        "past": past,
+        "completed": completed,
+        "cancelled": cancelled,
+        "no_show": no_show,
+        "mri_total": mri_total,
+        "ct_pet_total": ct_pet_total,
+        "mri_upcoming": mri_upcoming,
+        "ct_pet_upcoming": ct_pet_upcoming,
+    })
+
+
+@api_bp.route("/schedule/list")
+def schedule_list():
+    """Paginated schedule records with filters."""
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    modality_group = request.args.get("modality_group")  # mri or ct_pet
+    time_range = request.args.get("time_range")  # past, future, all
+    status_filter = request.args.get("status")
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+
+    query = ScheduleRecord.query
+    today = date.today()
+
+    if modality_group == "mri":
+        query = query.filter(ScheduleRecord.modality.in_(["MRI", "HMRI", "OPEN"]))
+    elif modality_group == "ct_pet":
+        query = query.filter(ScheduleRecord.modality.in_(["CT", "PET"]))
+
+    if time_range == "past":
+        query = query.filter(ScheduleRecord.scheduled_date < today)
+    elif time_range == "future":
+        query = query.filter(ScheduleRecord.scheduled_date >= today)
+
+    if status_filter:
+        query = query.filter(ScheduleRecord.status == status_filter.upper())
+
+    if start_date:
+        try:
+            query = query.filter(ScheduleRecord.scheduled_date >= datetime.strptime(start_date, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            query = query.filter(ScheduleRecord.scheduled_date <= datetime.strptime(end_date, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+
+    records = query.order_by(ScheduleRecord.scheduled_date.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        "items": [r.to_dict() for r in records.items],
+        "total": records.total,
+        "page": page,
+        "pages": records.pages,
+    })
+
+
+@api_bp.route("/schedule/by-month")
+def schedule_by_month():
+    """Monthly schedule volume broken down by modality group."""
+    results = db.session.query(
+        func.strftime("%Y-%m", ScheduleRecord.scheduled_date).label("month"),
+        ScheduleRecord.modality,
+        func.count(ScheduleRecord.id).label("count"),
+    ).group_by(
+        func.strftime("%Y-%m", ScheduleRecord.scheduled_date),
+        ScheduleRecord.modality,
+    ).order_by("month").all()
+
+    # Group into MRI vs CT/PET per month
+    months = {}
+    for r in results:
+        if r.month not in months:
+            months[r.month] = {"month": r.month, "mri": 0, "ct_pet": 0, "other": 0}
+        if r.modality in ("MRI", "HMRI", "OPEN"):
+            months[r.month]["mri"] += r.count
+        elif r.modality in ("CT", "PET"):
+            months[r.month]["ct_pet"] += r.count
+        else:
+            months[r.month]["other"] += r.count
+
+    return jsonify(sorted(months.values(), key=lambda x: x["month"]))
+
+
+@api_bp.route("/schedule/by-day")
+def schedule_by_day():
+    """Daily schedule counts for calendar heatmap view. Accepts start/end date params."""
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+
+    query = db.session.query(
+        ScheduleRecord.scheduled_date,
+        ScheduleRecord.modality,
+        func.count(ScheduleRecord.id).label("count"),
+    )
+
+    if start_date:
+        try:
+            query = query.filter(ScheduleRecord.scheduled_date >= datetime.strptime(start_date, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            query = query.filter(ScheduleRecord.scheduled_date <= datetime.strptime(end_date, "%Y-%m-%d").date())
+        except ValueError:
+            pass
+
+    results = query.group_by(
+        ScheduleRecord.scheduled_date, ScheduleRecord.modality
+    ).all()
+
+    days = {}
+    for r in results:
+        d = r.scheduled_date.isoformat()
+        if d not in days:
+            days[d] = {"date": d, "mri": 0, "ct_pet": 0, "total": 0}
+        if r.modality in ("MRI", "HMRI", "OPEN"):
+            days[d]["mri"] += r.count
+        elif r.modality in ("CT", "PET"):
+            days[d]["ct_pet"] += r.count
+        days[d]["total"] += r.count
+
+    return jsonify(sorted(days.values(), key=lambda x: x["date"]))
+
+
+@api_bp.route("/schedule/by-status")
+def schedule_by_status():
+    """Schedule status breakdown."""
+    results = db.session.query(
+        ScheduleRecord.status,
+        func.count(ScheduleRecord.id).label("count"),
+    ).group_by(ScheduleRecord.status).all()
+
+    return jsonify([{"status": r.status, "count": r.count} for r in results])
+
+
+@api_bp.route("/schedule/by-doctor")
+def schedule_by_doctor():
+    """Top referring doctors by scheduled scan volume."""
+    results = db.session.query(
+        ScheduleRecord.referring_doctor,
+        func.count(ScheduleRecord.id).label("count"),
+    ).filter(
+        ScheduleRecord.referring_doctor.isnot(None),
+        ScheduleRecord.referring_doctor != "",
+    ).group_by(
+        ScheduleRecord.referring_doctor
+    ).order_by(func.count(ScheduleRecord.id).desc()).limit(15).all()
+
+    return jsonify([{"doctor": r.referring_doctor, "count": r.count} for r in results])
+
+
+@api_bp.route("/schedule/import", methods=["POST"])
+def schedule_import():
+    """Trigger import from the configured schedule folder."""
+    from flask import current_app
+    from app.import_engine.schedule_importer import import_folder
+
+    folder = current_app.config.get("SCHEDULE_FOLDER")
+    if not folder:
+        return jsonify({"error": "SCHEDULE_FOLDER not configured"}), 400
+
+    results = import_folder(folder)
+    return jsonify(results)
+
+
+@api_bp.route("/schedule/import/config")
+def schedule_import_config():
+    """Return current schedule import folder path."""
+    from flask import current_app
+    folder = current_app.config.get("SCHEDULE_FOLDER", "")
+    exists = os.path.isdir(folder)
+    file_count = 0
+    if exists:
+        file_count = sum(
+            1 for f in os.listdir(folder)
+            if os.path.isfile(os.path.join(folder, f)) and
+            os.path.splitext(f)[1].lower() in (".csv", ".xlsx", ".xls")
+        )
+    return jsonify({
+        "folder": folder,
+        "exists": exists,
+        "pending_files": file_count,
+    })
 
 
 # --- Helper functions ---

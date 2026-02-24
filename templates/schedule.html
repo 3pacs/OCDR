@@ -1,0 +1,514 @@
+{% extends "base.html" %}
+{% block title %}Schedule Viewer{% endblock %}
+{% block page_title %}Schedule Viewer — MRI &amp; CT/PET{% endblock %}
+
+{% block content %}
+<!-- Import Panel -->
+<div class="filter-bar mb-3">
+    <div class="d-flex align-items-center gap-2 flex-grow-1">
+        <i class="bi bi-folder2-open text-accent-blue"></i>
+        <span class="small fw-semibold">Import Folder:</span>
+        <code class="small text-muted" id="import-folder-path">—</code>
+        <span class="badge bg-info-subtle text-info-emphasis small" id="pending-files-badge" style="display:none;"></span>
+    </div>
+    <button class="btn btn-sm btn-outline-light" id="btn-import" disabled onclick="runImport()">
+        <i class="bi bi-cloud-upload me-1"></i> Import Files
+    </button>
+</div>
+
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-calendar3"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Scheduled</div>
+                <div class="kpi-value" id="kpi-total">—</div>
+                <div class="kpi-sub" id="kpi-upcoming-sub">Loading...</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-payer">
+            <div class="kpi-icon"><i class="bi bi-magnet-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">MRI Scans</div>
+                <div class="kpi-value" id="kpi-mri">—</div>
+                <div class="kpi-sub" id="kpi-mri-sub">upcoming</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-physician">
+            <div class="kpi-icon"><i class="bi bi-radioactive"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">CT / PET Scans</div>
+                <div class="kpi-value" id="kpi-ctpet">—</div>
+                <div class="kpi-sub" id="kpi-ctpet-sub">upcoming</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-check-circle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Completed</div>
+                <div class="kpi-value" id="kpi-completed">—</div>
+                <div class="kpi-sub" id="kpi-status-sub">cancelled / no-show</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row: Monthly trend (MRI vs CT/PET) + Status donut -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-8">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Monthly Schedule Volume — MRI vs CT/PET</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="monthlyChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Status Breakdown</h6>
+            </div>
+            <div class="chart-body chart-body-doughnut">
+                <canvas id="statusChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Daily heatmap bar chart + Top Doctors -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-7">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Daily Volume (Last 60 Days &amp; Next 60 Days)</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="dailyChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Top Referring Doctors</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="doctorChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filter + Data Table -->
+<div class="filter-bar">
+    <select class="form-select" id="filter-modality" onchange="loadTable()">
+        <option value="">All Modalities</option>
+        <option value="mri">MRI / Open MRI</option>
+        <option value="ct_pet">CT / PET</option>
+    </select>
+    <select class="form-select" id="filter-time" onchange="loadTable()">
+        <option value="">All Time</option>
+        <option value="future">Upcoming Only</option>
+        <option value="past">Past Only</option>
+    </select>
+    <select class="form-select" id="filter-status" onchange="loadTable()">
+        <option value="">All Statuses</option>
+        <option value="SCHEDULED">Scheduled</option>
+        <option value="COMPLETED">Completed</option>
+        <option value="CANCELLED">Cancelled</option>
+        <option value="NO_SHOW">No Show</option>
+    </select>
+    <input type="date" class="form-control" id="filter-start" onchange="loadTable()" style="max-width:170px" title="Start date">
+    <input type="date" class="form-control" id="filter-end" onchange="loadTable()" style="max-width:170px" title="End date">
+</div>
+
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Schedule Records</h6>
+        <span class="text-muted small" id="table-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Patient</th>
+                    <th>Modality</th>
+                    <th>Scan Type</th>
+                    <th>Doctor</th>
+                    <th>Insurance</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="schedule-tbody">
+                <tr><td colspan="8" class="text-center text-muted py-4">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center p-3">
+        <button class="btn btn-sm btn-outline-light" id="btn-prev" onclick="changePage(-1)" disabled>&laquo; Previous</button>
+        <span class="text-muted small" id="page-info"></span>
+        <button class="btn btn-sm btn-outline-light" id="btn-next" onclick="changePage(1)" disabled>Next &raquo;</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const perPage = 50;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadAll();
+});
+
+async function loadAll() {
+    try {
+        const [stats, byMonth, byStatus, byDay, byDoctor, importCfg] = await Promise.all([
+            fetchJSON('/api/schedule/stats'),
+            fetchJSON('/api/schedule/by-month'),
+            fetchJSON('/api/schedule/by-status'),
+            fetchJSON('/api/schedule/by-day?start_date=' + daysAgo(60) + '&end_date=' + daysAhead(60)),
+            fetchJSON('/api/schedule/by-doctor'),
+            fetchJSON('/api/schedule/import/config'),
+        ]);
+
+        renderKPIs(stats);
+        renderMonthlyChart(byMonth);
+        renderStatusChart(byStatus);
+        renderDailyChart(byDay);
+        renderDoctorChart(byDoctor);
+        renderImportPanel(importCfg);
+        loadTable();
+
+        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+        console.error('Schedule load error:', err);
+    }
+}
+
+function daysAgo(n) {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    return d.toISOString().slice(0, 10);
+}
+function daysAhead(n) {
+    const d = new Date(); d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+}
+
+function renderKPIs(s) {
+    document.getElementById('kpi-total').textContent = formatNumber(s.total);
+    document.getElementById('kpi-upcoming-sub').textContent = formatNumber(s.upcoming) + ' upcoming / ' + formatNumber(s.past) + ' past';
+    document.getElementById('kpi-mri').textContent = formatNumber(s.mri_total);
+    document.getElementById('kpi-mri-sub').textContent = formatNumber(s.mri_upcoming) + ' upcoming';
+    document.getElementById('kpi-ctpet').textContent = formatNumber(s.ct_pet_total);
+    document.getElementById('kpi-ctpet-sub').textContent = formatNumber(s.ct_pet_upcoming) + ' upcoming';
+    document.getElementById('kpi-completed').textContent = formatNumber(s.completed);
+    document.getElementById('kpi-status-sub').textContent = formatNumber(s.cancelled) + ' cancelled / ' + formatNumber(s.no_show) + ' no-show';
+}
+
+function renderImportPanel(cfg) {
+    document.getElementById('import-folder-path').textContent = cfg.folder || 'Not configured';
+    const btn = document.getElementById('btn-import');
+    const badge = document.getElementById('pending-files-badge');
+    if (cfg.exists && cfg.pending_files > 0) {
+        btn.disabled = false;
+        badge.style.display = '';
+        badge.textContent = cfg.pending_files + ' file(s) ready';
+    } else if (cfg.exists) {
+        badge.style.display = '';
+        badge.textContent = 'No pending files';
+    }
+}
+
+async function runImport() {
+    const btn = document.getElementById('btn-import');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Importing...';
+    try {
+        const resp = await fetch('/api/schedule/import', { method: 'POST' });
+        const results = await resp.json();
+        let msg = '';
+        for (const [file, info] of Object.entries(results)) {
+            msg += file + ': ' + info.imported + ' imported';
+            if (info.errors && info.errors.length) msg += ' (' + info.errors.length + ' errors)';
+            msg += '\n';
+        }
+        alert(msg || 'No files found to import.');
+        loadAll();
+    } catch (err) {
+        alert('Import error: ' + err.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-cloud-upload me-1"></i> Import Files';
+}
+
+/* ── Monthly Volume Chart ─────────────────────────────── */
+let monthlyChartInstance = null;
+function renderMonthlyChart(data) {
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    if (monthlyChartInstance) monthlyChartInstance.destroy();
+
+    const gradientMRI = ctx.createLinearGradient(0, 0, 0, 300);
+    gradientMRI.addColorStop(0, 'rgba(167, 139, 250, 0.3)');
+    gradientMRI.addColorStop(1, 'rgba(167, 139, 250, 0.0)');
+
+    const gradientCT = ctx.createLinearGradient(0, 0, 0, 300);
+    gradientCT.addColorStop(0, 'rgba(244, 114, 182, 0.3)');
+    gradientCT.addColorStop(1, 'rgba(244, 114, 182, 0.0)');
+
+    monthlyChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.month),
+            datasets: [{
+                label: 'MRI',
+                data: data.map(d => d.mri),
+                borderColor: '#a78bfa',
+                backgroundColor: gradientMRI,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                borderWidth: 2.5,
+            }, {
+                label: 'CT / PET',
+                data: data.map(d => d.ct_pet),
+                borderColor: '#f472b6',
+                backgroundColor: gradientCT,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                borderWidth: 2.5,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#94a3b8', boxWidth: 12, padding: 20 } },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleColor: '#f1f5f9',
+                    bodyColor: '#cbd5e1',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    padding: 12,
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
+                y: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b' }, beginAtZero: true },
+            }
+        }
+    });
+}
+
+/* ── Status Doughnut ──────────────────────────────────── */
+let statusChartInstance = null;
+function renderStatusChart(data) {
+    const ctx = document.getElementById('statusChart').getContext('2d');
+    if (statusChartInstance) statusChartInstance.destroy();
+
+    const colorMap = { SCHEDULED: '#63b3ed', COMPLETED: '#34d399', CANCELLED: '#fbbf24', NO_SHOW: '#f87171' };
+    const colors = data.map(d => colorMap[d.status] || '#94a3b8');
+
+    statusChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.map(d => d.status),
+            datasets: [{ data: data.map(d => d.count), backgroundColor: colors, borderWidth: 0, hoverOffset: 8 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 16, usePointStyle: true, pointStyle: 'circle' } },
+                tooltip: { backgroundColor: '#1e293b' }
+            }
+        }
+    });
+}
+
+/* ── Daily Volume Stacked Bar ─────────────────────────── */
+let dailyChartInstance = null;
+function renderDailyChart(data) {
+    const ctx = document.getElementById('dailyChart').getContext('2d');
+    if (dailyChartInstance) dailyChartInstance.destroy();
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    dailyChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [{
+                label: 'MRI',
+                data: data.map(d => d.mri),
+                backgroundColor: data.map(d => d.date >= today ? 'rgba(167,139,250,0.8)' : 'rgba(167,139,250,0.35)'),
+                borderRadius: 2,
+                barPercentage: 0.9,
+                categoryPercentage: 0.95,
+            }, {
+                label: 'CT / PET',
+                data: data.map(d => d.ct_pet),
+                backgroundColor: data.map(d => d.date >= today ? 'rgba(244,114,182,0.8)' : 'rgba(244,114,182,0.35)'),
+                borderRadius: 2,
+                barPercentage: 0.9,
+                categoryPercentage: 0.95,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#94a3b8', boxWidth: 12, padding: 20 } },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: {
+                        title: ctx => formatDate(ctx[0].label),
+                        afterTitle: ctx => {
+                            const d = data[ctx[0].dataIndex];
+                            return d.date >= today ? '(Upcoming)' : '(Past)';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: {
+                        color: '#64748b',
+                        maxTicksLimit: 15,
+                        callback: function(val, idx) {
+                            const label = this.getLabelForValue(val);
+                            if (label === today) return 'TODAY';
+                            return label.slice(5); // MM-DD
+                        }
+                    }
+                },
+                y: { stacked: true, grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b' }, beginAtZero: true },
+            }
+        }
+    });
+}
+
+/* ── Top Doctors Horizontal Bar ───────────────────────── */
+let doctorChartInstance = null;
+function renderDoctorChart(data) {
+    const ctx = document.getElementById('doctorChart').getContext('2d');
+    if (doctorChartInstance) doctorChartInstance.destroy();
+
+    const colors = ['#63b3ed','#a78bfa','#f472b6','#34d399','#fbbf24','#fb923c','#38bdf8','#c084fc','#f87171','#4ade80','#818cf8','#22d3ee','#e879f9','#a3e635','#facc15'];
+
+    doctorChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.doctor),
+            datasets: [{
+                label: 'Scans',
+                data: data.map(d => d.count),
+                backgroundColor: colors.slice(0, data.length),
+                borderRadius: 6,
+                barPercentage: 0.7,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { display: false },
+                tooltip: { backgroundColor: '#1e293b' }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b' } },
+                y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { weight: 500 } } }
+            }
+        }
+    });
+}
+
+/* ── Data Table ───────────────────────────────────────── */
+async function loadTable() {
+    const mod = document.getElementById('filter-modality').value;
+    const time = document.getElementById('filter-time').value;
+    const status = document.getElementById('filter-status').value;
+    const start = document.getElementById('filter-start').value;
+    const end = document.getElementById('filter-end').value;
+
+    let url = `/api/schedule/list?page=${currentPage}&per_page=${perPage}`;
+    if (mod) url += '&modality_group=' + mod;
+    if (time) url += '&time_range=' + time;
+    if (status) url += '&status=' + status;
+    if (start) url += '&start_date=' + start;
+    if (end) url += '&end_date=' + end;
+
+    const data = await fetchJSON(url);
+    const tbody = document.getElementById('schedule-tbody');
+
+    if (data.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><i class="bi bi-calendar-x fs-3 d-block mb-2"></i>No schedule records found</td></tr>';
+    } else {
+        tbody.innerHTML = data.items.map(r => `
+            <tr>
+                <td>${formatDate(r.scheduled_date)}</td>
+                <td>${r.scheduled_time || '—'}</td>
+                <td class="fw-semibold">${r.patient_name}</td>
+                <td><span class="badge ${modalityBadgeClass(r.modality)}">${r.modality}</span></td>
+                <td>${r.scan_type}</td>
+                <td>${r.referring_doctor || '—'}</td>
+                <td>${r.insurance_carrier || '—'}</td>
+                <td>${schedStatusBadge(r.status)}</td>
+            </tr>
+        `).join('');
+    }
+
+    document.getElementById('table-count').textContent = formatNumber(data.total) + ' records';
+    document.getElementById('page-info').textContent = 'Page ' + data.page + ' of ' + Math.max(data.pages, 1);
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= data.pages;
+}
+
+function changePage(delta) {
+    currentPage += delta;
+    if (currentPage < 1) currentPage = 1;
+    loadTable();
+}
+
+function modalityBadgeClass(mod) {
+    const map = { MRI: 'bg-purple-subtle', HMRI: 'bg-purple-subtle', OPEN: 'bg-purple-subtle', CT: 'bg-pink-subtle', PET: 'bg-pink-subtle' };
+    return map[mod] || 'bg-secondary';
+}
+
+function schedStatusBadge(status) {
+    const map = {
+        SCHEDULED: ['badge-status', 'background:rgba(99,179,237,0.15);color:#63b3ed'],
+        COMPLETED: ['badge-status', 'background:rgba(52,211,153,0.15);color:#34d399'],
+        CANCELLED: ['badge-status', 'background:rgba(251,191,36,0.15);color:#fbbf24'],
+        NO_SHOW: ['badge-status', 'background:rgba(248,113,113,0.15);color:#f87171'],
+    };
+    const [cls, style] = map[status] || ['badge-status', ''];
+    return `<span class="${cls}" style="${style}">${status}</span>`;
+}
+</script>
+
+<style>
+.bg-purple-subtle { background: rgba(167,139,250,0.15); color: #a78bfa; }
+.bg-pink-subtle   { background: rgba(244,114,182,0.15); color: #f472b6; }
+</style>
+{% endblock %}

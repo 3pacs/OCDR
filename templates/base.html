@@ -60,6 +60,14 @@
                 </a>
             </li>
 
+            <li class="nav-section-label">Scheduling</li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.schedule_page' %}active{% endif %}" href="/schedule">
+                    <i class="bi bi-calendar3"></i>
+                    <span>Schedule Viewer</span>
+                </a>
+            </li>
+
             <li class="nav-section-label">Analytics</li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'ui.payers_page' %}active{% endif %}" href="/payers">

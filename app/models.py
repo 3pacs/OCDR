@@ -130,3 +130,37 @@ class PhysicianStatement(db.Model):
     total_owed = db.Column(db.Float)
     total_paid = db.Column(db.Float, default=0.0)
     status = db.Column(db.Text, default="DRAFT", index=True)
+
+
+class ScheduleRecord(db.Model):
+    __tablename__ = "schedule_records"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    patient_name = db.Column(db.Text, nullable=False, index=True)
+    scan_type = db.Column(db.Text, nullable=False, index=True)
+    modality = db.Column(db.Text, nullable=False, index=True)  # MRI, CT, PET
+    scheduled_date = db.Column(db.Date, nullable=False, index=True)
+    scheduled_time = db.Column(db.Text)  # HH:MM format
+    referring_doctor = db.Column(db.Text, index=True)
+    insurance_carrier = db.Column(db.Text)
+    location = db.Column(db.Text)
+    status = db.Column(db.Text, default="SCHEDULED", index=True)  # SCHEDULED, COMPLETED, CANCELLED, NO_SHOW
+    notes = db.Column(db.Text)
+    import_source = db.Column(db.Text)  # FOLDER_IMPORT, MANUAL, SEED_DATA
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "patient_name": self.patient_name,
+            "scan_type": self.scan_type,
+            "modality": self.modality,
+            "scheduled_date": self.scheduled_date.isoformat() if self.scheduled_date else None,
+            "scheduled_time": self.scheduled_time,
+            "referring_doctor": self.referring_doctor,
+            "insurance_carrier": self.insurance_carrier,
+            "location": self.location,
+            "status": self.status,
+            "notes": self.notes,
+            "import_source": self.import_source,
+        }

@@ -18,4 +18,7 @@ class Config:
     BACKUP_FOLDER = os.environ.get(
         "BACKUP_FOLDER", os.path.join(basedir, "backup")
     )
+    SCHEDULE_FOLDER = os.environ.get(
+        "SCHEDULE_FOLDER", os.path.join(basedir, "schedule_data")
+    )
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max upload

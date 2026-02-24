@@ -43,3 +43,8 @@ def physicians_page():
 @ui_bp.route("/duplicates")
 def duplicates_page():
     return render_template("duplicates.html")
+
+
+@ui_bp.route("/schedule")
+def schedule_page():
+    return render_template("schedule.html")

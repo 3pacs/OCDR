@@ -3,7 +3,7 @@
 import random
 from datetime import date, timedelta
 from app import create_app
-from app.models import db, BillingRecord, Payer, FeeSchedule, Physician
+from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord
 
 random.seed(42)
 
@@ -245,11 +245,74 @@ def seed():
             db.session.bulk_save_objects(records)
             db.session.commit()
 
+        # ── Seed schedule records (past + future) ────────────────
+        SCHEDULE_MODALITIES = ["MRI", "CT", "PET"]
+        SCHEDULE_WEIGHTS = [0.45, 0.40, 0.15]
+        SCHEDULE_STATUSES_PAST = ["COMPLETED", "COMPLETED", "COMPLETED", "COMPLETED",
+                                  "CANCELLED", "NO_SHOW"]
+        SCHEDULE_TIMES = [
+            "07:00", "07:30", "08:00", "08:30", "09:00", "09:30",
+            "10:00", "10:30", "11:00", "11:30", "13:00", "13:30",
+            "14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
+        ]
+        LOCATIONS = ["Main Imaging Center", "South Campus", "Mobile Unit A"]
+
+        today = date.today()
+        sched_records = []
+
+        # Past schedules: 2 years back
+        for i in range(3000):
+            first = random.choice(FIRST_NAMES)
+            last = random.choice(LAST_NAMES)
+            days_back = random.randint(1, 730)
+            sched_date = today - timedelta(days=days_back)
+            mod = random.choices(SCHEDULE_MODALITIES, weights=SCHEDULE_WEIGHTS, k=1)[0]
+            carrier = random.choices(carriers, weights=carrier_wts, k=1)[0]
+
+            sched_records.append(ScheduleRecord(
+                patient_name=f"{last}, {first}",
+                scan_type=random.choice(SCAN_TYPES),
+                modality=mod,
+                scheduled_date=sched_date,
+                scheduled_time=random.choice(SCHEDULE_TIMES),
+                referring_doctor=random.choice(DOCTORS),
+                insurance_carrier=carrier,
+                location=random.choice(LOCATIONS),
+                status=random.choice(SCHEDULE_STATUSES_PAST),
+                import_source="SEED_DATA",
+            ))
+
+        # Future schedules: next 90 days
+        for i in range(800):
+            first = random.choice(FIRST_NAMES)
+            last = random.choice(LAST_NAMES)
+            days_ahead = random.randint(0, 90)
+            sched_date = today + timedelta(days=days_ahead)
+            mod = random.choices(SCHEDULE_MODALITIES, weights=SCHEDULE_WEIGHTS, k=1)[0]
+            carrier = random.choices(carriers, weights=carrier_wts, k=1)[0]
+
+            sched_records.append(ScheduleRecord(
+                patient_name=f"{last}, {first}",
+                scan_type=random.choice(SCAN_TYPES),
+                modality=mod,
+                scheduled_date=sched_date,
+                scheduled_time=random.choice(SCHEDULE_TIMES),
+                referring_doctor=random.choice(DOCTORS),
+                insurance_carrier=carrier,
+                location=random.choice(LOCATIONS),
+                status="SCHEDULED",
+                import_source="SEED_DATA",
+            ))
+
+        db.session.bulk_save_objects(sched_records)
+        db.session.commit()
+
         total = BillingRecord.query.count()
         revenue = db.session.query(
             db.func.sum(BillingRecord.total_payment)
         ).scalar() or 0
         unpaid = BillingRecord.query.filter_by(total_payment=0).count()
+        sched_count = ScheduleRecord.query.count()
 
         print(f"Seeded {total:,} billing records")
         print(f"Total revenue: ${revenue:,.2f}")
@@ -257,6 +320,7 @@ def seed():
         print(f"Payers: {Payer.query.count()}")
         print(f"Fee schedules: {FeeSchedule.query.count()}")
         print(f"Physicians: {Physician.query.count()}")
+        print(f"Schedule records: {sched_count:,} (past + future)")
 
 
 if __name__ == "__main__":
