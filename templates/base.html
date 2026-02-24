@@ -67,6 +67,30 @@
                     <span>ERA Payments</span>
                 </a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.match_review_page' %}active{% endif %}" href="/match-review">
+                    <i class="bi bi-link-45deg"></i>
+                    <span>Match Review</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.denial_queue_page' %}active{% endif %}" href="/denial-queue">
+                    <i class="bi bi-clipboard2-x-fill"></i>
+                    <span>Denial Queue</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.payment_reconciliation_page' %}active{% endif %}" href="/payment-reconciliation">
+                    <i class="bi bi-bank2"></i>
+                    <span>Reconciliation</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.denial_analytics_page' %}active{% endif %}" href="/denial-analytics">
+                    <i class="bi bi-bar-chart-line-fill"></i>
+                    <span>Denial Analytics</span>
+                </a>
+            </li>
 
             <li class="nav-section-label">Scheduling</li>
             <li class="nav-item">
@@ -93,6 +117,24 @@
                 <a class="nav-link {% if request.endpoint == 'ui.duplicates_page' %}active{% endif %}" href="/duplicates">
                     <i class="bi bi-files"></i>
                     <span>Duplicates</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.psma_page' %}active{% endif %}" href="/psma">
+                    <i class="bi bi-radioactive"></i>
+                    <span>PSMA PET</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.gado_page' %}active{% endif %}" href="/gado">
+                    <i class="bi bi-droplet-fill"></i>
+                    <span>Gado Contrast</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.statements_page' %}active{% endif %}" href="/statements">
+                    <i class="bi bi-receipt"></i>
+                    <span>Statements</span>
                 </a>
             </li>
         </ul>

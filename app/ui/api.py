@@ -892,6 +892,437 @@ def era_by_month():
     } for r in results])
 
 
+# ══════════════════════════════════════════════════════════════════
+#  F-01: Excel Import
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/import/excel", methods=["POST"])
+def import_excel():
+    """Upload and import billing data from an Excel workbook."""
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.import_engine.excel_importer import import_excel as do_import
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided. Use field name 'file'."}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "excel")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+
+    sheet_name = request.form.get("sheet")
+    result = do_import(filepath, sheet_name=sheet_name)
+    return jsonify(result)
+
+
+@api_bp.route("/import/csv", methods=["POST"])
+def import_csv_endpoint():
+    """Upload and import data from a CSV file."""
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.import_engine.csv_importer import import_csv
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided. Use field name 'file'."}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "csv")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+
+    result = import_csv(filepath)
+    return jsonify(result)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-03: Auto-Match Engine
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/match/run", methods=["POST"])
+def match_run():
+    """Run the auto-match engine on unmatched ERA claim lines."""
+    from app.matching.match_engine import run_matching
+    threshold_accept = request.json.get("auto_accept", 0.95) if request.is_json else 0.95
+    threshold_review = request.json.get("review", 0.80) if request.is_json else 0.80
+    result = run_matching(
+        auto_accept_threshold=threshold_accept,
+        review_threshold=threshold_review,
+    )
+    return jsonify(result)
+
+
+@api_bp.route("/match/results")
+def match_results():
+    """Get match results with optional status filter."""
+    from app.matching.match_engine import get_match_results
+    status = request.args.get("status")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    return jsonify(get_match_results(status_filter=status, page=page, per_page=per_page))
+
+
+@api_bp.route("/match/confirm/<int:claim_id>", methods=["POST"])
+def match_confirm(claim_id):
+    """Confirm or reassign a match."""
+    from app.matching.match_engine import confirm_match
+    billing_id = request.json.get("billing_id") if request.is_json else None
+    return jsonify(confirm_match(claim_id, billing_id))
+
+
+@api_bp.route("/match/reject/<int:claim_id>", methods=["POST"])
+def match_reject(claim_id):
+    """Reject a match."""
+    from app.matching.match_engine import reject_match
+    return jsonify(reject_match(claim_id))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-04: Denial Tracking & Appeal Queue
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/denials/queue")
+def denial_queue():
+    """Get prioritized denial queue."""
+    from app.revenue.denial_tracker import get_denial_queue
+    carrier = request.args.get("carrier")
+    modality = request.args.get("modality")
+    status = request.args.get("status")
+    sort_by = request.args.get("sort", "recoverability")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    return jsonify(get_denial_queue(
+        carrier=carrier, modality=modality, status_filter=status,
+        sort_by=sort_by, page=page, per_page=per_page,
+    ))
+
+
+@api_bp.route("/denials/<int:billing_id>/appeal", methods=["POST"])
+def denial_appeal(billing_id):
+    """Mark a claim as appealed."""
+    from app.revenue.denial_tracker import appeal_denial
+    return jsonify(appeal_denial(billing_id))
+
+
+@api_bp.route("/denials/<int:billing_id>/resolve", methods=["POST"])
+def denial_resolve(billing_id):
+    """Resolve a denied claim."""
+    from app.revenue.denial_tracker import resolve_denial
+    resolution = "RESOLVED"
+    payment = None
+    if request.is_json:
+        resolution = request.json.get("resolution", "RESOLVED")
+        payment = request.json.get("payment_amount")
+    return jsonify(resolve_denial(billing_id, resolution=resolution, payment_amount=payment))
+
+
+@api_bp.route("/denials/bulk-appeal", methods=["POST"])
+def denial_bulk_appeal():
+    """Bulk mark claims as appealed."""
+    from app.revenue.denial_tracker import bulk_appeal
+    ids = request.json.get("ids", []) if request.is_json else []
+    return jsonify(bulk_appeal(ids))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-10: Physician Statements
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/statements")
+def statements_list():
+    """List physician statements."""
+    from app.revenue.physician_statements import list_statements
+    physician = request.args.get("physician")
+    status = request.args.get("status")
+    page = request.args.get("page", 1, type=int)
+    return jsonify(list_statements(physician=physician, status=status, page=page))
+
+
+@api_bp.route("/statements/generate", methods=["POST"])
+def statements_generate():
+    """Generate a physician statement."""
+    from app.revenue.physician_statements import generate_statement
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+    physician = request.json.get("physician_name")
+    year = request.json.get("year", date.today().year)
+    month = request.json.get("month", date.today().month)
+    if not physician:
+        return jsonify({"error": "physician_name required"}), 400
+    return jsonify(generate_statement(physician, year, month))
+
+
+@api_bp.route("/statements/<int:statement_id>/pay", methods=["POST"])
+def statements_pay(statement_id):
+    """Record a payment against a statement."""
+    from app.revenue.physician_statements import record_payment
+    amount = request.json.get("amount", 0) if request.is_json else 0
+    return jsonify(record_payment(statement_id, amount))
+
+
+@api_bp.route("/statements/<int:statement_id>/html")
+def statements_html(statement_id):
+    """Get statement as HTML (for PDF rendering)."""
+    from app.revenue.physician_statements import generate_statement, generate_statement_html
+    from app.models import PhysicianStatement
+    stmt = PhysicianStatement.query.get_or_404(statement_id)
+    data = generate_statement(stmt.physician_name,
+                              int(stmt.statement_period[:4]),
+                              int(stmt.statement_period[5:7]))
+    html = generate_statement_html(data)
+    return html, 200, {"Content-Type": "text/html"}
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-11: Folder Monitor
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/monitor/start", methods=["POST"])
+def monitor_start():
+    """Start the folder monitor."""
+    from flask import current_app
+    from app.monitor.folder_watcher import start_monitor
+    interval = request.json.get("interval", 30) if request.is_json else 30
+    return jsonify(start_monitor(current_app._get_current_object(), interval=interval))
+
+
+@api_bp.route("/monitor/stop", methods=["POST"])
+def monitor_stop():
+    """Stop the folder monitor."""
+    from app.monitor.folder_watcher import stop_monitor
+    return jsonify(stop_monitor())
+
+
+@api_bp.route("/monitor/status")
+def monitor_status():
+    """Get folder monitor status."""
+    from app.monitor.folder_watcher import get_monitor_status
+    return jsonify(get_monitor_status())
+
+
+@api_bp.route("/monitor/scan", methods=["POST"])
+def monitor_scan():
+    """Run a single manual scan."""
+    from flask import current_app
+    from app.monitor.folder_watcher import scan_once
+    return jsonify(scan_once(current_app._get_current_object()))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-13: PSMA PET Tracking
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/psma")
+def psma_summary():
+    """PSMA PET tracking summary."""
+    from app.analytics.psma_tracker import get_psma_summary
+    return jsonify(get_psma_summary())
+
+
+@api_bp.route("/psma/by-year")
+def psma_by_year():
+    """PSMA volume by year."""
+    from app.analytics.psma_tracker import get_psma_by_year
+    return jsonify(get_psma_by_year())
+
+
+@api_bp.route("/psma/by-physician")
+def psma_by_physician():
+    """PSMA by referring physician."""
+    from app.analytics.psma_tracker import get_psma_by_physician
+    return jsonify(get_psma_by_physician())
+
+
+@api_bp.route("/psma/by-carrier")
+def psma_by_carrier():
+    """PSMA by insurance carrier."""
+    from app.analytics.psma_tracker import get_psma_by_carrier
+    return jsonify(get_psma_by_carrier())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-14: Gado Contrast Tracking
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/gado")
+def gado_summary():
+    """Gado contrast usage summary."""
+    from app.analytics.gado_tracker import get_gado_summary
+    cost = request.args.get("cost_per_dose", type=float)
+    return jsonify(get_gado_summary(cost_per_dose=cost))
+
+
+@api_bp.route("/gado/by-year")
+def gado_by_year():
+    """Gado usage by year."""
+    from app.analytics.gado_tracker import get_gado_by_year
+    cost = request.args.get("cost_per_dose", type=float)
+    return jsonify(get_gado_by_year(cost_per_dose=cost))
+
+
+@api_bp.route("/gado/by-physician")
+def gado_by_physician():
+    """Gado usage by physician."""
+    from app.analytics.gado_tracker import get_gado_by_physician
+    return jsonify(get_gado_by_physician())
+
+
+@api_bp.route("/gado/margin")
+def gado_margin():
+    """Gado margin analysis by carrier."""
+    from app.analytics.gado_tracker import get_gado_margin_analysis
+    cost = request.args.get("cost_per_dose", type=float)
+    return jsonify(get_gado_margin_analysis(cost_per_dose=cost))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-16: Denial Reason Code Analytics
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/denial-analytics")
+def denial_analytics():
+    """Denial reason code analytics."""
+    from app.analytics.denial_analytics import get_denial_analytics
+    return jsonify(get_denial_analytics())
+
+
+@api_bp.route("/denial-analytics/pareto")
+def denial_pareto():
+    """Denial reason code Pareto analysis."""
+    from app.analytics.denial_analytics import get_denial_pareto
+    return jsonify(get_denial_pareto())
+
+
+@api_bp.route("/denial-analytics/by-carrier")
+def denial_by_carrier():
+    """Denial codes by carrier."""
+    from app.analytics.denial_analytics import get_denials_by_carrier
+    return jsonify(get_denials_by_carrier())
+
+
+@api_bp.route("/denial-analytics/trend")
+def denial_trend():
+    """Denial reason code trend over time."""
+    from app.analytics.denial_analytics import get_denial_trend
+    return jsonify(get_denial_trend())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-17: Check/EFT Payment Matching
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/payments")
+def payments_list():
+    """List ERA payments for reconciliation."""
+    from app.core.payment_matching import get_payment_summary
+    return jsonify(get_payment_summary())
+
+
+@api_bp.route("/payments/<check_number>")
+def payment_by_check(check_number):
+    """Get all claims under a check/EFT number."""
+    from app.core.payment_matching import get_payment_detail
+    return jsonify(get_payment_detail(check_number))
+
+
+@api_bp.route("/payments/reconcile", methods=["POST"])
+def payments_reconcile():
+    """Import bank statement and reconcile against ERA payments."""
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.core.payment_matching import import_bank_statement
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    f = request.files["file"]
+    filename = secure_filename(f.filename)
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "bank")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+    return jsonify(import_bank_statement(filepath))
+
+
+@api_bp.route("/payments/status")
+def payments_reconciliation_status():
+    """Get overall reconciliation status."""
+    from app.core.payment_matching import get_reconciliation_status
+    return jsonify(get_reconciliation_status())
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-18: CSV Export
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/export/csv")
+def export_csv():
+    """Export billing records to CSV."""
+    from flask import current_app, send_file
+    from app.export.csv_exporter import export_billing_csv
+    result = export_billing_csv(app=current_app)
+    return send_file(result["filepath"], as_attachment=True,
+                     download_name="master_data.csv", mimetype="text/csv")
+
+
+@api_bp.route("/export/era-csv")
+def export_era_csv():
+    """Export ERA claim lines to CSV."""
+    from flask import current_app, send_file
+    from app.export.csv_exporter import export_era_csv
+    result = export_era_csv(app=current_app)
+    return send_file(result["filepath"], as_attachment=True,
+                     download_name="era_claims.csv", mimetype="text/csv")
+
+
+@api_bp.route("/export/trigger", methods=["POST"])
+def export_trigger():
+    """Trigger a CSV export (returns metadata, not the file)."""
+    from flask import current_app
+    from app.export.csv_exporter import export_billing_csv
+    result = export_billing_csv(app=current_app)
+    return jsonify(result)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  F-20: Backup
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/backup/run", methods=["POST"])
+def backup_run():
+    """Run a database backup."""
+    from flask import current_app
+    from app.infra.backup_manager import run_backup
+    return jsonify(run_backup(app=current_app))
+
+
+@api_bp.route("/backup/status")
+def backup_status():
+    """Get backup status and history."""
+    from flask import current_app
+    from app.infra.backup_manager import get_backup_history
+    backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
+    return jsonify(get_backup_history(backup_dir))
+
+
+@api_bp.route("/backup/history")
+def backup_history():
+    """Get backup history."""
+    from flask import current_app
+    from app.infra.backup_manager import get_backup_history
+    backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
+    return jsonify(get_backup_history(backup_dir))
+
+
 # --- Helper functions ---
 
 def _get_fee_map():

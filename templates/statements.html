@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Physician Statements{% endblock %}
+{% block page_title %}Physician Statement Reconciliation{% endblock %}
+
+{% block content %}
+<!-- Generate Statement -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-8">
+        <div class="data-card">
+            <div class="card-header"><h6 class="mb-0 fw-semibold">Generate Statement</h6></div>
+            <div class="p-3">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">Physician Name</label>
+                        <input type="text" class="form-control" id="gen-physician" placeholder="e.g. JHANGIANI">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">Year</label>
+                        <input type="number" class="form-control" id="gen-year" value="2025">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">Month</label>
+                        <select class="form-select" id="gen-month">
+                            <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
+                            <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
+                            <option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option>
+                            <option value="10">Oct</option><option value="11">Nov</option><option value="12" selected>Dec</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-success w-100" onclick="generateStatement()">
+                            <i class="bi bi-file-earmark-plus me-1"></i>Generate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="kpi-card kpi-revenue" style="height:100%">
+            <div class="kpi-icon"><i class="bi bi-receipt"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Statements</div>
+                <div class="kpi-value" id="kpi-total">—</div>
+                <div class="kpi-sub">generated</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statement Detail (shown after generate) -->
+<div class="d-none" id="detail-section">
+    <div class="data-card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0 fw-semibold" id="detail-title">Statement</h6>
+            <div>
+                <button class="btn btn-sm btn-outline-light" onclick="viewHTML()"><i class="bi bi-printer me-1"></i>Print View</button>
+            </div>
+        </div>
+        <div class="p-3">
+            <div class="row g-3 mb-3">
+                <div class="col-md-3"><div class="text-muted small">Physician</div><div class="fw-semibold" id="detail-physician"></div></div>
+                <div class="col-md-2"><div class="text-muted small">Period</div><div class="fw-semibold" id="detail-period"></div></div>
+                <div class="col-md-2"><div class="text-muted small">Total Owed</div><div class="fw-semibold text-accent-green" id="detail-owed"></div></div>
+                <div class="col-md-2"><div class="text-muted small">Total Paid</div><div class="fw-semibold" id="detail-paid"></div></div>
+                <div class="col-md-2"><div class="text-muted small">Balance</div><div class="fw-semibold text-warning" id="detail-balance"></div></div>
+                <div class="col-md-1"><span class="badge-status" id="detail-status"></span></div>
+            </div>
+        </div>
+        <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+            <table class="table table-dark table-striped table-hover mb-0">
+                <thead><tr><th>Date</th><th>Patient</th><th>Scan</th><th>Modality</th><th>Insurance</th><th>Amount</th></tr></thead>
+                <tbody id="detail-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Statements List -->
+<div class="data-card">
+    <div class="card-header"><h6 class="mb-0 fw-semibold">All Statements</h6></div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead><tr><th>Physician</th><th>Period</th><th>Owed</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead>
+            <tbody id="list-tbody"><tr><td colspan="6" class="text-center text-muted py-4">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentStatementId = null;
+document.addEventListener('DOMContentLoaded', loadStatements);
+
+async function loadStatements() {
+    const data = await fetchJSON('/api/statements');
+    document.getElementById('kpi-total').textContent = formatNumber(data.total);
+    const tbody = document.getElementById('list-tbody');
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No statements generated yet</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.items.map(s => `<tr>
+        <td class="fw-semibold">${s.physician_name}</td>
+        <td>${s.period}</td>
+        <td class="text-accent-green">${formatCurrency(s.total_owed)}</td>
+        <td>${formatCurrency(s.total_paid)}</td>
+        <td class="text-warning fw-semibold">${formatCurrency(s.balance)}</td>
+        <td>${statusBadge(s.status)}</td>
+    </tr>`).join('');
+}
+
+async function generateStatement() {
+    const physician = document.getElementById('gen-physician').value.trim();
+    if (!physician) return;
+    const year = parseInt(document.getElementById('gen-year').value);
+    const month = parseInt(document.getElementById('gen-month').value);
+    const resp = await fetch('/api/statements/generate', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ physician_name: physician, year, month })
+    });
+    const data = await resp.json();
+    showDetail(data);
+    loadStatements();
+}
+
+function showDetail(data) {
+    currentStatementId = data.statement_id;
+    document.getElementById('detail-section').classList.remove('d-none');
+    document.getElementById('detail-title').textContent = `Statement #${data.statement_id}`;
+    document.getElementById('detail-physician').textContent = data.physician_name;
+    document.getElementById('detail-period').textContent = data.period;
+    document.getElementById('detail-owed').textContent = formatCurrency(data.total_owed);
+    document.getElementById('detail-paid').textContent = formatCurrency(data.total_paid);
+    document.getElementById('detail-balance').textContent = formatCurrency(data.balance);
+    document.getElementById('detail-status').textContent = data.status;
+
+    document.getElementById('detail-tbody').innerHTML = (data.line_items || []).map(l => `<tr>
+        <td>${l.service_date || '—'}</td><td>${l.patient_name}</td><td>${l.scan_type}</td>
+        <td>${l.modality}</td><td>${l.insurance_carrier}</td>
+        <td class="text-accent-green">${formatCurrency(l.total_payment)}</td>
+    </tr>`).join('');
+}
+
+function viewHTML() {
+    if (currentStatementId) window.open('/api/statements/' + currentStatementId + '/html', '_blank');
+}
+
+function statusBadge(s) {
+    const map = { DRAFT:'background:rgba(148,163,184,0.15);color:#94a3b8', PARTIAL:'background:rgba(251,191,36,0.15);color:#fbbf24', PAID:'background:rgba(52,211,153,0.15);color:#34d399' };
+    return `<span class="badge-status" style="${map[s] || ''}">${s}</span>`;
+}
+</script>
+{% endblock %}

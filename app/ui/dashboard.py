@@ -53,3 +53,38 @@ def schedule_page():
 @ui_bp.route("/era-payments")
 def era_payments_page():
     return render_template("era_payments.html")
+
+
+@ui_bp.route("/match-review")
+def match_review_page():
+    return render_template("match_review.html")
+
+
+@ui_bp.route("/denial-queue")
+def denial_queue_page():
+    return render_template("denial_queue.html")
+
+
+@ui_bp.route("/psma")
+def psma_page():
+    return render_template("psma_dashboard.html")
+
+
+@ui_bp.route("/gado")
+def gado_page():
+    return render_template("gado_dashboard.html")
+
+
+@ui_bp.route("/denial-analytics")
+def denial_analytics_page():
+    return render_template("denial_analytics.html")
+
+
+@ui_bp.route("/payment-reconciliation")
+def payment_reconciliation_page():
+    return render_template("payment_reconciliation.html")
+
+
+@ui_bp.route("/statements")
+def statements_page():
+    return render_template("statements.html")
