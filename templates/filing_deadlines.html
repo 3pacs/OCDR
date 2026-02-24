@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Filing Deadlines{% endblock %}
+{% block page_title %}Timely Filing Deadline Tracker{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Past Deadline</div>
+                <div class="kpi-value text-accent-red" id="stat-past">—</div>
+                <div class="kpi-sub">Cannot be filed — revenue lost</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-alarm-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Warning (30 days)</div>
+                <div class="kpi-value text-accent-yellow" id="stat-warning">—</div>
+                <div class="kpi-sub">Urgent: file immediately</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-check-circle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Safe</div>
+                <div class="kpi-value text-accent-green" id="stat-safe">—</div>
+                <div class="kpi-sub">Still within filing window</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <label class="text-muted small fw-semibold">Filter:</label>
+    <select class="form-select" id="status-filter" onchange="applyFilter()">
+        <option value="">All Statuses</option>
+        <option value="PAST_DEADLINE">Past Deadline</option>
+        <option value="WARNING">Warning</option>
+        <option value="SAFE">Safe</option>
+    </select>
+</div>
+
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Filing Deadline Details</h6>
+        <span class="text-muted small" id="table-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Service Date</th>
+                    <th>Carrier</th>
+                    <th>Modality</th>
+                    <th>Deadline</th>
+                    <th>Days Left</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="deadline-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allData = [];
+
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/filing-deadlines');
+    allData = data.items;
+
+    document.getElementById('stat-past').textContent = formatNumber(data.past_deadline);
+    document.getElementById('stat-warning').textContent = formatNumber(data.warning);
+    document.getElementById('stat-safe').textContent = formatNumber(data.safe);
+
+    renderTable(allData);
+});
+
+function applyFilter() {
+    const status = document.getElementById('status-filter').value;
+    const filtered = status ? allData.filter(d => d.status === status) : allData;
+    renderTable(filtered);
+}
+
+function renderTable(items) {
+    document.getElementById('table-count').textContent = items.length + ' records';
+    const tbody = document.getElementById('deadline-table');
+    tbody.innerHTML = items.slice(0, 200).map(r => `
+        <tr>
+            <td class="fw-medium">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.insurance_carrier}</td>
+            <td><span class="badge bg-primary-subtle text-primary-emphasis">${r.modality}</span></td>
+            <td>${formatDate(r.deadline_date)}</td>
+            <td class="${r.days_remaining < 0 ? 'text-accent-red fw-semibold' : r.days_remaining <= 30 ? 'text-accent-yellow fw-semibold' : ''}">${r.days_remaining}d</td>
+            <td>${statusBadge(r.status)}</td>
+        </tr>
+    `).join('');
+}
+</script>
+{% endblock %}

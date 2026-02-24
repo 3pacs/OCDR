@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- KPI Cards Row -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Revenue</div>
+                <div class="kpi-value" id="kpi-revenue">—</div>
+                <div class="kpi-sub" id="kpi-records">Loading...</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-danger clickable" onclick="window.location='/denials'">
+            <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Unpaid / Denied</div>
+                <div class="kpi-value" id="kpi-denials">—</div>
+                <div class="kpi-sub">Claims with $0 collected</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-warning clickable" onclick="window.location='/underpayments'">
+            <div class="kpi-icon"><i class="bi bi-arrow-down-circle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Underpayment Gap</div>
+                <div class="kpi-value" id="kpi-underpayment">—</div>
+                <div class="kpi-sub" id="kpi-underpayment-count">Flagged claims</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-alert clickable" onclick="window.location='/filing-deadlines'">
+            <div class="kpi-icon"><i class="bi bi-alarm-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Filing Deadline Alerts</div>
+                <div class="kpi-value" id="kpi-deadlines">—</div>
+                <div class="kpi-sub" id="kpi-deadline-warning">Past deadline + warning</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Secondary row of KPI cards -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-4 col-md-6">
+        <div class="kpi-card kpi-info clickable" onclick="window.location='/secondary'">
+            <div class="kpi-icon"><i class="bi bi-layers-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Secondary Follow-Up</div>
+                <div class="kpi-value" id="kpi-secondary">—</div>
+                <div class="kpi-sub" id="kpi-secondary-est">Estimated recovery</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-6">
+        <div class="kpi-card kpi-payer clickable" onclick="window.location='/payers'">
+            <div class="kpi-icon"><i class="bi bi-building-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Payer Alerts</div>
+                <div class="kpi-value" id="kpi-payer-alerts">—</div>
+                <div class="kpi-sub">Revenue drop alerts</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4 col-md-6">
+        <div class="kpi-card kpi-physician clickable" onclick="window.location='/physicians'">
+            <div class="kpi-icon"><i class="bi bi-person-badge-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Top Physicians</div>
+                <div class="kpi-value" id="kpi-top-physician">—</div>
+                <div class="kpi-sub" id="kpi-physician-pct">Of total revenue</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-8">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Monthly Revenue Trend</h6>
+                <div class="chart-legend" id="revenue-legend"></div>
+            </div>
+            <div class="chart-body">
+                <canvas id="revenueChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Revenue by Modality</h6>
+            </div>
+            <div class="chart-body chart-body-doughnut">
+                <canvas id="modalityChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bottom Row: Carrier bar chart + recent alerts -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-7">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Revenue by Carrier</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="carrierChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Payer Alerts</h6>
+            </div>
+            <div class="chart-body p-0">
+                <div class="alert-list" id="alert-list">
+                    <div class="text-center text-muted py-4">Loading alerts...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboard();
+    setInterval(loadDashboard, 60000);
+});
+
+async function loadDashboard() {
+    try {
+        const [stats, byMonth, byCarrier, byModality, payerData, physicians] = await Promise.all([
+            fetchJSON('/api/dashboard/stats'),
+            fetchJSON('/api/dashboard/revenue-by-month'),
+            fetchJSON('/api/dashboard/revenue-by-carrier'),
+            fetchJSON('/api/dashboard/revenue-by-modality'),
+            fetchJSON('/api/payer-monitor'),
+            fetchJSON('/api/physicians?limit=5'),
+        ]);
+
+        // KPI cards
+        document.getElementById('kpi-revenue').textContent = formatCurrency(stats.total_revenue);
+        document.getElementById('kpi-records').textContent = formatNumber(stats.total_records) + ' total claims';
+        document.getElementById('kpi-denials').textContent = formatNumber(stats.unpaid_claims);
+        document.getElementById('kpi-underpayment').textContent = formatCurrency(stats.underpayments.total_variance);
+        document.getElementById('kpi-underpayment-count').textContent = formatNumber(stats.underpayments.total_flagged) + ' flagged claims';
+        document.getElementById('kpi-deadlines').textContent = formatNumber(stats.filing_deadlines.past_deadline + stats.filing_deadlines.warning);
+        document.getElementById('kpi-deadline-warning').textContent = stats.filing_deadlines.past_deadline + ' past deadline, ' + stats.filing_deadlines.warning + ' warning';
+        document.getElementById('kpi-secondary').textContent = formatNumber(stats.secondary_followup.count) + ' claims';
+        document.getElementById('kpi-secondary-est').textContent = 'Est. recovery: ' + formatCurrency(stats.secondary_followup.estimated_recovery);
+
+        // Payer alerts
+        document.getElementById('kpi-payer-alerts').textContent = payerData.alerts.length;
+        renderAlertList(payerData.alerts);
+
+        // Top physician
+        if (physicians.length > 0) {
+            document.getElementById('kpi-top-physician').textContent = physicians[0].name;
+            document.getElementById('kpi-physician-pct').textContent = physicians[0].pct_of_total + '% of total revenue';
+        }
+
+        // Charts
+        renderRevenueChart(byMonth);
+        renderCarrierChart(byCarrier);
+        renderModalityChart(byModality);
+
+        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+        console.error('Dashboard load error:', err);
+    }
+}
+
+let revenueChartInstance = null;
+function renderRevenueChart(data) {
+    const ctx = document.getElementById('revenueChart').getContext('2d');
+    if (revenueChartInstance) revenueChartInstance.destroy();
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(99, 179, 237, 0.3)');
+    gradient.addColorStop(1, 'rgba(99, 179, 237, 0.0)');
+
+    revenueChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.month),
+            datasets: [{
+                label: 'Revenue',
+                data: data.map(d => d.revenue),
+                borderColor: '#63b3ed',
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 2,
+                pointHoverRadius: 6,
+                borderWidth: 2.5,
+            }, {
+                label: 'Claims',
+                data: data.map(d => d.claim_count),
+                borderColor: '#a78bfa',
+                backgroundColor: 'transparent',
+                borderDash: [5, 5],
+                tension: 0.4,
+                pointRadius: 0,
+                borderWidth: 1.5,
+                yAxisID: 'y1',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#94a3b8', boxWidth: 12, padding: 20 } },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleColor: '#f1f5f9',
+                    bodyColor: '#cbd5e1',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    padding: 12,
+                    callbacks: {
+                        label: function(ctx) {
+                            if (ctx.datasetIndex === 0) return 'Revenue: ' + formatCurrency(ctx.raw);
+                            return 'Claims: ' + formatNumber(ctx.raw);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
+                y: {
+                    grid: { color: 'rgba(148,163,184,0.08)' },
+                    ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' },
+                },
+                y1: {
+                    position: 'right',
+                    grid: { display: false },
+                    ticks: { color: '#a78bfa', callback: v => v },
+                },
+            }
+        }
+    });
+}
+
+let carrierChartInstance = null;
+function renderCarrierChart(data) {
+    const ctx = document.getElementById('carrierChart').getContext('2d');
+    if (carrierChartInstance) carrierChartInstance.destroy();
+
+    const top10 = data.slice(0, 10);
+    const colors = [
+        '#63b3ed', '#a78bfa', '#f472b6', '#34d399', '#fbbf24',
+        '#fb923c', '#38bdf8', '#c084fc', '#f87171', '#4ade80'
+    ];
+
+    carrierChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: top10.map(d => d.carrier),
+            datasets: [{
+                label: 'Revenue',
+                data: top10.map(d => d.revenue),
+                backgroundColor: colors,
+                borderRadius: 6,
+                borderSkipped: false,
+                barPercentage: 0.7,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: {
+                        label: ctx => formatCurrency(ctx.raw) + ' (' + formatNumber(data[ctx.dataIndex].claim_count) + ' claims)'
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(148,163,184,0.08)' },
+                    ticks: { color: '#64748b', callback: v => '$' + (v/1000000).toFixed(1) + 'M' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8', font: { weight: 500 } }
+                }
+            }
+        }
+    });
+}
+
+let modalityChartInstance = null;
+function renderModalityChart(data) {
+    const ctx = document.getElementById('modalityChart').getContext('2d');
+    if (modalityChartInstance) modalityChartInstance.destroy();
+
+    const colors = ['#63b3ed', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb923c'];
+
+    modalityChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.map(d => d.modality),
+            datasets: [{
+                data: data.map(d => d.revenue),
+                backgroundColor: colors,
+                borderWidth: 0,
+                hoverOffset: 8,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%',
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#94a3b8', padding: 16, usePointStyle: true, pointStyle: 'circle' }
+                },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: {
+                        label: ctx => ctx.label + ': ' + formatCurrency(ctx.raw)
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderAlertList(alerts) {
+    const list = document.getElementById('alert-list');
+    if (alerts.length === 0) {
+        list.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-check-circle fs-3 d-block mb-2"></i>No active payer alerts</div>';
+        return;
+    }
+    list.innerHTML = alerts.map(a => `
+        <div class="alert-item alert-${a.severity}">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-semibold">${a.carrier}</span>
+                    <span class="badge bg-${a.severity === 'critical' ? 'danger' : 'warning'}-subtle text-${a.severity === 'critical' ? 'danger' : 'warning'}-emphasis ms-2">${a.severity.toUpperCase()}</span>
+                </div>
+                <span class="text-danger fw-semibold">${a.revenue_change_pct.toFixed(1)}%</span>
+            </div>
+            <div class="text-muted small mt-1">
+                ${formatCurrency(a.prior_avg_revenue)} avg &rarr; ${formatCurrency(a.current_revenue)} current
+            </div>
+        </div>
+    `).join('');
+}
+</script>
+{% endblock %}
