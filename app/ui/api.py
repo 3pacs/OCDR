@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, case, extract
 
-from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord
+from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord, EraPayment, EraClaimLine
 
 api_bp = Blueprint("api", __name__)
 
@@ -638,6 +638,258 @@ def schedule_import_config():
         "exists": exists,
         "pending_files": file_count,
     })
+
+
+# ══════════════════════════════════════════════════════════════════
+#  835 ERA Upload & Parsing
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/era/upload", methods=["POST"])
+def era_upload():
+    """Upload and parse one or more 835 EDI files.
+
+    Accepts multipart/form-data with field name 'files'.
+    Parses each file, stores EraPayment + EraClaimLine records.
+    Returns per-file results summary.
+    """
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.parser.era_835_parser import parse_835
+
+    if "files" not in request.files:
+        return jsonify({"error": "No files provided. Use field name 'files'."}), 400
+
+    files = request.files.getlist("files")
+    if not files or all(f.filename == "" for f in files):
+        return jsonify({"error": "No files selected"}), 400
+
+    # Ensure upload dir exists
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "835")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    results = []
+    total_payments = 0
+    total_claims = 0
+
+    for f in files:
+        filename = secure_filename(f.filename)
+        if not filename:
+            continue
+
+        # Save to disk
+        filepath = os.path.join(upload_dir, filename)
+        f.save(filepath)
+
+        # Parse
+        raw_text = open(filepath, "r", encoding="utf-8", errors="replace").read()
+        parsed = parse_835(raw_text, filename=filename)
+
+        if parsed["errors"]:
+            results.append({
+                "filename": filename,
+                "status": "error",
+                "errors": parsed["errors"],
+                "payments": 0,
+                "claims": 0,
+            })
+            continue
+
+        # Store EraPayment
+        payment_info = parsed["payment"]
+        era_payment = EraPayment(
+            filename=filename,
+            check_eft_number=payment_info.get("check_eft_number"),
+            payment_amount=payment_info.get("payment_amount", 0.0),
+            payment_date=payment_info.get("payment_date"),
+            payment_method=payment_info.get("payment_method"),
+            payer_name=payment_info.get("payer_name"),
+        )
+        db.session.add(era_payment)
+        db.session.flush()  # Get the ID
+
+        # Store EraClaimLines
+        claim_count = 0
+        for claim in parsed["claims"]:
+            # Collect CPT codes and adjustments from service lines
+            cpt_codes = []
+            all_adjustments = list(claim.get("adjustments", []))
+            for svc in claim.get("service_lines", []):
+                if svc.get("cpt_code"):
+                    cpt_codes.append(svc["cpt_code"])
+                all_adjustments.extend(svc.get("adjustments", []))
+
+            # Primary adjustment (first one, or aggregated)
+            primary_adj = all_adjustments[0] if all_adjustments else {}
+            total_adj_amount = sum(a.get("amount", 0) for a in all_adjustments)
+
+            era_claim = EraClaimLine(
+                era_payment_id=era_payment.id,
+                claim_id=claim.get("claim_id"),
+                claim_status=claim.get("claim_status"),
+                billed_amount=claim.get("billed_amount", 0.0),
+                paid_amount=claim.get("paid_amount", 0.0),
+                patient_name_835=claim.get("patient_name"),
+                service_date_835=claim.get("service_date"),
+                cpt_code=", ".join(cpt_codes) if cpt_codes else None,
+                cas_group_code=primary_adj.get("group_code"),
+                cas_reason_code=primary_adj.get("reason_code"),
+                cas_adjustment_amount=total_adj_amount if total_adj_amount else None,
+            )
+            db.session.add(era_claim)
+            claim_count += 1
+
+        db.session.commit()
+        total_payments += 1
+        total_claims += claim_count
+
+        results.append({
+            "filename": filename,
+            "status": "success",
+            "payment_id": era_payment.id,
+            "payer": payment_info.get("payer_name"),
+            "check_number": payment_info.get("check_eft_number"),
+            "payment_amount": payment_info.get("payment_amount", 0.0),
+            "payment_date": payment_info.get("payment_date").isoformat() if payment_info.get("payment_date") else None,
+            "claims": claim_count,
+            "errors": [],
+        })
+
+    return jsonify({
+        "results": results,
+        "total_files": len(results),
+        "total_payments": total_payments,
+        "total_claims": total_claims,
+    })
+
+
+@api_bp.route("/era/payments")
+def era_payments():
+    """List all ERA payments with pagination."""
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    payer = request.args.get("payer")
+
+    query = EraPayment.query
+    if payer:
+        query = query.filter(EraPayment.payer_name.ilike(f"%{payer}%"))
+
+    payments = query.order_by(EraPayment.parsed_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        "items": [p.to_dict() for p in payments.items],
+        "total": payments.total,
+        "page": page,
+        "pages": payments.pages,
+    })
+
+
+@api_bp.route("/era/payments/<int:payment_id>")
+def era_payment_detail(payment_id):
+    """Get a single ERA payment with all its claim lines."""
+    payment = EraPayment.query.get_or_404(payment_id)
+    claims = EraClaimLine.query.filter_by(era_payment_id=payment_id).order_by(
+        EraClaimLine.paid_amount.desc()
+    ).all()
+
+    return jsonify({
+        "payment": payment.to_dict(),
+        "claims": [c.to_dict() for c in claims],
+    })
+
+
+@api_bp.route("/era/claims")
+def era_claims():
+    """List all ERA claim lines with pagination and filters."""
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    patient = request.args.get("patient")
+    status = request.args.get("status")
+    payment_id = request.args.get("payment_id", type=int)
+
+    query = EraClaimLine.query
+    if patient:
+        query = query.filter(EraClaimLine.patient_name_835.ilike(f"%{patient}%"))
+    if status:
+        query = query.filter(EraClaimLine.claim_status.ilike(f"%{status}%"))
+    if payment_id:
+        query = query.filter(EraClaimLine.era_payment_id == payment_id)
+
+    claims = query.order_by(EraClaimLine.id.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    return jsonify({
+        "items": [c.to_dict() for c in claims.items],
+        "total": claims.total,
+        "page": page,
+        "pages": claims.pages,
+    })
+
+
+@api_bp.route("/era/stats")
+def era_stats():
+    """ERA parsing summary stats."""
+    total_payments = EraPayment.query.count()
+    total_claims = EraClaimLine.query.count()
+    total_paid = db.session.query(func.sum(EraPayment.payment_amount)).scalar() or 0
+    total_billed = db.session.query(func.sum(EraClaimLine.billed_amount)).scalar() or 0
+    total_claim_paid = db.session.query(func.sum(EraClaimLine.paid_amount)).scalar() or 0
+    denied_count = EraClaimLine.query.filter(
+        EraClaimLine.claim_status.ilike("%DENIED%")
+    ).count()
+    adjustment_total = db.session.query(
+        func.sum(EraClaimLine.cas_adjustment_amount)
+    ).scalar() or 0
+
+    # By payer
+    by_payer = db.session.query(
+        EraPayment.payer_name,
+        func.sum(EraPayment.payment_amount).label("total"),
+        func.count(EraPayment.id).label("count"),
+    ).group_by(EraPayment.payer_name).order_by(
+        func.sum(EraPayment.payment_amount).desc()
+    ).limit(10).all()
+
+    # By payment method
+    by_method = db.session.query(
+        EraPayment.payment_method,
+        func.count(EraPayment.id).label("count"),
+        func.sum(EraPayment.payment_amount).label("total"),
+    ).group_by(EraPayment.payment_method).all()
+
+    return jsonify({
+        "total_payments": total_payments,
+        "total_claims": total_claims,
+        "total_paid": round(total_paid, 2),
+        "total_billed": round(total_billed, 2),
+        "total_claim_paid": round(total_claim_paid, 2),
+        "denied_count": denied_count,
+        "adjustment_total": round(adjustment_total, 2),
+        "by_payer": [{"payer": r.payer_name, "total": round(r.total, 2), "count": r.count} for r in by_payer],
+        "by_method": [{"method": r.payment_method, "count": r.count, "total": round(r.total or 0, 2)} for r in by_method],
+    })
+
+
+@api_bp.route("/era/by-month")
+def era_by_month():
+    """ERA payments aggregated by month."""
+    results = db.session.query(
+        func.strftime("%Y-%m", EraPayment.payment_date).label("month"),
+        func.sum(EraPayment.payment_amount).label("total"),
+        func.count(EraPayment.id).label("count"),
+    ).filter(
+        EraPayment.payment_date.isnot(None)
+    ).group_by(
+        func.strftime("%Y-%m", EraPayment.payment_date)
+    ).order_by("month").all()
+
+    return jsonify([{
+        "month": r.month,
+        "total": round(r.total, 2),
+        "count": r.count,
+    } for r in results])
 
 
 # --- Helper functions ---

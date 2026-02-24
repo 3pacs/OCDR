@@ -48,3 +48,8 @@ def duplicates_page():
 @ui_bp.route("/schedule")
 def schedule_page():
     return render_template("schedule.html")
+
+
+@ui_bp.route("/era-payments")
+def era_payments_page():
+    return render_template("era_payments.html")

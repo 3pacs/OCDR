@@ -69,6 +69,19 @@ class EraPayment(db.Model):
 
     claim_lines = db.relationship("EraClaimLine", backref="era_payment", lazy=True)
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "filename": self.filename,
+            "check_eft_number": self.check_eft_number,
+            "payment_amount": self.payment_amount,
+            "payment_date": self.payment_date.isoformat() if self.payment_date else None,
+            "payment_method": self.payment_method,
+            "payer_name": self.payer_name,
+            "parsed_at": self.parsed_at.isoformat() if self.parsed_at else None,
+            "claim_count": len(self.claim_lines) if self.claim_lines else 0,
+        }
+
 
 class EraClaimLine(db.Model):
     __tablename__ = "era_claim_lines"
@@ -89,6 +102,24 @@ class EraClaimLine(db.Model):
     cas_adjustment_amount = db.Column(db.Float)
     match_confidence = db.Column(db.Float)
     matched_billing_id = db.Column(db.Integer, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "era_payment_id": self.era_payment_id,
+            "claim_id": self.claim_id,
+            "claim_status": self.claim_status,
+            "billed_amount": self.billed_amount,
+            "paid_amount": self.paid_amount,
+            "patient_name_835": self.patient_name_835,
+            "service_date_835": self.service_date_835.isoformat() if self.service_date_835 else None,
+            "cpt_code": self.cpt_code,
+            "cas_group_code": self.cas_group_code,
+            "cas_reason_code": self.cas_reason_code,
+            "cas_adjustment_amount": self.cas_adjustment_amount,
+            "match_confidence": self.match_confidence,
+            "matched_billing_id": self.matched_billing_id,
+        }
 
 
 class Payer(db.Model):

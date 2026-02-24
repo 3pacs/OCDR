@@ -1,0 +1,604 @@
+{% extends "base.html" %}
+{% block title %}835 ERA Payments{% endblock %}
+{% block page_title %}835 ERA Payments{% endblock %}
+
+{% block content %}
+<!-- Upload Zone -->
+<div class="row g-3 mb-4">
+    <div class="col-12">
+        <div id="drop-zone" class="upload-zone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+            <input type="file" id="file-input" multiple accept=".835,.edi,.txt" style="display:none" onchange="handleFiles(this.files)">
+            <div class="upload-content" id="upload-content">
+                <i class="bi bi-cloud-arrow-up fs-1 text-accent-blue"></i>
+                <h6 class="mt-2 mb-1 fw-semibold">Upload 835 ERA Files</h6>
+                <p class="text-muted small mb-2">Drag &amp; drop .835, .edi, or .txt files here, or <a href="#" onclick="document.getElementById('file-input').click(); return false;" class="text-accent-blue">browse</a></p>
+                <small class="text-muted">Supports multiple files at once</small>
+            </div>
+            <div class="upload-progress d-none" id="upload-progress">
+                <div class="spinner-border text-info spinner-border-sm me-2"></div>
+                <span id="upload-status">Uploading and parsing...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Results (hidden until upload) -->
+<div class="row g-3 mb-4 d-none" id="upload-results-row">
+    <div class="col-12">
+        <div class="data-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-semibold">Import Results</h6>
+                <button class="btn btn-sm btn-outline-light" onclick="document.getElementById('upload-results-row').classList.add('d-none')">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="p-3" id="upload-results"></div>
+        </div>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-file-earmark-medical-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">ERA Files Parsed</div>
+                <div class="kpi-value" id="kpi-payments">—</div>
+                <div class="kpi-sub" id="kpi-claims-sub">claim lines</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total ERA Paid</div>
+                <div class="kpi-value" id="kpi-paid">—</div>
+                <div class="kpi-sub" id="kpi-billed-sub">billed</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Denied Claims</div>
+                <div class="kpi-value" id="kpi-denied">—</div>
+                <div class="kpi-sub">from 835 data</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-arrow-left-right"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Adjustments</div>
+                <div class="kpi-value" id="kpi-adjustments">—</div>
+                <div class="kpi-sub">CAS adjustment amounts</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-8">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">ERA Payments by Month</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="monthlyChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">By Payment Method</h6>
+            </div>
+            <div class="chart-body chart-body-doughnut">
+                <canvas id="methodChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Payer Breakdown + Payment List -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-5">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold">Top Payers</h6>
+            </div>
+            <div class="chart-body">
+                <canvas id="payerChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-7">
+        <div class="data-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0 fw-semibold">ERA Payment Files</h6>
+                <span class="text-muted small" id="payment-count"></span>
+            </div>
+            <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+                <table class="table table-dark table-striped table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Payer</th>
+                            <th>Check/EFT</th>
+                            <th>Method</th>
+                            <th>Amount</th>
+                            <th>Date</th>
+                            <th>Claims</th>
+                        </tr>
+                    </thead>
+                    <tbody id="payment-tbody">
+                        <tr><td colspan="7" class="text-center text-muted py-4">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Claim Lines Table -->
+<div class="filter-bar">
+    <select class="form-select" id="filter-status" onchange="loadClaims()">
+        <option value="">All Statuses</option>
+        <option value="PROCESSED_PRIMARY">Primary</option>
+        <option value="PROCESSED_SECONDARY">Secondary</option>
+        <option value="DENIED">Denied</option>
+        <option value="REVERSAL">Reversal</option>
+    </select>
+    <input type="text" class="form-control" id="filter-patient" placeholder="Search patient..." onkeyup="debounceSearch()" style="max-width:250px">
+</div>
+
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Claim Lines (from 835 Data)</h6>
+        <span class="text-muted small" id="claims-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Claim ID</th>
+                    <th>Patient</th>
+                    <th>Service Date</th>
+                    <th>CPT</th>
+                    <th>Billed</th>
+                    <th>Paid</th>
+                    <th>Adj Group</th>
+                    <th>Adj Reason</th>
+                    <th>Adj Amount</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="claims-tbody">
+                <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center p-3">
+        <button class="btn btn-sm btn-outline-light" id="btn-prev" onclick="changePage(-1)" disabled>&laquo; Previous</button>
+        <span class="text-muted small" id="page-info"></span>
+        <button class="btn btn-sm btn-outline-light" id="btn-next" onclick="changePage(1)" disabled>Next &raquo;</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.upload-zone {
+    background: var(--bg-card);
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    padding: 2.5rem;
+    text-align: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+.upload-zone:hover,
+.upload-zone.drag-over {
+    border-color: var(--accent-blue);
+    background: rgba(99,179,237,0.05);
+}
+.upload-zone.drag-over {
+    transform: scale(1.01);
+}
+.upload-progress {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+</style>
+
+<script>
+let claimsPage = 1;
+const claimsPerPage = 50;
+let searchTimeout = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadAll();
+    document.getElementById('drop-zone').addEventListener('click', function(e) {
+        if (e.target.tagName !== 'A') document.getElementById('file-input').click();
+    });
+});
+
+async function loadAll() {
+    try {
+        const [stats, byMonth, payments] = await Promise.all([
+            fetchJSON('/api/era/stats'),
+            fetchJSON('/api/era/by-month'),
+            fetchJSON('/api/era/payments?per_page=100'),
+        ]);
+
+        renderKPIs(stats);
+        renderMonthlyChart(byMonth);
+        renderMethodChart(stats.by_method);
+        renderPayerChart(stats.by_payer);
+        renderPaymentTable(payments);
+        loadClaims();
+
+        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+        console.error('ERA load error:', err);
+    }
+}
+
+function renderKPIs(s) {
+    document.getElementById('kpi-payments').textContent = formatNumber(s.total_payments);
+    document.getElementById('kpi-claims-sub').textContent = formatNumber(s.total_claims) + ' claim lines';
+    document.getElementById('kpi-paid').textContent = formatCurrency(s.total_claim_paid);
+    document.getElementById('kpi-billed-sub').textContent = formatCurrency(s.total_billed) + ' billed';
+    document.getElementById('kpi-denied').textContent = formatNumber(s.denied_count);
+    document.getElementById('kpi-adjustments').textContent = formatCurrency(s.adjustment_total);
+}
+
+/* ── Drag & Drop Upload ─────────────────────────────── */
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById('drop-zone').classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById('drop-zone').classList.remove('drag-over');
+    handleFiles(e.dataTransfer.files);
+}
+
+async function handleFiles(fileList) {
+    if (!fileList || fileList.length === 0) return;
+
+    const content = document.getElementById('upload-content');
+    const progress = document.getElementById('upload-progress');
+    content.classList.add('d-none');
+    progress.classList.remove('d-none');
+    document.getElementById('upload-status').textContent = `Uploading ${fileList.length} file(s)...`;
+
+    const formData = new FormData();
+    for (const f of fileList) {
+        formData.append('files', f);
+    }
+
+    try {
+        const resp = await fetch('/api/era/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            showUploadResults(data);
+            loadAll(); // Refresh everything
+        } else {
+            showUploadResults({ results: [{ filename: 'Upload', status: 'error', errors: [data.error || 'Unknown error'] }] });
+        }
+    } catch (err) {
+        showUploadResults({ results: [{ filename: 'Upload', status: 'error', errors: [err.message] }] });
+    }
+
+    content.classList.remove('d-none');
+    progress.classList.add('d-none');
+}
+
+function showUploadResults(data) {
+    const container = document.getElementById('upload-results');
+    const row = document.getElementById('upload-results-row');
+    row.classList.remove('d-none');
+
+    let html = '';
+    for (const r of data.results || []) {
+        const icon = r.status === 'success'
+            ? '<i class="bi bi-check-circle-fill text-accent-green me-2"></i>'
+            : '<i class="bi bi-x-circle-fill text-accent-red me-2"></i>';
+
+        html += `<div class="d-flex align-items-start gap-2 mb-2 p-2" style="background:rgba(255,255,255,0.02);border-radius:8px;">
+            ${icon}
+            <div>
+                <span class="fw-semibold">${r.filename}</span>`;
+        if (r.status === 'success') {
+            html += ` — <span class="text-accent-green">${r.claims} claims parsed</span>
+                <span class="text-muted ms-2">${r.payer || ''}</span>
+                <span class="text-muted ms-2">${formatCurrency(r.payment_amount)}</span>`;
+        } else {
+            html += ` — <span class="text-accent-red">${r.errors.join(', ')}</span>`;
+        }
+        html += `</div></div>`;
+    }
+
+    if (data.total_payments > 0) {
+        html += `<div class="mt-2 pt-2 small fw-semibold" style="border-top:1px solid var(--border-color)">
+            Total: ${data.total_payments} payment(s), ${data.total_claims} claim line(s) imported
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
+
+/* ── Monthly Chart ────────────────────────────────────── */
+let monthlyChartInstance = null;
+function renderMonthlyChart(data) {
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    if (monthlyChartInstance) monthlyChartInstance.destroy();
+
+    if (!data.length) {
+        ctx.canvas.parentElement.innerHTML = '<div class="empty-state"><i class="bi bi-bar-chart"></i>No ERA data yet. Upload 835 files above.</div>';
+        return;
+    }
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(52,211,153,0.3)');
+    gradient.addColorStop(1, 'rgba(52,211,153,0.0)');
+
+    monthlyChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => d.month),
+            datasets: [{
+                label: 'ERA Payments',
+                data: data.map(d => d.total),
+                borderColor: '#34d399',
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                pointHoverRadius: 6,
+                borderWidth: 2.5,
+            }, {
+                label: 'File Count',
+                data: data.map(d => d.count),
+                borderColor: '#a78bfa',
+                backgroundColor: 'transparent',
+                borderDash: [5, 5],
+                tension: 0.4,
+                pointRadius: 0,
+                borderWidth: 1.5,
+                yAxisID: 'y1',
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, position: 'top', labels: { color: '#94a3b8', boxWidth: 12, padding: 20 } },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    titleColor: '#f1f5f9',
+                    bodyColor: '#cbd5e1',
+                    callbacks: {
+                        label: function(ctx) {
+                            if (ctx.datasetIndex === 0) return 'Paid: ' + formatCurrency(ctx.raw);
+                            return 'Files: ' + ctx.raw;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', maxTicksLimit: 12 } },
+                y: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' } },
+                y1: { position: 'right', grid: { display: false }, ticks: { color: '#a78bfa' } },
+            }
+        }
+    });
+}
+
+/* ── Payment Method Doughnut ──────────────────────────── */
+let methodChartInstance = null;
+function renderMethodChart(data) {
+    const ctx = document.getElementById('methodChart').getContext('2d');
+    if (methodChartInstance) methodChartInstance.destroy();
+
+    if (!data.length) {
+        ctx.canvas.parentElement.innerHTML = '<div class="empty-state"><i class="bi bi-pie-chart"></i>No data yet</div>';
+        return;
+    }
+
+    const colorMap = { CHK: '#63b3ed', ACH: '#34d399', FWT: '#fbbf24', NON: '#f87171' };
+    const colors = data.map(d => colorMap[d.method] || '#94a3b8');
+
+    methodChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.map(d => d.method || 'Unknown'),
+            datasets: [{ data: data.map(d => d.count), backgroundColor: colors, borderWidth: 0, hoverOffset: 8 }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '65%',
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 16, usePointStyle: true, pointStyle: 'circle' } },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: { label: ctx => ctx.label + ': ' + ctx.raw + ' payments' }
+                }
+            }
+        }
+    });
+}
+
+/* ── Payer Bar Chart ──────────────────────────────────── */
+let payerChartInstance = null;
+function renderPayerChart(data) {
+    const ctx = document.getElementById('payerChart').getContext('2d');
+    if (payerChartInstance) payerChartInstance.destroy();
+
+    if (!data.length) {
+        ctx.canvas.parentElement.innerHTML = '<div class="empty-state"><i class="bi bi-building"></i>No payer data yet</div>';
+        return;
+    }
+
+    const colors = ['#63b3ed','#a78bfa','#f472b6','#34d399','#fbbf24','#fb923c','#38bdf8','#c084fc','#f87171','#4ade80'];
+
+    payerChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.payer || 'Unknown'),
+            datasets: [{
+                label: 'Paid',
+                data: data.map(d => d.total),
+                backgroundColor: colors.slice(0, data.length),
+                borderRadius: 6,
+                barPercentage: 0.7,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: { label: ctx => formatCurrency(ctx.raw) + ' (' + data[ctx.dataIndex].count + ' files)' }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' } },
+                y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { weight: 500 } } }
+            }
+        }
+    });
+}
+
+/* ── Payments Table ───────────────────────────────────── */
+function renderPaymentTable(data) {
+    const tbody = document.getElementById('payment-tbody');
+    document.getElementById('payment-count').textContent = formatNumber(data.total) + ' files';
+
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><i class="bi bi-inbox fs-3 d-block mb-2"></i>No 835 files parsed yet. Upload files above.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = data.items.map(p => `
+        <tr style="cursor:pointer" onclick="filterClaimsByPayment(${p.id})">
+            <td class="fw-semibold text-accent-blue">${p.filename}</td>
+            <td>${p.payer_name || '—'}</td>
+            <td><code>${p.check_eft_number || '—'}</code></td>
+            <td>${methodBadge(p.payment_method)}</td>
+            <td class="text-accent-green fw-semibold">${formatCurrency(p.payment_amount)}</td>
+            <td>${formatDate(p.payment_date)}</td>
+            <td>${p.claim_count}</td>
+        </tr>
+    `).join('');
+}
+
+function filterClaimsByPayment(paymentId) {
+    claimsPage = 1;
+    document.getElementById('filter-patient').value = '';
+    document.getElementById('filter-status').value = '';
+    loadClaims(paymentId);
+    document.querySelector('.filter-bar:last-of-type').scrollIntoView({ behavior: 'smooth' });
+}
+
+function methodBadge(method) {
+    const styles = {
+        CHK: 'background:rgba(99,179,237,0.15);color:#63b3ed',
+        ACH: 'background:rgba(52,211,153,0.15);color:#34d399',
+        FWT: 'background:rgba(251,191,36,0.15);color:#fbbf24',
+        NON: 'background:rgba(248,113,113,0.15);color:#f87171',
+    };
+    const s = styles[method] || '';
+    return `<span class="badge-status" style="${s}">${method || '—'}</span>`;
+}
+
+/* ── Claims Table ─────────────────────────────────────── */
+let activePaymentId = null;
+
+async function loadClaims(paymentId) {
+    if (paymentId !== undefined) activePaymentId = paymentId;
+
+    const status = document.getElementById('filter-status').value;
+    const patient = document.getElementById('filter-patient').value;
+
+    let url = `/api/era/claims?page=${claimsPage}&per_page=${claimsPerPage}`;
+    if (status) url += '&status=' + encodeURIComponent(status);
+    if (patient) url += '&patient=' + encodeURIComponent(patient);
+    if (activePaymentId) url += '&payment_id=' + activePaymentId;
+
+    const data = await fetchJSON(url);
+    const tbody = document.getElementById('claims-tbody');
+
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4"><i class="bi bi-inbox fs-3 d-block mb-2"></i>No claim lines found</td></tr>';
+    } else {
+        tbody.innerHTML = data.items.map(c => `
+            <tr>
+                <td><code>${c.claim_id || '—'}</code></td>
+                <td class="fw-semibold">${c.patient_name_835 || '—'}</td>
+                <td>${formatDate(c.service_date_835)}</td>
+                <td><code>${c.cpt_code || '—'}</code></td>
+                <td>${formatCurrency(c.billed_amount)}</td>
+                <td class="fw-semibold ${c.paid_amount > 0 ? 'text-accent-green' : 'text-accent-red'}">${formatCurrency(c.paid_amount)}</td>
+                <td>${c.cas_group_code || '—'}</td>
+                <td>${c.cas_reason_code || '—'}</td>
+                <td>${c.cas_adjustment_amount ? formatCurrency(c.cas_adjustment_amount) : '—'}</td>
+                <td>${claimStatusBadge(c.claim_status)}</td>
+            </tr>
+        `).join('');
+    }
+
+    document.getElementById('claims-count').textContent = formatNumber(data.total) + ' claim lines' + (activePaymentId ? ' (filtered by file)' : '');
+    document.getElementById('page-info').textContent = 'Page ' + data.page + ' of ' + Math.max(data.pages, 1);
+    document.getElementById('btn-prev').disabled = claimsPage <= 1;
+    document.getElementById('btn-next').disabled = claimsPage >= data.pages;
+}
+
+function changePage(delta) {
+    claimsPage += delta;
+    if (claimsPage < 1) claimsPage = 1;
+    loadClaims();
+}
+
+function debounceSearch() {
+    clearTimeout(searchTimeout);
+    activePaymentId = null;
+    searchTimeout = setTimeout(() => { claimsPage = 1; loadClaims(); }, 300);
+}
+
+function claimStatusBadge(status) {
+    if (!status) return '—';
+    const styles = {
+        PROCESSED_PRIMARY: 'background:rgba(52,211,153,0.15);color:#34d399',
+        PROCESSED_SECONDARY: 'background:rgba(99,179,237,0.15);color:#63b3ed',
+        DENIED: 'background:rgba(248,113,113,0.15);color:#f87171',
+        REVERSAL: 'background:rgba(251,191,36,0.15);color:#fbbf24',
+    };
+    const s = styles[status] || 'background:rgba(148,163,184,0.15);color:#94a3b8';
+    const label = status.replace(/_/g, ' ');
+    return `<span class="badge-status" style="${s}">${label}</span>`;
+}
+</script>
+{% endblock %}
