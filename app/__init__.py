@@ -1,3 +1,4 @@
+import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 
@@ -17,6 +18,9 @@ def create_app(config_class=None):
     else:
         from app.config import Config
         app.config.from_object(Config)
+
+    # Ensure the instance folder exists for SQLite
+    os.makedirs(app.instance_path, exist_ok=True)
 
     db.init_app(app)
 
