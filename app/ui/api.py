@@ -59,6 +59,15 @@ def dashboard_stats():
     # Also count $0 claims as potential denials
     potential_denials = unpaid_count
 
+    # Smart insights for the dashboard
+    try:
+        from app.analytics.smart_insights import generate_insights, forecast_revenue
+        insights = generate_insights()
+        forecast = forecast_revenue(months_ahead=3)
+    except Exception:
+        insights = []
+        forecast = {"status": "unavailable", "forecast": []}
+
     return jsonify({
         "total_records": total_records,
         "total_revenue": round(total_revenue, 2),
@@ -67,6 +76,8 @@ def dashboard_stats():
         "filing_deadlines": deadline_data,
         "secondary_followup": secondary_data,
         "denial_count": potential_denials,
+        "insights": insights,
+        "forecast": forecast,
     })
 
 
@@ -940,6 +951,17 @@ def import_excel():
 
     sheet_name = request.form.get("sheet")
     result = do_import(filepath, sheet_name=sheet_name)
+
+    # Auto-learn fee schedules from imported payment data
+    if result.get("imported", 0) > 0:
+        try:
+            from app.revenue.payment_patterns import suggest_fee_updates, apply_fee_update
+            for s in suggest_fee_updates(min_count=10):
+                if s["direction"] == "NEW":
+                    apply_fee_update(s["carrier"], s["modality"], s["suggested_rate"])
+        except Exception:
+            pass
+
     return jsonify(result)
 
 
@@ -964,6 +986,17 @@ def import_csv_endpoint():
     f.save(filepath)
 
     result = import_csv(filepath)
+
+    # Auto-learn fee schedules from imported payment data
+    if result.get("imported", 0) > 0:
+        try:
+            from app.revenue.payment_patterns import suggest_fee_updates, apply_fee_update
+            for s in suggest_fee_updates(min_count=10):
+                if s["direction"] == "NEW":
+                    apply_fee_update(s["carrier"], s["modality"], s["suggested_rate"])
+        except Exception:
+            pass
+
     return jsonify(result)
 
 
@@ -1894,4 +1927,79 @@ def smart_dashboard_data():
             "name_aliases": active_aliases > 0,
             "denial_learning": total_denial_outcomes >= 10,
         },
+    })
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Smart Insights Engine (Carrier Scoring, Anomalies, Risk, Forecast)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/smart/carrier-scores")
+def smart_carrier_scores():
+    """Carrier behavior scorecards (payment reliability, consistency, grade)."""
+    from app.analytics.smart_insights import score_carriers
+    days = request.args.get("days", 180, type=int)
+    return jsonify({"carriers": score_carriers(days=days)})
+
+
+@api_bp.route("/smart/anomalies")
+def smart_anomalies():
+    """Detect anomalous billing patterns in recent data."""
+    from app.analytics.smart_insights import detect_anomalies
+    days = request.args.get("days", 30, type=int)
+    return jsonify({"anomalies": detect_anomalies(days=days)})
+
+
+@api_bp.route("/smart/denial-risk")
+def smart_denial_risk():
+    """Predictive denial risk score for a carrier/modality combination."""
+    from app.analytics.smart_insights import score_denial_risk
+    carrier = request.args.get("carrier")
+    modality = request.args.get("modality")
+    return jsonify(score_denial_risk(carrier=carrier, modality=modality))
+
+
+@api_bp.route("/smart/denial-risk/<int:billing_id>")
+def smart_denial_risk_record(billing_id):
+    """Predictive denial risk score for a specific billing record."""
+    from app.analytics.smart_insights import score_denial_risk
+    record = BillingRecord.query.get_or_404(billing_id)
+    return jsonify(score_denial_risk(billing_record=record))
+
+
+@api_bp.route("/smart/forecast")
+def smart_forecast():
+    """Revenue forecast for next N months."""
+    from app.analytics.smart_insights import forecast_revenue
+    months = request.args.get("months", 3, type=int)
+    return jsonify(forecast_revenue(months_ahead=months))
+
+
+@api_bp.route("/smart/insights")
+def smart_insights():
+    """Top actionable dashboard insights."""
+    from app.analytics.smart_insights import generate_insights
+    return jsonify({"insights": generate_insights()})
+
+
+@api_bp.route("/smart/auto-fee-learn", methods=["POST"])
+def smart_auto_fee_learn():
+    """Auto-learn fee schedule from payment data and apply suggestions."""
+    from app.revenue.payment_patterns import suggest_fee_updates, apply_fee_update
+    min_count = request.json.get("min_count", 10) if request.is_json else 10
+    auto_apply = request.json.get("auto_apply", False) if request.is_json else False
+    suggestions = suggest_fee_updates(min_count=min_count)
+
+    applied = []
+    if auto_apply:
+        for s in suggestions:
+            if s["direction"] == "NEW":
+                result = apply_fee_update(s["carrier"], s["modality"], s["suggested_rate"])
+                applied.append(result)
+
+    return jsonify({
+        "suggestions": suggestions,
+        "auto_applied": applied,
+        "total_suggestions": len(suggestions),
+        "total_applied": len(applied),
     })

@@ -104,6 +104,31 @@
     </div>
 </div>
 
+<!-- Smart Insights Row -->
+<div class="row g-3 mb-4" id="insights-row" style="display:none;">
+    <div class="col-xl-8">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold"><i class="bi bi-lightbulb-fill text-warning me-2"></i>Smart Insights</h6>
+            </div>
+            <div class="chart-body p-0">
+                <div class="insight-list" id="insight-list"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="mb-0 fw-semibold"><i class="bi bi-graph-up-arrow text-info me-2"></i>Revenue Forecast</h6>
+            </div>
+            <div class="chart-body" id="forecast-body">
+                <div class="text-center text-muted py-3" id="forecast-empty">Insufficient data for forecast</div>
+                <canvas id="forecastChart" style="display:none;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Charts Row -->
 <div class="row g-3 mb-4" id="charts-row">
     <div class="col-xl-8">
@@ -218,6 +243,17 @@ async function loadDashboard() {
         if (byMonth.length > 0) renderRevenueChart(byMonth);
         if (byCarrier.length > 0) renderCarrierChart(byCarrier);
         if (byModality.length > 0) renderModalityChart(byModality);
+
+        // Smart insights & forecast
+        if (stats.insights && stats.insights.length > 0) {
+            document.getElementById('insights-row').style.display = '';
+            renderInsightList(stats.insights);
+        }
+        if (stats.forecast && stats.forecast.status === 'ok') {
+            document.getElementById('forecast-empty').style.display = 'none';
+            document.getElementById('forecastChart').style.display = 'block';
+            renderForecastChart(stats.forecast);
+        }
 
         document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
     } catch (err) {
@@ -406,6 +442,113 @@ function renderAlertList(alerts) {
             </div>
         </div>
     `).join('');
+}
+
+function renderInsightList(insights) {
+    const list = document.getElementById('insight-list');
+    const typeIcons = {
+        ACTION: 'bi-lightning-charge-fill text-primary',
+        ALERT: 'bi-exclamation-triangle-fill text-danger',
+        MONEY: 'bi-cash-coin text-success',
+        SETUP: 'bi-gear-fill text-info',
+        LEARN: 'bi-stars text-warning',
+    };
+    list.innerHTML = insights.map(ins => `
+        <a href="${ins.action || '#'}" class="insight-item d-flex align-items-start gap-3 px-3 py-2 text-decoration-none border-bottom" style="border-color: var(--border-color) !important;">
+            <i class="bi ${typeIcons[ins.type] || 'bi-info-circle text-muted'} mt-1 fs-5"></i>
+            <div class="flex-grow-1">
+                <div class="fw-semibold text-light">${ins.title}</div>
+                <div class="text-muted small">${ins.message}</div>
+            </div>
+            <span class="badge bg-dark-subtle text-light-emphasis small align-self-center">${ins.action_label || 'View'}</span>
+        </a>
+    `).join('');
+}
+
+let forecastChartInstance = null;
+function renderForecastChart(data) {
+    const ctx = document.getElementById('forecastChart').getContext('2d');
+    if (forecastChartInstance) forecastChartInstance.destroy();
+
+    const histLabels = data.historical.map(h => h.month);
+    const histValues = data.historical.map(h => h.revenue);
+    const fcLabels = data.forecast.map(f => f.month);
+    const fcValues = data.forecast.map(f => f.projected_revenue);
+    const fcLow = data.forecast.map(f => f.low_estimate);
+    const fcHigh = data.forecast.map(f => f.high_estimate);
+
+    const allLabels = [...histLabels, ...fcLabels];
+    const histData = [...histValues, ...Array(fcLabels.length).fill(null)];
+    const fcData = [...Array(histLabels.length - 1).fill(null), histValues[histValues.length - 1], ...fcValues];
+    const lowData = [...Array(histLabels.length - 1).fill(null), histValues[histValues.length - 1], ...fcLow];
+    const highData = [...Array(histLabels.length - 1).fill(null), histValues[histValues.length - 1], ...fcHigh];
+
+    forecastChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: allLabels,
+            datasets: [{
+                label: 'Actual',
+                data: histData,
+                borderColor: '#63b3ed',
+                backgroundColor: 'transparent',
+                tension: 0.4,
+                pointRadius: 2,
+                borderWidth: 2,
+            }, {
+                label: 'Forecast',
+                data: fcData,
+                borderColor: '#34d399',
+                borderDash: [6, 3],
+                backgroundColor: 'transparent',
+                tension: 0.4,
+                pointRadius: 3,
+                borderWidth: 2,
+            }, {
+                label: 'Range',
+                data: highData,
+                borderColor: 'transparent',
+                backgroundColor: 'rgba(52,211,153,0.1)',
+                fill: '+1',
+                pointRadius: 0,
+            }, {
+                label: '',
+                data: lowData,
+                borderColor: 'transparent',
+                backgroundColor: 'transparent',
+                pointRadius: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#1e293b',
+                    callbacks: {
+                        label: function(c) {
+                            if (c.raw === null) return '';
+                            return c.dataset.label + ': ' + formatCurrency(c.raw);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', maxTicksLimit: 8 } },
+                y: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' } },
+            }
+        }
+    });
+
+    // Trend badge
+    const trend = data.trend;
+    const trendEl = document.createElement('div');
+    trendEl.className = 'text-center mt-2 small';
+    const trendColor = trend.direction === 'UP' ? 'text-success' : trend.direction === 'DOWN' ? 'text-danger' : 'text-muted';
+    const trendIcon = trend.direction === 'UP' ? 'bi-arrow-up-right' : trend.direction === 'DOWN' ? 'bi-arrow-down-right' : 'bi-arrow-right';
+    trendEl.innerHTML = `<i class="bi ${trendIcon} ${trendColor}"></i> <span class="${trendColor}">${trend.monthly_change_pct > 0 ? '+' : ''}${trend.monthly_change_pct}%/mo</span> <span class="text-muted">(${trend.direction.toLowerCase()})</span>`;
+    document.getElementById('forecast-body').appendChild(trendEl);
 }
 </script>
 {% endblock %}

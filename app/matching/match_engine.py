@@ -275,6 +275,8 @@ def run_matching(auto_accept_threshold=0.95, review_threshold=0.80, date_window_
         if best_score >= accept_thresh and best_match:
             claim.matched_billing_id = best_match.id
             stats["auto_accepted"] += 1
+            # Record auto-accepted outcome so the system learns from them
+            _record_smart_outcome(claim, best_match.id, "AUTO_ACCEPTED")
         elif best_score >= review_thresh and best_match:
             claim.matched_billing_id = best_match.id
             stats["needs_review"] += 1
@@ -282,6 +284,10 @@ def run_matching(auto_accept_threshold=0.95, review_threshold=0.80, date_window_
             stats["rejected"] += 1
 
     db.session.commit()
+
+    # Trigger calibration if we have enough data
+    _maybe_recalibrate()
+
     return stats
 
 
@@ -392,6 +398,15 @@ def _record_smart_outcome(claim, billing_id, action):
             maybe_reoptimize(carrier=billing.insurance_carrier, modality=billing.modality)
     except Exception:
         pass  # Don't break match operations if learning fails
+
+
+def _maybe_recalibrate():
+    """Trigger Platt scaling recalibration if enough outcomes exist."""
+    try:
+        from app.matching.calibration import train_calibration
+        train_calibration()
+    except Exception:
+        pass
 
 
 def _load_alias_lookup():

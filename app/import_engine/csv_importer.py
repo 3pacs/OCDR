@@ -14,6 +14,10 @@ from app.import_engine.validation import (
     normalize_carrier, detect_psma, compute_total_payment,
     build_dedup_set, is_duplicate,
 )
+from app.import_engine.column_learner import enhance_column_map
+from app.import_engine.normalization_learner import (
+    enhanced_normalize_modality, enhanced_normalize_carrier,
+)
 
 
 # Column aliases for auto-detection
@@ -82,9 +86,11 @@ def import_csv(filepath):
                 result["errors"].append("Empty CSV file")
                 return result
 
-            # Try billing mapping first, then schedule
-            billing_map = _detect_columns(headers, BILLING_ALIASES)
+            # Try billing mapping first (with learned columns), then schedule
+            billing_map, unmapped = enhance_column_map(headers, BILLING_ALIASES, source_format="CSV")
             schedule_map = _detect_columns(headers, SCHEDULE_ALIASES)
+            if unmapped:
+                result["unmapped_columns"] = [u["header"] for u in unmapped]
 
             if _is_billing_csv(billing_map):
                 return _import_billing_csv(reader, billing_map, result)
@@ -124,8 +130,8 @@ def _import_billing_csv(reader, col_map, result):
                 continue
 
             scan_type = str(data.get("scan_type", "")).strip() or "UNKNOWN"
-            modality = normalize_modality(data.get("modality"))
-            carrier = normalize_carrier(data.get("insurance_carrier"))
+            modality = enhanced_normalize_modality(data.get("modality"))
+            carrier = enhanced_normalize_carrier(data.get("insurance_carrier"))
             referring_doctor = str(data.get("referring_doctor", "")).strip() or "UNKNOWN"
 
             # Dedup check

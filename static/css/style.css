@@ -1018,3 +1018,22 @@ body {
 .step-connector.completed {
     background: var(--accent-green);
 }
+
+/* ── Smart Insights Dashboard ──────────────────────────────── */
+
+.insight-list {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.insight-item {
+    transition: background 0.15s ease;
+}
+
+.insight-item:hover {
+    background: var(--bg-card-hover);
+}
+
+.insight-item:last-child {
+    border-bottom: none !important;
+}

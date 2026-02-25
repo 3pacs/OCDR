@@ -15,6 +15,10 @@ from app.import_engine.validation import (
     normalize_carrier, detect_psma, compute_total_payment,
     build_dedup_set, is_duplicate,
 )
+from app.import_engine.column_learner import enhance_column_map
+from app.import_engine.normalization_learner import (
+    enhanced_normalize_modality, enhanced_normalize_carrier,
+)
 
 
 # Column mapping: Excel header → model field (with aliases)
@@ -99,17 +103,16 @@ def import_excel(filepath, sheet_name=None):
         result["errors"].append("Empty sheet")
         return result
 
-    # Map headers
+    # Map headers (hardcoded + learned)
     raw_headers = [str(h).strip() if h else "" for h in rows[0]]
-    col_map = {}
-    for i, h in enumerate(raw_headers):
-        norm = _normalize_header(h)
-        if norm in COLUMN_MAP:
-            col_map[i] = COLUMN_MAP[norm]
+    col_map, unmapped = enhance_column_map(raw_headers, COLUMN_MAP, source_format="EXCEL")
 
     if not col_map:
         result["errors"].append(f"No recognized columns. Headers found: {raw_headers[:10]}")
         return result
+
+    if unmapped:
+        result["unmapped_columns"] = [u["header"] for u in unmapped]
 
     # Build dedup set from existing records
     existing = build_dedup_set()
@@ -137,7 +140,7 @@ def import_excel(filepath, sheet_name=None):
                 continue
 
             scan_type = str(record_data.get("scan_type", "")).strip() or "UNKNOWN"
-            modality = normalize_modality(record_data.get("modality"))
+            modality = enhanced_normalize_modality(record_data.get("modality"))
             referring_doctor = str(record_data.get("referring_doctor", "")).strip() or "UNKNOWN"
 
             # Dedup check
@@ -158,7 +161,7 @@ def import_excel(filepath, sheet_name=None):
                 referring_doctor=referring_doctor,
                 scan_type=scan_type,
                 gado_used=parse_bool(record_data.get("gado_used")),
-                insurance_carrier=normalize_carrier(record_data.get("insurance_carrier")),
+                insurance_carrier=enhanced_normalize_carrier(record_data.get("insurance_carrier")),
                 modality=modality,
                 service_date=service_date,
                 primary_payment=primary,
