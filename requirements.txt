@@ -1,0 +1,12 @@
+flask>=3.0
+flask-sqlalchemy>=3.1
+sqlalchemy>=2.0
+alembic>=1.13
+openpyxl>=3.1
+pandas>=2.1
+pdfplumber>=0.11
+pytesseract>=0.3
+opencv-python-headless>=4.9
+rapidfuzz>=3.6
+watchdog>=4.0
+reportlab>=4.1

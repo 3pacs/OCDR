@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Dev Notes{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="mb-0">Dev Notes</h4>
+            <small class="text-muted">Leave notes for development changes. Open notes are auto-resolved by Claude Code.</small>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary btn-sm" onclick="exportNotes()">
+                <i class="bi bi-download me-1"></i> Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+        <button class="btn btn-outline-secondary btn-sm active" data-filter="status" data-value="">All</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="status" data-value="open">Open</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="status" data-value="in_progress">In Progress</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="status" data-value="resolved">Resolved</button>
+        <span class="text-muted align-self-center mx-1">|</span>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="bug">Bug</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="feature">Feature</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="refactor">Refactor</button>
+        <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="calendar">Calendar</button>
+    </div>
+
+    <!-- Messages area -->
+    <div class="chat-messages" id="chatMessages">
+        <div class="empty-state" id="emptyState">
+            <i class="bi bi-chat-dots d-block"></i>
+            <p>No notes yet.</p>
+            <small class="text-muted">Add a development note below. Notes with "open" status will be picked up by Claude Code.</small>
+        </div>
+    </div>
+
+    <!-- Input area -->
+    <div class="chat-input-area">
+        <div class="row g-2 mb-2">
+            <div class="col-auto">
+                <select id="noteCategory" class="form-select form-select-sm" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-primary);">
+                    <option value="general">General</option>
+                    <option value="bug">Bug</option>
+                    <option value="feature">Feature</option>
+                    <option value="refactor">Refactor</option>
+                    <option value="calendar">Calendar</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <select id="notePriority" class="form-select form-select-sm" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-primary);">
+                    <option value="normal">Normal</option>
+                    <option value="low">Low</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                </select>
+            </div>
+            <div class="col">
+                <input type="text" id="noteFilePath" class="form-control form-control-sm" placeholder="File path (optional, e.g. app/models.py)" style="background-color: var(--card-bg); border-color: var(--border-color); color: var(--text-primary);">
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <textarea id="noteInput" class="form-control" rows="2" placeholder="Describe a bug, feature request, or refactor task..."></textarea>
+            <button class="btn btn-primary align-self-end px-3" onclick="sendNote()">
+                <i class="bi bi-send"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background-color: var(--card-bg); border: 1px solid var(--border-color);">
+            <div class="modal-header" style="border-color: var(--border-color);">
+                <h5 class="modal-title">Edit Note</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editNoteId">
+                <div class="mb-3">
+                    <label class="form-label">Content</label>
+                    <textarea id="editContent" class="form-control" rows="3" style="background-color: var(--main-bg); border-color: var(--border-color); color: var(--text-primary);"></textarea>
+                </div>
+                <div class="row g-2">
+                    <div class="col">
+                        <label class="form-label">Status</label>
+                        <select id="editStatus" class="form-select" style="background-color: var(--main-bg); border-color: var(--border-color); color: var(--text-primary);">
+                            <option value="open">Open</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="wontfix">Won't Fix</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Priority</label>
+                        <select id="editPriority" class="form-select" style="background-color: var(--main-bg); border-color: var(--border-color); color: var(--text-primary);">
+                            <option value="low">Low</option>
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label">Resolution</label>
+                    <textarea id="editResolution" class="form-control" rows="2" placeholder="What was done to resolve this..." style="background-color: var(--main-bg); border-color: var(--border-color); color: var(--text-primary);"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-color);">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveEdit()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const API = '/chatbot/api/notes';
+let currentFilters = { status: '', category: '' };
+
+async function loadNotes() {
+    const params = new URLSearchParams();
+    if (currentFilters.status) params.set('status', currentFilters.status);
+    if (currentFilters.category) params.set('category', currentFilters.category);
+
+    const res = await fetch(`${API}?${params}`);
+    const notes = await res.json();
+    renderNotes(notes);
+}
+
+function renderNotes(notes) {
+    const container = document.getElementById('chatMessages');
+    const empty = document.getElementById('emptyState');
+
+    if (notes.length === 0) {
+        container.innerHTML = '';
+        container.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+    }
+
+    empty.style.display = 'none';
+    container.innerHTML = notes.map(n => `
+        <div class="chat-message" data-id="${n.id}">
+            <div class="note-bubble user-note">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div>
+                        <span class="note-category ${n.category}">${n.category}</span>
+                        <span class="note-status ${n.status}">${n.status.replace('_', ' ')}</span>
+                        <span class="note-priority ${n.priority}">${n.priority !== 'normal' ? n.priority : ''}</span>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-link btn-sm p-0 text-muted" onclick="openEdit(${n.id})" title="Edit">
+                            <i class="bi bi-pencil" style="font-size: 0.75rem;"></i>
+                        </button>
+                        <button class="btn btn-link btn-sm p-0 text-muted" onclick="deleteNote(${n.id})" title="Delete">
+                            <i class="bi bi-trash" style="font-size: 0.75rem;"></i>
+                        </button>
+                    </div>
+                </div>
+                <div style="white-space: pre-wrap;">${escapeHtml(n.content)}</div>
+                ${n.file_path ? `<div class="note-meta"><i class="bi bi-file-code me-1"></i>${escapeHtml(n.file_path)}</div>` : ''}
+                ${n.resolution ? `<div class="mt-2 p-2 rounded" style="background: rgba(40,167,69,0.1); border: 1px solid rgba(40,167,69,0.2);"><small><strong>Resolution:</strong> ${escapeHtml(n.resolution)}</small></div>` : ''}
+                <div class="note-meta">#${n.id} &middot; ${formatDate(n.created_at)}${n.updated_at !== n.created_at ? ' &middot; updated ' + formatDate(n.updated_at) : ''}</div>
+            </div>
+        </div>
+    `).join('');
+
+    container.scrollTop = 0;
+}
+
+async function sendNote() {
+    const input = document.getElementById('noteInput');
+    const content = input.value.trim();
+    if (!content) return;
+
+    const body = {
+        content,
+        category: document.getElementById('noteCategory').value,
+        priority: document.getElementById('notePriority').value,
+        file_path: document.getElementById('noteFilePath').value.trim(),
+    };
+
+    await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+
+    input.value = '';
+    document.getElementById('noteFilePath').value = '';
+    loadNotes();
+}
+
+async function deleteNote(id) {
+    if (!confirm('Delete this note?')) return;
+    await fetch(`${API}/${id}`, { method: 'DELETE' });
+    loadNotes();
+}
+
+function openEdit(id) {
+    fetch(`${API}?`).then(r => r.json()).then(notes => {
+        const note = notes.find(n => n.id === id);
+        if (!note) return;
+        document.getElementById('editNoteId').value = note.id;
+        document.getElementById('editContent').value = note.content;
+        document.getElementById('editStatus').value = note.status;
+        document.getElementById('editPriority').value = note.priority;
+        document.getElementById('editResolution').value = note.resolution || '';
+        new bootstrap.Modal(document.getElementById('editModal')).show();
+    });
+}
+
+async function saveEdit() {
+    const id = document.getElementById('editNoteId').value;
+    await fetch(`${API}/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            content: document.getElementById('editContent').value,
+            status: document.getElementById('editStatus').value,
+            priority: document.getElementById('editPriority').value,
+            resolution: document.getElementById('editResolution').value,
+        }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+    loadNotes();
+}
+
+async function exportNotes() {
+    const res = await fetch(`${API}/export`);
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dev_notes.md';
+    a.click();
+}
+
+// Filters
+document.querySelectorAll('.filter-bar .btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const filterType = btn.dataset.filter;
+        const value = btn.dataset.value;
+
+        if (value === currentFilters[filterType]) {
+            // Toggle off
+            currentFilters[filterType] = '';
+            btn.classList.remove('active');
+        } else {
+            // Deactivate siblings of same filter type
+            document.querySelectorAll(`.filter-bar .btn[data-filter="${filterType}"]`).forEach(b => b.classList.remove('active'));
+            currentFilters[filterType] = value;
+            btn.classList.add('active');
+        }
+
+        // Keep "All" button in sync for status
+        if (filterType === 'status') {
+            const allBtn = document.querySelector('.filter-bar .btn[data-value=""]');
+            if (!currentFilters.status) {
+                allBtn.classList.add('active');
+            } else {
+                allBtn.classList.remove('active');
+            }
+        }
+
+        loadNotes();
+    });
+});
+
+// Keyboard shortcut
+document.getElementById('noteInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendNote();
+    }
+});
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Initial load
+loadNotes();
+</script>
+{% endblock %}

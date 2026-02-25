@@ -1,0 +1,275 @@
+/* OCDR Billing Reconciliation System */
+
+:root {
+    --sidebar-width: 240px;
+    --sidebar-bg: #1a1d23;
+    --main-bg: #0f1117;
+    --card-bg: #1a1d23;
+    --accent: #4f8cff;
+    --accent-hover: #6da0ff;
+    --text-primary: #e4e6eb;
+    --text-muted: #8b8d93;
+    --border-color: #2d3039;
+}
+
+body {
+    background-color: var(--main-bg);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: var(--sidebar-width);
+    min-height: 100vh;
+    background-color: var(--sidebar-bg);
+    border-right: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.sidebar-brand {
+    color: var(--accent);
+}
+
+.sidebar .nav-link {
+    color: var(--text-muted);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    transition: all 0.15s ease;
+}
+
+.sidebar .nav-link:hover {
+    color: var(--text-primary);
+    background-color: rgba(79, 140, 255, 0.1);
+}
+
+.sidebar .nav-link.active {
+    background-color: var(--accent);
+    color: #fff;
+}
+
+.sidebar .nav-link.disabled {
+    color: #4a4c52;
+}
+
+/* Main content */
+.main-content {
+    min-height: 100vh;
+    overflow-y: auto;
+}
+
+/* Cards */
+.card {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.card-header {
+    background-color: transparent;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* KPI Cards */
+.kpi-card {
+    padding: 1.25rem;
+    border-radius: 12px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    transition: border-color 0.15s ease;
+}
+
+.kpi-card:hover {
+    border-color: var(--accent);
+}
+
+.kpi-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.kpi-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+/* Chatbot / Dev Notes */
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 2rem);
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 0;
+}
+
+.chat-message {
+    margin-bottom: 1rem;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.note-bubble {
+    max-width: 85%;
+    padding: 0.75rem 1rem;
+    border-radius: 12px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    position: relative;
+}
+
+.note-bubble.user-note {
+    margin-left: auto;
+    background-color: rgba(79, 140, 255, 0.15);
+    border-color: rgba(79, 140, 255, 0.3);
+}
+
+.note-bubble.system-note {
+    margin-right: auto;
+    background-color: rgba(40, 167, 69, 0.1);
+    border-color: rgba(40, 167, 69, 0.3);
+}
+
+.note-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.35rem;
+}
+
+.note-category {
+    display: inline-block;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background-color: rgba(79, 140, 255, 0.2);
+    color: var(--accent);
+}
+
+.note-category.bug { background-color: rgba(220, 53, 69, 0.2); color: #f77; }
+.note-category.feature { background-color: rgba(40, 167, 69, 0.2); color: #6d6; }
+.note-category.refactor { background-color: rgba(255, 193, 7, 0.2); color: #fd7; }
+.note-category.calendar { background-color: rgba(111, 66, 193, 0.2); color: #b8a; }
+
+.note-status {
+    display: inline-block;
+    font-size: 0.65rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+}
+
+.note-status.open { background-color: rgba(79, 140, 255, 0.2); color: var(--accent); }
+.note-status.in_progress { background-color: rgba(255, 193, 7, 0.2); color: #fd7; }
+.note-status.resolved { background-color: rgba(40, 167, 69, 0.2); color: #6d6; }
+.note-status.wontfix { background-color: rgba(108, 117, 125, 0.2); color: #999; }
+
+.note-priority.critical { color: #f55; font-weight: 600; }
+.note-priority.high { color: #f97; }
+.note-priority.normal { color: var(--text-muted); }
+.note-priority.low { color: #6b7280; }
+
+/* Chat input area */
+.chat-input-area {
+    border-top: 1px solid var(--border-color);
+    padding: 1rem 0 0;
+}
+
+.chat-input-area textarea {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 12px;
+    resize: none;
+    transition: border-color 0.15s ease;
+}
+
+.chat-input-area textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.15rem rgba(79, 140, 255, 0.15);
+    background-color: var(--card-bg);
+    color: var(--text-primary);
+}
+
+.chat-input-area .btn-primary {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    border-radius: 10px;
+}
+
+.chat-input-area .btn-primary:hover {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+/* Filter bar */
+.filter-bar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.filter-bar .btn {
+    font-size: 0.8rem;
+    padding: 0.3rem 0.75rem;
+    border-radius: 20px;
+}
+
+.filter-bar .btn-outline-secondary {
+    border-color: var(--border-color);
+    color: var(--text-muted);
+}
+
+.filter-bar .btn-outline-secondary:hover,
+.filter-bar .btn-outline-secondary.active {
+    background-color: rgba(79, 140, 255, 0.15);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Empty state */
+.empty-state {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: var(--text-muted);
+}
+
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
