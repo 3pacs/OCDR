@@ -26,21 +26,22 @@ def generate_statement(physician_name, year, month):
     else:
         end_date = date(year, month + 1, 1)
 
+    # Search by reading_physician first
     records = BillingRecord.query.filter(
         BillingRecord.reading_physician.ilike(f"%{physician_name}%"),
         BillingRecord.service_date >= start_date,
         BillingRecord.service_date < end_date,
     ).order_by(BillingRecord.service_date).all()
 
-    # Also check if physician is the insurance carrier (for groups like JHANGIANI)
-    carrier_records = BillingRecord.query.filter(
-        BillingRecord.insurance_carrier.ilike(f"%{physician_name}%"),
+    # Also check referring_doctor
+    referring_records = BillingRecord.query.filter(
+        BillingRecord.referring_doctor.ilike(f"%{physician_name}%"),
         BillingRecord.service_date >= start_date,
         BillingRecord.service_date < end_date,
     ).order_by(BillingRecord.service_date).all()
 
     all_records = {r.id: r for r in records}
-    for r in carrier_records:
+    for r in referring_records:
         all_records[r.id] = r
     all_records = list(all_records.values())
 

@@ -88,3 +88,13 @@ def payment_reconciliation_page():
 @ui_bp.route("/statements")
 def statements_page():
     return render_template("statements.html")
+
+
+@ui_bp.route("/import")
+def import_page():
+    return render_template("import_data.html")
+
+
+@ui_bp.route("/admin")
+def admin_page():
+    return render_template("admin.html")

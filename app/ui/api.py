@@ -15,8 +15,11 @@ api_bp = Blueprint("api", __name__)
 @api_bp.route("/health")
 def health():
     record_count = BillingRecord.query.count()
-    db_path = db.engine.url.database
-    db_size = os.path.getsize(db_path) if db_path and os.path.exists(db_path) else 0
+    try:
+        db_path = db.engine.url.database
+        db_size = os.path.getsize(db_path) if db_path and os.path.exists(str(db_path)) else 0
+    except Exception:
+        db_size = 0
     return jsonify({
         "status": "healthy",
         "db_size_bytes": db_size,
@@ -681,7 +684,8 @@ def era_upload():
         f.save(filepath)
 
         # Parse
-        raw_text = open(filepath, "r", encoding="utf-8", errors="replace").read()
+        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+            raw_text = fh.read()
         parsed = parse_835(raw_text, filename=filename)
 
         if parsed["errors"]:
@@ -943,6 +947,51 @@ def import_csv_endpoint():
 
     result = import_csv(filepath)
     return jsonify(result)
+
+
+@api_bp.route("/import/pdf", methods=["POST"])
+def import_pdf_endpoint():
+    """Upload and import billing data from a PDF file."""
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.import_engine.pdf_importer import import_pdf
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided. Use field name 'file'."}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "pdf")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+
+    result = import_pdf(filepath)
+    return jsonify(result)
+
+
+@api_bp.route("/import/status")
+def import_status():
+    """Get import statistics and history."""
+    total_billing = BillingRecord.query.count()
+    total_schedule = ScheduleRecord.query.count()
+    total_era = EraPayment.query.count()
+
+    # By import source
+    by_source = db.session.query(
+        BillingRecord.import_source,
+        func.count(BillingRecord.id).label("count"),
+    ).group_by(BillingRecord.import_source).all()
+
+    return jsonify({
+        "total_billing_records": total_billing,
+        "total_schedule_records": total_schedule,
+        "total_era_payments": total_era,
+        "by_source": [{"source": r.import_source or "UNKNOWN", "count": r.count} for r in by_source],
+    })
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1321,6 +1370,78 @@ def backup_history():
     from app.infra.backup_manager import get_backup_history
     backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
     return jsonify(get_backup_history(backup_dir))
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Admin: Payers & Fee Schedule
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/admin/payers")
+def admin_payers():
+    """List all payer configurations."""
+    payers = Payer.query.order_by(Payer.code).all()
+    return jsonify([{
+        "code": p.code,
+        "display_name": p.display_name,
+        "filing_deadline_days": p.filing_deadline_days,
+        "expected_has_secondary": p.expected_has_secondary,
+        "alert_threshold_pct": p.alert_threshold_pct,
+    } for p in payers])
+
+
+@api_bp.route("/admin/payers", methods=["POST"])
+def admin_payer_upsert():
+    """Create or update a payer."""
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+    code = request.json.get("code")
+    if not code:
+        return jsonify({"error": "code required"}), 400
+    payer = Payer.query.get(code)
+    if not payer:
+        payer = Payer(code=code)
+        db.session.add(payer)
+    payer.display_name = request.json.get("display_name", payer.display_name)
+    payer.filing_deadline_days = request.json.get("filing_deadline_days", payer.filing_deadline_days or 180)
+    payer.expected_has_secondary = request.json.get("expected_has_secondary", payer.expected_has_secondary)
+    payer.alert_threshold_pct = request.json.get("alert_threshold_pct", payer.alert_threshold_pct)
+    db.session.commit()
+    return jsonify({"status": "saved", "code": code})
+
+
+@api_bp.route("/admin/fee-schedule")
+def admin_fee_schedule():
+    """List fee schedule entries."""
+    entries = FeeSchedule.query.order_by(FeeSchedule.payer_code, FeeSchedule.modality).all()
+    return jsonify([{
+        "id": fs.id,
+        "payer_code": fs.payer_code,
+        "modality": fs.modality,
+        "expected_rate": fs.expected_rate,
+        "underpayment_threshold": fs.underpayment_threshold,
+    } for fs in entries])
+
+
+@api_bp.route("/admin/fee-schedule", methods=["POST"])
+def admin_fee_schedule_upsert():
+    """Create or update a fee schedule entry."""
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+    payer_code = request.json.get("payer_code")
+    modality = request.json.get("modality")
+    rate = request.json.get("expected_rate")
+    if not all([payer_code, modality, rate]):
+        return jsonify({"error": "payer_code, modality, expected_rate required"}), 400
+
+    entry = FeeSchedule.query.filter_by(payer_code=payer_code, modality=modality).first()
+    if not entry:
+        entry = FeeSchedule(payer_code=payer_code, modality=modality, expected_rate=rate)
+        db.session.add(entry)
+    else:
+        entry.expected_rate = rate
+    entry.underpayment_threshold = request.json.get("underpayment_threshold", entry.underpayment_threshold or 0.80)
+    db.session.commit()
+    return jsonify({"status": "saved", "id": entry.id})
 
 
 # --- Helper functions ---

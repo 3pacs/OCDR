@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}System Admin{% endblock %}
+{% block page_title %}System Administration{% endblock %}
+
+{% block content %}
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Database Size</div>
+            <div class="kpi-value" id="kpi-dbsize">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Total Records</div>
+            <div class="kpi-value" id="kpi-records">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-purple">
+            <div class="kpi-label">System Status</div>
+            <div class="kpi-value" id="kpi-status">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-amber">
+            <div class="kpi-label">Monitor</div>
+            <div class="kpi-value" id="kpi-monitor">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Backup Management -->
+    <div class="col-md-6">
+        <div class="data-card h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-semibold mb-0"><i class="bi bi-shield-check me-2"></i>Database Backup</h6>
+                <button class="btn btn-sm btn-primary" id="btn-backup" onclick="runBackup()">
+                    <i class="bi bi-download me-1"></i> Run Backup
+                </button>
+            </div>
+            <div id="backup-status" class="mb-3"></div>
+            <h6 class="small fw-semibold text-muted">Backup History</h6>
+            <div id="backup-history" class="small" style="max-height: 250px; overflow-y: auto;">
+                <p class="text-muted">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder Monitor -->
+    <div class="col-md-6">
+        <div class="data-card h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-semibold mb-0"><i class="bi bi-folder-symlink me-2"></i>Folder Monitor</h6>
+                <div>
+                    <button class="btn btn-sm btn-success me-1" id="btn-start" onclick="startMonitor()">
+                        <i class="bi bi-play-fill me-1"></i> Start
+                    </button>
+                    <button class="btn btn-sm btn-danger me-1" id="btn-stop" onclick="stopMonitor()" disabled>
+                        <i class="bi bi-stop-fill me-1"></i> Stop
+                    </button>
+                    <button class="btn btn-sm btn-outline-light" onclick="scanOnce()">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Scan Now
+                    </button>
+                </div>
+            </div>
+            <div id="monitor-info" class="mb-3">
+                <p class="text-muted small">Monitors configured upload folder for new files and auto-imports them.</p>
+            </div>
+            <div id="monitor-status-detail" class="small"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- CSV Export -->
+    <div class="col-md-6">
+        <div class="data-card h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-semibold mb-0"><i class="bi bi-file-earmark-arrow-down me-2"></i>Data Export</h6>
+            </div>
+            <div class="d-flex gap-2 mb-3">
+                <button class="btn btn-sm btn-outline-primary" onclick="triggerExport()">
+                    <i class="bi bi-filetype-csv me-1"></i> Export Billing CSV
+                </button>
+                <a href="/api/export/csv" class="btn btn-sm btn-outline-success" download>
+                    <i class="bi bi-download me-1"></i> Download CSV
+                </a>
+                <a href="/api/export/era-csv" class="btn btn-sm btn-outline-info" download>
+                    <i class="bi bi-download me-1"></i> Download ERA CSV
+                </a>
+            </div>
+            <div id="export-result" class="small d-none">
+                <div class="alert alert-info mb-0" id="export-msg"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="col-md-6">
+        <div class="data-card h-100">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-info-circle me-2"></i>System Info</h6>
+            <table class="table table-sm table-borderless small mb-0">
+                <tbody id="sys-info">
+                    <tr><td class="text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Payer & Fee Schedule Config -->
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="data-card">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-building me-2"></i>Payer Configuration</h6>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm small">
+                    <thead><tr><th>Code</th><th>Name</th><th>Filing Days</th><th>Has Secondary</th></tr></thead>
+                    <tbody id="payer-table"><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="data-card">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-currency-dollar me-2"></i>Fee Schedule</h6>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm small">
+                    <thead><tr><th>Payer</th><th>Modality</th><th>Expected Rate</th><th>Threshold</th></tr></thead>
+                    <tbody id="fee-table"><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadHealth();
+    loadBackupHistory();
+    loadMonitorStatus();
+    loadPayers();
+    loadFeeSchedule();
+});
+
+async function loadHealth() {
+    try {
+        const data = await fetchJSON('/api/health');
+        document.getElementById('kpi-dbsize').textContent = formatFileSize(data.db_size_bytes);
+        document.getElementById('kpi-records').textContent = formatNumber(data.record_count);
+        document.getElementById('kpi-status').textContent = data.status === 'healthy' ? 'Healthy' : 'Error';
+        document.getElementById('kpi-status').style.color = data.status === 'healthy' ? '#10b981' : '#ef4444';
+
+        document.getElementById('sys-info').innerHTML = `
+            <tr><td class="text-muted w-50">Status</td><td><span class="badge bg-success">${data.status}</span></td></tr>
+            <tr><td class="text-muted">Database Size</td><td>${formatFileSize(data.db_size_bytes)}</td></tr>
+            <tr><td class="text-muted">Record Count</td><td>${formatNumber(data.record_count)}</td></tr>
+            <tr><td class="text-muted">Last Check</td><td>${new Date(data.timestamp).toLocaleString()}</td></tr>
+        `;
+    } catch(e) { console.error(e); }
+}
+
+async function loadBackupHistory() {
+    try {
+        const data = await fetchJSON('/api/backup/history');
+        const el = document.getElementById('backup-history');
+        if (data.total === 0) {
+            el.innerHTML = '<p class="text-muted">No backups found.</p>';
+            return;
+        }
+        el.innerHTML = data.backups.map(b => `
+            <div class="border-bottom border-secondary pb-2 mb-2">
+                <i class="bi bi-archive text-success"></i>
+                <strong>${b.filename}</strong>
+                <span class="text-muted float-end">${formatFileSize(b.size)}</span>
+                <br><span class="text-muted">${b.created}</span>
+            </div>
+        `).join('');
+    } catch(e) {
+        document.getElementById('backup-history').innerHTML = '<p class="text-muted">No backup directory configured.</p>';
+    }
+}
+
+async function loadMonitorStatus() {
+    try {
+        const data = await fetchJSON('/api/monitor/status');
+        document.getElementById('kpi-monitor').textContent = data.state === 'running' ? 'Running' : 'Stopped';
+        document.getElementById('kpi-monitor').style.color = data.state === 'running' ? '#10b981' : '#6b7280';
+
+        const startBtn = document.getElementById('btn-start');
+        const stopBtn = document.getElementById('btn-stop');
+        startBtn.disabled = data.state === 'running';
+        stopBtn.disabled = data.state !== 'running';
+
+        let detail = `<p>State: <span class="badge ${data.state === 'running' ? 'bg-success' : 'bg-secondary'}">${data.state}</span></p>`;
+        if (data.files_processed) detail += `<p>Files processed: ${data.files_processed}</p>`;
+        if (data.last_scan) detail += `<p>Last scan: ${data.last_scan}</p>`;
+        document.getElementById('monitor-status-detail').innerHTML = detail;
+    } catch(e) { console.error(e); }
+}
+
+async function runBackup() {
+    const btn = document.getElementById('btn-backup');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Backing up...';
+    try {
+        const data = await fetch('/api/backup/run', { method: 'POST' }).then(r => r.json());
+        const el = document.getElementById('backup-status');
+        if (data.filepath) {
+            el.innerHTML = `<div class="alert alert-success small">Backup created: ${data.filepath}<br>SHA256: <code>${data.sha256}</code></div>`;
+        } else {
+            el.innerHTML = `<div class="alert alert-danger small">Backup failed: ${data.error || 'Unknown error'}</div>`;
+        }
+        loadBackupHistory();
+    } catch(e) {
+        document.getElementById('backup-status').innerHTML = `<div class="alert alert-danger small">${e.message}</div>`;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-download me-1"></i> Run Backup';
+}
+
+async function startMonitor() {
+    await fetch('/api/monitor/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{"interval":30}' });
+    loadMonitorStatus();
+}
+
+async function stopMonitor() {
+    await fetch('/api/monitor/stop', { method: 'POST' });
+    loadMonitorStatus();
+}
+
+async function scanOnce() {
+    const data = await fetch('/api/monitor/scan', { method: 'POST' }).then(r => r.json());
+    const detail = document.getElementById('monitor-status-detail');
+    detail.innerHTML += `<div class="alert alert-info small mt-2">Scan complete: ${data.files_processed || 0} files processed</div>`;
+    loadMonitorStatus();
+}
+
+async function triggerExport() {
+    const resultDiv = document.getElementById('export-result');
+    const msgDiv = document.getElementById('export-msg');
+    resultDiv.classList.remove('d-none');
+    msgDiv.textContent = 'Exporting...';
+    try {
+        const data = await fetch('/api/export/trigger', { method: 'POST' }).then(r => r.json());
+        msgDiv.className = 'alert alert-success small mb-0';
+        msgDiv.innerHTML = `Exported ${data.record_count} records (${formatFileSize(data.file_size)})`;
+    } catch(e) {
+        msgDiv.className = 'alert alert-danger small mb-0';
+        msgDiv.textContent = e.message;
+    }
+}
+
+async function loadPayers() {
+    try {
+        const data = await fetchJSON('/api/admin/payers');
+        const el = document.getElementById('payer-table');
+        if (!data.length) { el.innerHTML = '<tr><td colspan="4" class="text-muted">No payers configured.</td></tr>'; return; }
+        el.innerHTML = data.map(p => `<tr>
+            <td><code>${p.code}</code></td>
+            <td>${p.display_name || '-'}</td>
+            <td>${p.filing_deadline_days}</td>
+            <td>${p.expected_has_secondary ? '<i class="bi bi-check-circle text-success"></i>' : '-'}</td>
+        </tr>`).join('');
+    } catch(e) { console.error(e); }
+}
+
+async function loadFeeSchedule() {
+    try {
+        const data = await fetchJSON('/api/admin/fee-schedule');
+        const el = document.getElementById('fee-table');
+        if (!data.length) { el.innerHTML = '<tr><td colspan="4" class="text-muted">No fee schedule entries.</td></tr>'; return; }
+        el.innerHTML = data.map(fs => `<tr>
+            <td><code>${fs.payer_code}</code></td>
+            <td>${fs.modality}</td>
+            <td>${formatCurrency(fs.expected_rate)}</td>
+            <td>${(fs.underpayment_threshold * 100).toFixed(0)}%</td>
+        </tr>`).join('');
+    } catch(e) { console.error(e); }
+}
+
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+</script>
+{% endblock %}

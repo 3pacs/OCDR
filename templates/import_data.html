@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Import Data{% endblock %}
+{% block page_title %}Import Data{% endblock %}
+
+{% block content %}
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Billing Records</div>
+            <div class="kpi-value" id="kpi-billing">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Schedule Records</div>
+            <div class="kpi-value" id="kpi-schedule">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-purple">
+            <div class="kpi-label">ERA Payments</div>
+            <div class="kpi-value" id="kpi-era">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-amber">
+            <div class="kpi-label">Import Sources</div>
+            <div class="kpi-value" id="kpi-sources">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Excel Upload -->
+    <div class="col-md-4">
+        <div class="data-card h-100">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-file-earmark-spreadsheet me-2 text-success"></i>Excel Import</h6>
+            <p class="text-muted small">Upload Excel workbooks (.xlsx) with billing data. Auto-detects columns and normalizes modality codes.</p>
+            <div class="upload-zone" id="excel-zone" data-type="excel">
+                <i class="bi bi-file-earmark-excel fs-1 text-success"></i>
+                <p class="mt-2 mb-1">Drop .xlsx file here</p>
+                <p class="text-muted small mb-0">or click to browse</p>
+                <input type="file" class="d-none" id="excel-input" accept=".xlsx,.xls">
+            </div>
+            <div class="mt-3 d-none" id="excel-result">
+                <div class="alert alert-info small mb-0" id="excel-msg"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV Upload -->
+    <div class="col-md-4">
+        <div class="data-card h-100">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-filetype-csv me-2 text-primary"></i>CSV Import</h6>
+            <p class="text-muted small">Upload CSV files with billing or schedule data. Auto-detects record type from headers.</p>
+            <div class="upload-zone" id="csv-zone" data-type="csv">
+                <i class="bi bi-filetype-csv fs-1 text-primary"></i>
+                <p class="mt-2 mb-1">Drop .csv file here</p>
+                <p class="text-muted small mb-0">or click to browse</p>
+                <input type="file" class="d-none" id="csv-input" accept=".csv">
+            </div>
+            <div class="mt-3 d-none" id="csv-result">
+                <div class="alert alert-info small mb-0" id="csv-msg"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Upload -->
+    <div class="col-md-4">
+        <div class="data-card h-100">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-file-earmark-pdf me-2 text-danger"></i>PDF Import</h6>
+            <p class="text-muted small">Upload PDF billing reports. Extracts tables using pdfplumber or falls back to text parsing.</p>
+            <div class="upload-zone" id="pdf-zone" data-type="pdf">
+                <i class="bi bi-file-earmark-pdf fs-1 text-danger"></i>
+                <p class="mt-2 mb-1">Drop .pdf file here</p>
+                <p class="text-muted small mb-0">or click to browse</p>
+                <input type="file" class="d-none" id="pdf-input" accept=".pdf">
+            </div>
+            <div class="mt-3 d-none" id="pdf-result">
+                <div class="alert alert-info small mb-0" id="pdf-msg"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 835 ERA Upload -->
+<div class="row g-4 mb-4">
+    <div class="col-12">
+        <div class="data-card">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-file-earmark-medical me-2 text-info"></i>835 ERA Upload</h6>
+            <p class="text-muted small">Upload one or more 835 EDI remittance advice files. Parses payments, claims, adjustments.</p>
+            <div class="upload-zone" id="era-zone" data-type="era">
+                <i class="bi bi-file-earmark-medical fs-1 text-info"></i>
+                <p class="mt-2 mb-1">Drop .835 files here (multiple supported)</p>
+                <p class="text-muted small mb-0">or click to browse</p>
+                <input type="file" class="d-none" id="era-input" accept=".835,.edi,.txt" multiple>
+            </div>
+            <div class="mt-3 d-none" id="era-result">
+                <div class="alert alert-info small mb-0" id="era-msg"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import History by Source -->
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="chart-card">
+            <h6 class="fw-semibold mb-3">Records by Import Source</h6>
+            <canvas id="sourceChart" height="250"></canvas>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="data-card">
+            <h6 class="fw-semibold mb-3">Recent Import Results</h6>
+            <div id="import-log" class="small" style="max-height: 300px; overflow-y: auto;">
+                <p class="text-muted">No imports yet this session.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadImportStatus();
+    setupUploadZones();
+});
+
+async function loadImportStatus() {
+    try {
+        const data = await fetchJSON('/api/import/status');
+        document.getElementById('kpi-billing').textContent = formatNumber(data.total_billing_records);
+        document.getElementById('kpi-schedule').textContent = formatNumber(data.total_schedule_records);
+        document.getElementById('kpi-era').textContent = formatNumber(data.total_era_payments);
+        document.getElementById('kpi-sources').textContent = data.by_source.length;
+
+        if (data.by_source.length > 0) {
+            new Chart(document.getElementById('sourceChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: data.by_source.map(s => s.source),
+                    datasets: [{
+                        data: data.by_source.map(s => s.count),
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'],
+                    }]
+                },
+                options: { plugins: { legend: { position: 'right' } } }
+            });
+        }
+    } catch (e) { console.error('Failed to load import status', e); }
+}
+
+function setupUploadZones() {
+    const configs = [
+        { zone: 'excel-zone', input: 'excel-input', result: 'excel-result', msg: 'excel-msg', url: '/api/import/excel', field: 'file' },
+        { zone: 'csv-zone', input: 'csv-input', result: 'csv-result', msg: 'csv-msg', url: '/api/import/csv', field: 'file' },
+        { zone: 'pdf-zone', input: 'pdf-input', result: 'pdf-result', msg: 'pdf-msg', url: '/api/import/pdf', field: 'file' },
+        { zone: 'era-zone', input: 'era-input', result: 'era-result', msg: 'era-msg', url: '/api/era/upload', field: 'files', multi: true },
+    ];
+
+    configs.forEach(cfg => {
+        const zone = document.getElementById(cfg.zone);
+        const input = document.getElementById(cfg.input);
+
+        zone.addEventListener('click', () => input.click());
+        zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+        zone.addEventListener('drop', e => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            handleUpload(e.dataTransfer.files, cfg);
+        });
+        input.addEventListener('change', () => handleUpload(input.files, cfg));
+    });
+}
+
+async function handleUpload(files, cfg) {
+    if (!files.length) return;
+    const resultDiv = document.getElementById(cfg.result);
+    const msgDiv = document.getElementById(cfg.msg);
+    resultDiv.classList.remove('d-none');
+    msgDiv.className = 'alert alert-info small mb-0';
+    msgDiv.textContent = 'Uploading...';
+
+    const formData = new FormData();
+    if (cfg.multi) {
+        for (let f of files) formData.append(cfg.field, f);
+    } else {
+        formData.append(cfg.field, files[0]);
+    }
+
+    try {
+        const resp = await fetch(cfg.url, { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (resp.ok) {
+            const imported = data.imported || data.total_payments || 0;
+            const errors = data.errors ? data.errors.length : 0;
+            msgDiv.className = errors ? 'alert alert-warning small mb-0' : 'alert alert-success small mb-0';
+            msgDiv.innerHTML = `<strong>Done!</strong> Imported: ${imported}` +
+                (data.skipped ? `, Skipped: ${data.skipped}` : '') +
+                (data.total_rows ? `, Total rows: ${data.total_rows}` : '') +
+                (data.total_claims ? `, Claims: ${data.total_claims}` : '') +
+                (errors ? `<br>Errors: ${data.errors.slice(0, 3).join('; ')}` : '');
+            addImportLog(files[0].name, imported, errors);
+            loadImportStatus();
+        } else {
+            msgDiv.className = 'alert alert-danger small mb-0';
+            msgDiv.textContent = data.error || 'Upload failed';
+        }
+    } catch (e) {
+        msgDiv.className = 'alert alert-danger small mb-0';
+        msgDiv.textContent = 'Network error: ' + e.message;
+    }
+}
+
+function addImportLog(filename, imported, errors) {
+    const log = document.getElementById('import-log');
+    const first = log.querySelector('p.text-muted');
+    if (first) first.remove();
+    const time = new Date().toLocaleTimeString();
+    const cls = errors > 0 ? 'text-warning' : 'text-success';
+    log.insertAdjacentHTML('afterbegin',
+        `<div class="border-bottom border-secondary pb-2 mb-2">
+            <span class="${cls}"><i class="bi bi-circle-fill" style="font-size:0.5rem"></i></span>
+            <strong>${filename}</strong> — ${imported} imported${errors ? ', ' + errors + ' errors' : ''}
+            <span class="text-muted float-end">${time}</span>
+        </div>`
+    );
+}
+</script>
+{% endblock %}
