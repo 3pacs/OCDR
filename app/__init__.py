@@ -27,6 +27,9 @@ def create_app(config_class=None):
     from app.ui.chatbot import chatbot_bp
     app.register_blueprint(chatbot_bp, url_prefix='/chatbot')
 
+    from app.ui.calendar import calendar_bp
+    app.register_blueprint(calendar_bp)
+
     # Create tables
     with app.app_context():
         from app import models  # noqa: F401

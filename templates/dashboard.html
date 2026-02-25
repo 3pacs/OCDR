@@ -2,8 +2,7 @@
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
-<h4 class="mb-4">Dashboard</h4>
-
+<!-- KPI row -->
 <div class="row g-3 mb-4">
     <div class="col-md-3">
         <div class="kpi-card">
@@ -19,50 +18,473 @@
     </div>
     <div class="col-md-3">
         <div class="kpi-card">
-            <div class="kpi-value text-warning">{{ stats.in_progress_notes | default(0) }}</div>
-            <div class="kpi-label">In Progress</div>
+            <div class="kpi-value" style="color: var(--cal-accent);">{{ stats.calendar_pdfs | default(0) }}</div>
+            <div class="kpi-label">Schedule PDFs</div>
         </div>
     </div>
     <div class="col-md-3">
         <div class="kpi-card">
-            <div class="kpi-value text-success">{{ stats.resolved_notes | default(0) }}</div>
-            <div class="kpi-label">Resolved</div>
+            <div class="kpi-value text-success">{{ stats.calendar_entries | default(0) }}</div>
+            <div class="kpi-label">Calendar Entries</div>
         </div>
     </div>
 </div>
 
-<div class="row g-3">
-    <div class="col-md-8">
-        <div class="card">
+<!-- Two-panel layout: Calendar + Dev Notes -->
+<div class="row g-3 dashboard-panels">
+    <!-- Calendar Panel -->
+    <div class="col-lg-6">
+        <div class="card panel-card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <span>System Status</span>
+                <span><i class="bi bi-calendar3 me-2"></i>Schedule Calendar</span>
+                <span class="badge bg-secondary" id="calPdfBadge">{{ stats.calendar_pdfs | default(0) }} PDFs</span>
             </div>
-            <div class="card-body">
-                <div class="empty-state">
-                    <i class="bi bi-speedometer2 d-block"></i>
-                    <p>Import billing records to see analytics.</p>
-                    <small class="text-muted">Upload OCMRI.xlsx or drop files into the watch folder.</small>
+            <div class="card-body panel-body" id="calendarPanel">
+                {% if stats.calendar_configured %}
+                <!-- Configured state -->
+                <div id="calConfigured">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <small class="text-muted d-block">PDF Folder</small>
+                            <code class="small">{{ stats.calendar_folder }}</code>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="calShowSetup()">
+                            <i class="bi bi-gear me-1"></i> Change
+                        </button>
+                    </div>
+
+                    <!-- PDF file list -->
+                    <div id="calPdfList" class="cal-pdf-list">
+                        <div class="text-center text-muted p-3">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            <span class="ms-2">Scanning folder...</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-3 p-3 rounded" style="background: rgba(111,66,193,0.08); border: 1px solid rgba(111,66,193,0.2);">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            OCR processing will extract patient schedules from these PDFs and cross-reference
+                            them with billing records using patient IDs, jacket numbers, dates of birth, and name matching.
+                        </small>
+                    </div>
+                </div>
+                {% else %}
+                <!-- Setup prompt -->
+                <div id="calSetup">
+                    <div class="empty-state py-4">
+                        <i class="bi bi-folder2-open d-block" style="color: var(--cal-accent);"></i>
+                        <p class="mb-1">Connect your schedule folder</p>
+                        <small class="text-muted d-block mb-3">
+                            Point to the folder containing years of schedule PDFs.<br>
+                            They'll be OCR'd and matched to patient records.
+                        </small>
+                    </div>
+                    <div class="px-2">
+                        <label class="form-label small text-muted">Absolute path to PDF schedule folder</label>
+                        <div class="d-flex gap-2">
+                            <input type="text" id="calFolderInput" class="form-control form-control-sm"
+                                   placeholder="/path/to/schedule-pdfs">
+                            <button class="btn btn-sm px-3" style="background-color: var(--cal-accent); color: #fff;" onclick="calSetFolder()">
+                                <i class="bi bi-check-lg"></i> Set
+                            </button>
+                        </div>
+                        <div id="calError" class="text-danger small mt-2" style="display:none;"></div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Dev Notes Panel -->
+    <div class="col-lg-6">
+        <div class="card panel-card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-chat-dots me-2"></i>Dev Notes</span>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-primary" id="noteCountBadge">{{ stats.open_notes | default(0) }} open</span>
+                    <button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="exportNotes()" title="Export">
+                        <i class="bi bi-download" style="font-size: 0.75rem;"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body panel-body d-flex flex-column">
+                <!-- Filter bar -->
+                <div class="filter-bar mb-2">
+                    <button class="btn btn-outline-secondary btn-sm active" data-filter="status" data-value="">All</button>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="status" data-value="open">Open</button>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="status" data-value="resolved">Resolved</button>
+                    <span class="text-muted align-self-center mx-1">|</span>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="bug">Bug</button>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="feature">Feature</button>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="refactor">Refactor</button>
+                    <button class="btn btn-outline-secondary btn-sm" data-filter="category" data-value="calendar">Calendar</button>
+                </div>
+
+                <!-- Messages area -->
+                <div class="chat-messages flex-grow-1" id="chatMessages">
+                    <div class="empty-state py-4" id="emptyState">
+                        <i class="bi bi-chat-dots d-block"></i>
+                        <p>No notes yet.</p>
+                        <small class="text-muted">Add a development note below.</small>
+                    </div>
+                </div>
+
+                <!-- Input area -->
+                <div class="chat-input-area mt-auto">
+                    <div class="row g-2 mb-2">
+                        <div class="col-auto">
+                            <select id="noteCategory" class="form-select form-select-sm input-dark">
+                                <option value="general">General</option>
+                                <option value="bug">Bug</option>
+                                <option value="feature">Feature</option>
+                                <option value="refactor">Refactor</option>
+                                <option value="calendar">Calendar</option>
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <select id="notePriority" class="form-select form-select-sm input-dark">
+                                <option value="normal">Normal</option>
+                                <option value="low">Low</option>
+                                <option value="high">High</option>
+                                <option value="critical">Critical</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <input type="text" id="noteFilePath" class="form-control form-control-sm input-dark" placeholder="File path (optional)">
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <textarea id="noteInput" class="form-control" rows="2" placeholder="Describe a bug, feature, or task..."></textarea>
+                        <button class="btn btn-primary align-self-end px-3" onclick="sendNote()">
+                            <i class="bi bi-send"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Quick Actions</span>
+</div>
+
+<!-- Edit modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="background-color: var(--card-bg); border: 1px solid var(--border-color);">
+            <div class="modal-header" style="border-color: var(--border-color);">
+                <h5 class="modal-title">Edit Note</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <div class="card-body">
-                <a href="/chatbot" class="btn btn-outline-primary btn-sm w-100 mb-2">
-                    <i class="bi bi-chat-dots me-1"></i> Dev Notes
-                </a>
-                <button class="btn btn-outline-secondary btn-sm w-100 mb-2" disabled>
-                    <i class="bi bi-upload me-1"></i> Import Data
-                </button>
-                <button class="btn btn-outline-secondary btn-sm w-100" disabled>
-                    <i class="bi bi-calendar-event me-1"></i> Calendar
-                </button>
+            <div class="modal-body">
+                <input type="hidden" id="editNoteId">
+                <div class="mb-3">
+                    <label class="form-label">Content</label>
+                    <textarea id="editContent" class="form-control input-dark" rows="3"></textarea>
+                </div>
+                <div class="row g-2">
+                    <div class="col">
+                        <label class="form-label">Status</label>
+                        <select id="editStatus" class="form-select input-dark">
+                            <option value="open">Open</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                            <option value="wontfix">Won't Fix</option>
+                        </select>
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Priority</label>
+                        <select id="editPriority" class="form-select input-dark">
+                            <option value="low">Low</option>
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label">Resolution</label>
+                    <textarea id="editResolution" class="form-control input-dark" rows="2" placeholder="What was done to resolve this..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-color: var(--border-color);">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" onclick="saveEdit()">Save</button>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ── Dev Notes ── */
+const NOTES_API = '/chatbot/api/notes';
+let currentFilters = { status: '', category: '' };
+
+async function loadNotes() {
+    const params = new URLSearchParams();
+    if (currentFilters.status) params.set('status', currentFilters.status);
+    if (currentFilters.category) params.set('category', currentFilters.category);
+
+    const res = await fetch(`${NOTES_API}?${params}`);
+    const notes = await res.json();
+    renderNotes(notes);
+}
+
+function renderNotes(notes) {
+    const container = document.getElementById('chatMessages');
+    const empty = document.getElementById('emptyState');
+
+    if (notes.length === 0) {
+        container.innerHTML = '';
+        container.appendChild(empty);
+        empty.style.display = 'block';
+        return;
+    }
+
+    empty.style.display = 'none';
+    container.innerHTML = notes.map(n => `
+        <div class="chat-message" data-id="${n.id}">
+            <div class="note-bubble user-note">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <div>
+                        <span class="note-category ${n.category}">${n.category}</span>
+                        <span class="note-status ${n.status}">${n.status.replace('_', ' ')}</span>
+                        <span class="note-priority ${n.priority}">${n.priority !== 'normal' ? n.priority : ''}</span>
+                    </div>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-link btn-sm p-0 text-muted" onclick="openEdit(${n.id})" title="Edit">
+                            <i class="bi bi-pencil" style="font-size: 0.75rem;"></i>
+                        </button>
+                        <button class="btn btn-link btn-sm p-0 text-muted" onclick="deleteNote(${n.id})" title="Delete">
+                            <i class="bi bi-trash" style="font-size: 0.75rem;"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="note-content">${escapeHtml(n.content)}</div>
+                ${n.file_path ? `<div class="note-meta"><i class="bi bi-file-code me-1"></i>${escapeHtml(n.file_path)}</div>` : ''}
+                ${n.resolution ? `<div class="mt-2 p-2 rounded" style="background: rgba(40,167,69,0.1); border: 1px solid rgba(40,167,69,0.2);"><small><strong>Resolution:</strong> ${escapeHtml(n.resolution)}</small></div>` : ''}
+                <div class="note-meta">#${n.id} &middot; ${formatDate(n.created_at)}</div>
+            </div>
+        </div>
+    `).join('');
+
+    container.scrollTop = 0;
+}
+
+async function sendNote() {
+    const input = document.getElementById('noteInput');
+    const content = input.value.trim();
+    if (!content) return;
+
+    await fetch(NOTES_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            content,
+            category: document.getElementById('noteCategory').value,
+            priority: document.getElementById('notePriority').value,
+            file_path: document.getElementById('noteFilePath').value.trim(),
+        }),
+    });
+
+    input.value = '';
+    document.getElementById('noteFilePath').value = '';
+    loadNotes();
+}
+
+async function deleteNote(id) {
+    if (!confirm('Delete this note?')) return;
+    await fetch(`${NOTES_API}/${id}`, { method: 'DELETE' });
+    loadNotes();
+}
+
+function openEdit(id) {
+    fetch(NOTES_API).then(r => r.json()).then(notes => {
+        const note = notes.find(n => n.id === id);
+        if (!note) return;
+        document.getElementById('editNoteId').value = note.id;
+        document.getElementById('editContent').value = note.content;
+        document.getElementById('editStatus').value = note.status;
+        document.getElementById('editPriority').value = note.priority;
+        document.getElementById('editResolution').value = note.resolution || '';
+        new bootstrap.Modal(document.getElementById('editModal')).show();
+    });
+}
+
+async function saveEdit() {
+    const id = document.getElementById('editNoteId').value;
+    await fetch(`${NOTES_API}/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            content: document.getElementById('editContent').value,
+            status: document.getElementById('editStatus').value,
+            priority: document.getElementById('editPriority').value,
+            resolution: document.getElementById('editResolution').value,
+        }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+    loadNotes();
+}
+
+async function exportNotes() {
+    const res = await fetch(`${NOTES_API}/export`);
+    const text = await res.text();
+    const blob = new Blob([text], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dev_notes.md';
+    a.click();
+}
+
+// Filters
+document.querySelectorAll('.filter-bar .btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const filterType = btn.dataset.filter;
+        const value = btn.dataset.value;
+
+        if (value === currentFilters[filterType]) {
+            currentFilters[filterType] = '';
+            btn.classList.remove('active');
+        } else {
+            document.querySelectorAll(`.filter-bar .btn[data-filter="${filterType}"]`).forEach(b => b.classList.remove('active'));
+            currentFilters[filterType] = value;
+            btn.classList.add('active');
+        }
+
+        if (filterType === 'status') {
+            const allBtn = document.querySelector('.filter-bar .btn[data-value=""]');
+            if (!currentFilters.status) allBtn.classList.add('active');
+            else allBtn.classList.remove('active');
+        }
+
+        loadNotes();
+    });
+});
+
+document.getElementById('noteInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendNote(); }
+});
+
+
+/* ── Calendar ── */
+const CAL_API = '/api/calendar';
+
+async function calSetFolder() {
+    const input = document.getElementById('calFolderInput');
+    const errEl = document.getElementById('calError');
+    const folder = input.value.trim();
+    errEl.style.display = 'none';
+
+    if (!folder) {
+        errEl.textContent = 'Please enter a folder path.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    const res = await fetch(`${CAL_API}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf_folder_path: folder }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+        errEl.textContent = data.error || 'Failed to set folder.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    // Reload the page to show configured state
+    location.reload();
+}
+
+function calShowSetup() {
+    // Replace configured view with setup form
+    const panel = document.getElementById('calendarPanel');
+    panel.innerHTML = `
+        <div class="px-2 py-3">
+            <label class="form-label small text-muted">Absolute path to PDF schedule folder</label>
+            <div class="d-flex gap-2">
+                <input type="text" id="calFolderInput" class="form-control form-control-sm"
+                       placeholder="/path/to/schedule-pdfs" value="${document.querySelector('#calConfigured code')?.textContent || ''}">
+                <button class="btn btn-sm px-3" style="background-color: var(--cal-accent); color: #fff;" onclick="calSetFolder()">
+                    <i class="bi bi-check-lg"></i> Set
+                </button>
+            </div>
+            <div id="calError" class="text-danger small mt-2" style="display:none;"></div>
+        </div>
+    `;
+}
+
+async function calLoadPdfs() {
+    const listEl = document.getElementById('calPdfList');
+    if (!listEl) return;
+
+    const res = await fetch(`${CAL_API}/pdfs`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    document.getElementById('calPdfBadge').textContent = `${data.pdfs.length} PDFs`;
+
+    if (data.pdfs.length === 0) {
+        listEl.innerHTML = `
+            <div class="text-center text-muted p-3">
+                <i class="bi bi-file-earmark-x d-block" style="font-size: 1.5rem; opacity: 0.5;"></i>
+                <small>No PDF files found in this folder.</small>
+            </div>`;
+        return;
+    }
+
+    // Group PDFs by subdirectory
+    const groups = {};
+    data.pdfs.forEach(pdf => {
+        const dir = pdf.relative_path.includes('/')
+            ? pdf.relative_path.substring(0, pdf.relative_path.lastIndexOf('/'))
+            : '(root)';
+        if (!groups[dir]) groups[dir] = [];
+        groups[dir].push(pdf);
+    });
+
+    let html = '';
+    for (const [dir, pdfs] of Object.entries(groups).sort()) {
+        html += `<div class="cal-folder-group">`;
+        if (dir !== '(root)') {
+            html += `<div class="cal-folder-label"><i class="bi bi-folder me-1"></i>${escapeHtml(dir)}</div>`;
+        }
+        pdfs.forEach(pdf => {
+            const sizeKb = (pdf.size_bytes / 1024).toFixed(0);
+            html += `
+                <div class="cal-pdf-item">
+                    <i class="bi bi-file-earmark-pdf me-2" style="color: var(--cal-accent);"></i>
+                    <span class="flex-grow-1 text-truncate">${escapeHtml(pdf.name)}</span>
+                    <small class="text-muted ms-2">${sizeKb} KB</small>
+                </div>`;
+        });
+        html += `</div>`;
+    }
+
+    listEl.innerHTML = html;
+}
+
+
+/* ── Utilities ── */
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+
+/* ── Init ── */
+loadNotes();
+calLoadPdfs();
+</script>
 {% endblock %}

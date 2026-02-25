@@ -17,7 +17,7 @@ App runs at http://localhost:5000
   - `__init__.py` - App factory with `create_app()`
   - `config.py` - Configuration
   - `models.py` - SQLAlchemy models
-  - `ui/` - Blueprint routes (dashboard, chatbot)
+  - `ui/` - Blueprint routes (dashboard, chatbot, calendar)
 - `templates/` - Jinja2 HTML templates
 - `static/` - CSS, JS assets
 - `instance/` - SQLite database (auto-created)
@@ -75,3 +75,26 @@ ORDER BY
 - `high` - Fix soon
 - `normal` - Standard priority
 - `low` - Nice to have
+
+## Calendar System
+
+The dashboard includes a **Schedule Calendar** panel for managing PDF schedule imports.
+
+### How It Works
+1. User configures a folder path containing schedule PDFs via the dashboard UI
+2. The app scans the folder recursively for `.pdf` files and displays them
+3. (Future) OCR processes each PDF to extract schedule entries
+4. (Future) Entries are matched to billing records via patient_id, jacket_number, DOB, or fuzzy name
+
+### Calendar API
+- `GET /api/calendar/config` - Current folder config + PDF list
+- `POST /api/calendar/config` - Set folder: `{"pdf_folder_path": "/path/to/pdfs"}`
+- `GET /api/calendar/pdfs` - List all PDFs in configured folder
+- `GET /api/calendar/entries` - List extracted calendar entries (supports `?from=&to=`)
+- `GET /api/calendar/stats` - Summary counts (PDFs, entries, matched/unmatched)
+
+### Calendar Models
+- `CalendarConfig` - Stores the configured PDF folder path
+- `CalendarEntry` - Individual schedule entries with fields for matching:
+  - `patient_name`, `patient_id`, `jacket_number`, `birth_date` (identifiers)
+  - `billing_record_id`, `match_confidence`, `match_method` (linking to billing)

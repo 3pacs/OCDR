@@ -106,6 +106,48 @@ class PhysicianStatement(db.Model):
     physician = db.relationship('Physician', backref='statements')
 
 
+class CalendarConfig(db.Model):
+    """Stores the path to the folder containing schedule PDFs."""
+    __tablename__ = 'calendar_config'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    pdf_folder_path = db.Column(db.Text, nullable=False)
+    set_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class CalendarEntry(db.Model):
+    """Individual schedule entries extracted from PDF calendars via OCR.
+
+    Each row represents one appointment slot pulled from a scanned schedule page.
+    Will be cross-referenced with billing_records via patient_id, jacket_number,
+    birth_date, or patient_name fuzzy match.
+    """
+    __tablename__ = 'calendar_entries'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    source_pdf = db.Column(db.Text, nullable=False, index=True)
+    page_number = db.Column(db.Integer)
+    schedule_date = db.Column(db.Date, index=True)
+    time_slot = db.Column(db.Text)
+    patient_name = db.Column(db.Text, index=True)
+    patient_id = db.Column(db.Integer, index=True)
+    jacket_number = db.Column(db.Text, index=True)
+    birth_date = db.Column(db.Date)
+    scan_type = db.Column(db.Text)
+    modality = db.Column(db.Text, index=True)
+    referring_doctor = db.Column(db.Text)
+    insurance_carrier = db.Column(db.Text)
+    notes = db.Column(db.Text)
+    raw_ocr_text = db.Column(db.Text)
+    billing_record_id = db.Column(db.Integer, db.ForeignKey('billing_records.id'), index=True)
+    match_confidence = db.Column(db.Numeric(5, 4))
+    match_method = db.Column(db.Text)  # patient_id, jacket_number, dob+name, fuzzy_name
+    ocr_processed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    billing_record = db.relationship('BillingRecord', backref='calendar_entries')
+
+
 class DevNote(db.Model):
     """Development notes stored via the chatbot interface.
 
