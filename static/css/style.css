@@ -1,0 +1,73 @@
+/* Sortable table headers */
+.sortable-table th[data-sort] {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    position: relative;
+    padding-right: 1.5em;
+}
+
+.sortable-table th[data-sort]:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.sortable-table th[data-sort]::after {
+    content: '\F282';  /* bi-chevron-expand */
+    font-family: 'bootstrap-icons';
+    position: absolute;
+    right: 0.4em;
+    opacity: 0.3;
+    font-size: 0.75em;
+}
+
+.sortable-table th[data-sort].sort-asc::after {
+    content: '\F286';  /* bi-chevron-up */
+    opacity: 1;
+}
+
+.sortable-table th[data-sort].sort-desc::after {
+    content: '\F282';  /* bi-chevron-down – actually use sort-down */
+    content: '\F283';
+    opacity: 1;
+}
+
+/* Score badge coloring */
+.score-high   { background-color: #198754 !important; }
+.score-medium { background-color: #ffc107 !important; color: #000 !important; }
+.score-low    { background-color: #dc3545 !important; }
+
+/* Status badges */
+.status-denied     { background-color: #dc3545 !important; }
+.status-appealed   { background-color: #0d6efd !important; }
+.status-resolved   { background-color: #198754 !important; }
+.status-written_off { background-color: #6c757d !important; }
+
+/* Deadline urgency */
+.deadline-past    { color: #dc3545; font-weight: 600; }
+.deadline-warning { color: #ffc107; font-weight: 600; }
+.deadline-safe    { color: #198754; }
+
+/* Filter bar */
+.filter-bar {
+    background: #f8f9fa;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Table density */
+.table-dense td, .table-dense th {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+/* Loading overlay */
+.loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255,255,255,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Secondary Follow-Up{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Missing Secondary Insurance Follow-Up</h4>
+    <span class="badge bg-secondary" id="total-count">–</span>
+</div>
+
+<div class="filter-bar">
+    <form id="filter-form" class="row g-2 align-items-end">
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Carrier</label>
+            <select class="form-select form-select-sm" id="filter-carrier"><option value="">All</option></select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Modality</label>
+            <select class="form-select form-select-sm" id="filter-modality"><option value="">All</option></select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">From</label>
+            <input type="date" class="form-control form-control-sm" id="filter-date-from">
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">To</label>
+            <input type="date" class="form-control form-control-sm" id="filter-date-to">
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Search</label>
+            <input type="text" class="form-control form-control-sm" id="filter-search" placeholder="Patient or doctor…">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-clear-filters">Clear</button>
+        </div>
+    </form>
+</div>
+
+<div class="position-relative">
+    <div class="loading-overlay d-none" id="loading">
+        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-dense sortable-table mb-0" id="queue-table">
+            <thead class="table-light">
+                <tr>
+                    <th data-sort="patient_name">Patient</th>
+                    <th data-sort="insurance_carrier">Carrier</th>
+                    <th data-sort="modality">Modality</th>
+                    <th data-sort="scan_type">Scan</th>
+                    <th data-sort="service_date">Service Date</th>
+                    <th data-sort="primary_payment" class="sort-desc">Primary Paid</th>
+                    <th data-sort="total_payment">Total Paid</th>
+                    <th data-sort="billed_amount">Billed</th>
+                    <th data-sort="referring_doctor">Ref. Doctor</th>
+                </tr>
+            </thead>
+            <tbody id="queue-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center" id="pagination"></ul>
+</nav>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/sortable-table.js"></script>
+<script>
+(function () {
+    const esc = SortableTable.esc;
+    const fmt$ = SortableTable.fmt$;
+
+    new SortableTable({
+        apiUrl:       '/api/secondary-followup',
+        filtersUrl:   '/api/secondary-followup/filters',
+        tableId:      'queue-table',
+        bodyId:       'queue-body',
+        paginationId: 'pagination',
+        totalId:      'total-count',
+        loadingId:    'loading',
+        filterFormId: 'filter-form',
+        clearBtnId:   'btn-clear-filters',
+        defaultSort:  'primary_payment',
+        defaultOrder: 'desc',
+        columns: [
+            { key: 'patient_name' },
+            { key: 'insurance_carrier' },
+            { key: 'modality' },
+            { key: 'scan_type' },
+            { key: 'service_date' },
+            { key: 'primary_payment', className: 'text-end', render: v => fmt$(v) },
+            { key: 'total_payment', className: 'text-end', render: v => fmt$(v) },
+            { key: 'billed_amount', className: 'text-end', render: v => fmt$(v) },
+            { key: 'referring_doctor', render: v => esc(v || '–') },
+        ],
+        filterFields: [
+            { id: 'filter-carrier',   param: 'carrier' },
+            { id: 'filter-modality',  param: 'modality' },
+            { id: 'filter-date-from', param: 'date_from' },
+            { id: 'filter-date-to',   param: 'date_to' },
+            { id: 'filter-search',    param: 'search' },
+        ],
+    });
+})();
+</script>
+{% endblock %}
