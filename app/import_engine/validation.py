@@ -116,11 +116,24 @@ def normalize_carrier(val):
 
 
 def detect_psma(description, scan_type=None):
-    """Detect PSMA scans from description or scan type."""
+    """Detect PSMA scans from description or scan type (SM-11: expandable keywords)."""
+    base_keywords = ("PSMA", "GA-68", "GA68", "GALLIUM", "PYLARIFY", "LOCAMETZ",
+                     "ILLUCCIX", "DCFPyL", "18F-PSMA", "F-18 PSMA")
+    # Merge with any learned keywords
+    keywords = list(base_keywords)
+    try:
+        from app.models import NormalizationLearned
+        learned = NormalizationLearned.query.filter_by(
+            category="PSMA_KEYWORD", approved=True
+        ).all()
+        keywords.extend(n.raw_value.upper() for n in learned)
+    except Exception:
+        pass
+
     for val in (description, scan_type):
         if val:
             upper = str(val).upper()
-            if any(kw in upper for kw in ("PSMA", "GA-68", "GA68", "GALLIUM")):
+            if any(kw in upper for kw in keywords):
                 return True
     return False
 

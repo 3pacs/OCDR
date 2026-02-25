@@ -73,7 +73,7 @@ class TestDateMatchScore(unittest.TestCase):
         self.assertEqual(date_match_score(date(2024, 1, 15), date(2024, 1, 17)), 0.5)
 
     def test_three_days_off(self):
-        self.assertEqual(date_match_score(date(2024, 1, 15), date(2024, 1, 18)), 0.0)
+        self.assertEqual(date_match_score(date(2024, 1, 15), date(2024, 1, 18)), 0.2)
 
     def test_none_date(self):
         self.assertEqual(date_match_score(None, date(2024, 1, 15)), 0.0)

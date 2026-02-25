@@ -136,18 +136,26 @@ def record_payment(statement_id, amount):
 
 
 def generate_statement_html(statement_data):
-    """Generate simple HTML for a statement (for PDF rendering)."""
+    """Generate simple HTML for a statement (for PDF rendering).
+
+    All user-supplied values are HTML-escaped to prevent XSS.
+    """
+    from markupsafe import escape
+
     lines = statement_data.get("line_items", [])
     rows = ""
     for ln in lines:
         rows += f"""<tr>
-            <td>{ln['service_date']}</td>
-            <td>{ln['patient_name']}</td>
-            <td>{ln['scan_type']}</td>
-            <td>{ln['modality']}</td>
-            <td>{ln['insurance_carrier']}</td>
+            <td>{escape(str(ln['service_date'] or ''))}</td>
+            <td>{escape(str(ln['patient_name'] or ''))}</td>
+            <td>{escape(str(ln['scan_type'] or ''))}</td>
+            <td>{escape(str(ln['modality'] or ''))}</td>
+            <td>{escape(str(ln['insurance_carrier'] or ''))}</td>
             <td style="text-align:right">${ln['total_payment']:,.2f}</td>
         </tr>"""
+
+    physician = escape(str(statement_data.get('physician_name', '')))
+    period = escape(str(statement_data.get('period', '')))
 
     return f"""<!DOCTYPE html>
 <html><head><style>
@@ -159,8 +167,8 @@ def generate_statement_html(statement_data):
     .totals {{ margin-top: 20px; font-size: 18px; }}
 </style></head><body>
     <h1>Physician Statement</h1>
-    <p><strong>Physician:</strong> {statement_data['physician_name']}</p>
-    <p><strong>Period:</strong> {statement_data['period']}</p>
+    <p><strong>Physician:</strong> {physician}</p>
+    <p><strong>Period:</strong> {period}</p>
     <p><strong>Generated:</strong> {date.today().isoformat()}</p>
     <table>
         <thead><tr><th>Date</th><th>Patient</th><th>Scan</th><th>Modality</th><th>Insurance</th><th>Amount</th></tr></thead>

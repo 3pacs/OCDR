@@ -1559,3 +1559,339 @@ def _get_secondary_followup_summary():
         "count": count,
         "estimated_recovery": round(estimated, 2),
     }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Smart Matching API Endpoints (SM-01 through SM-12)
+# ══════════════════════════════════════════════════════════════════
+
+# ── Match Outcomes (SM-01a) ──────────────────────────────────────
+
+@api_bp.route("/smart/outcomes")
+def smart_outcomes():
+    """View match outcome history."""
+    from app.matching.match_memory import get_outcomes, get_outcome_stats
+    carrier = request.args.get("carrier")
+    limit = min(int(request.args.get("limit", 100)), 500)
+    outcomes = get_outcomes(carrier=carrier, limit=limit)
+    stats = get_outcome_stats()
+    return jsonify({
+        "outcomes": [{
+            "id": o.id,
+            "era_claim_id": o.era_claim_id,
+            "billing_record_id": o.billing_record_id,
+            "action": o.action,
+            "original_score": o.original_score,
+            "name_score": o.name_score,
+            "date_score": o.date_score,
+            "modality_score": o.modality_score,
+            "carrier": o.carrier,
+            "modality": o.modality,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        } for o in outcomes],
+        "stats": stats,
+    })
+
+
+# ── Learned Weights (SM-01b, SM-02) ─────────────────────────────
+
+@api_bp.route("/smart/weights")
+def smart_weights():
+    """View all learned weights."""
+    from app.matching.weight_optimizer import get_all_learned_weights, get_learned_weights
+    carrier = request.args.get("carrier")
+    modality = request.args.get("modality")
+    if carrier or modality:
+        return jsonify(get_learned_weights(carrier=carrier, modality=modality))
+    return jsonify({"weights": get_all_learned_weights()})
+
+
+@api_bp.route("/smart/weights/reset", methods=["POST"])
+def smart_weights_reset():
+    """Reset learned weights to defaults."""
+    from app.matching.weight_optimizer import reset_learned_weights
+    data = request.get_json(silent=True) or {}
+    count = reset_learned_weights(
+        carrier=data.get("carrier"),
+        modality=data.get("modality"),
+    )
+    return jsonify({"reset": count})
+
+
+@api_bp.route("/smart/weights/optimize", methods=["POST"])
+def smart_weights_optimize():
+    """Trigger weight optimization."""
+    from app.matching.weight_optimizer import update_learned_weights
+    data = request.get_json(silent=True) or {}
+    result = update_learned_weights(
+        carrier=data.get("carrier"),
+        modality=data.get("modality"),
+    )
+    if result:
+        return jsonify({"status": "optimized", "sample_size": result.sample_size})
+    return jsonify({"status": "insufficient_data"})
+
+
+# ── Name Aliases (SM-04) ────────────────────────────────────────
+
+@api_bp.route("/smart/aliases")
+def smart_aliases():
+    """View all name alias pairs."""
+    from app.models import NameAlias
+    aliases = NameAlias.query.order_by(NameAlias.match_count.desc()).all()
+    return jsonify({"aliases": [{
+        "id": a.id,
+        "name_a": a.name_a,
+        "name_b": a.name_b,
+        "match_count": a.match_count,
+        "active": a.match_count >= 2,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    } for a in aliases]})
+
+
+@api_bp.route("/smart/aliases/<int:alias_id>", methods=["DELETE"])
+def smart_alias_delete(alias_id):
+    """Remove an incorrect name alias."""
+    from app.models import NameAlias
+    alias = db.session.get(NameAlias, alias_id)
+    if not alias:
+        return jsonify({"error": "Alias not found"}), 404
+    db.session.delete(alias)
+    db.session.commit()
+    return jsonify({"status": "deleted"})
+
+
+# ── Recovery Rates (SM-03) ──────────────────────────────────────
+
+@api_bp.route("/smart/recovery-rates")
+def smart_recovery_rates():
+    """View learned recovery rates per carrier+reason."""
+    from app.revenue.denial_memory import get_recovery_rates_list
+    return jsonify({"rates": get_recovery_rates_list()})
+
+
+# ── Payment Patterns (SM-07) ────────────────────────────────────
+
+@api_bp.route("/smart/payment-patterns")
+def smart_payment_patterns():
+    """View learned payment patterns per carrier/modality."""
+    from app.revenue.payment_patterns import get_payment_patterns
+    days = int(request.args.get("days", 90))
+    return jsonify({"patterns": get_payment_patterns(days=days)})
+
+
+@api_bp.route("/smart/fee-suggestions")
+def smart_fee_suggestions():
+    """View suggested fee schedule updates."""
+    from app.revenue.payment_patterns import suggest_fee_updates
+    return jsonify({"suggestions": suggest_fee_updates()})
+
+
+@api_bp.route("/smart/fee-update", methods=["POST"])
+def smart_fee_update():
+    """Apply a fee schedule update."""
+    from app.revenue.payment_patterns import apply_fee_update
+    data = request.get_json()
+    if not data or not data.get("carrier") or not data.get("modality") or not data.get("rate"):
+        return jsonify({"error": "carrier, modality, and rate required"}), 400
+    result = apply_fee_update(data["carrier"], data["modality"], float(data["rate"]))
+    return jsonify(result)
+
+
+# ── Denial Patterns (SM-12) ─────────────────────────────────────
+
+@api_bp.route("/smart/denial-patterns")
+def smart_denial_patterns():
+    """View detected recurring denial patterns."""
+    from app.revenue.denial_memory import detect_denial_patterns
+    return jsonify({"patterns": detect_denial_patterns()})
+
+
+# ── CPT Map (SM-05) ─────────────────────────────────────────────
+
+@api_bp.route("/smart/cpt-map")
+def smart_cpt_map():
+    """View CPT->modality mappings (hardcoded + learned)."""
+    from app.matching.match_memory import get_cpt_modality_map
+    from app.models import LearnedCptModality
+    all_entries = LearnedCptModality.query.order_by(LearnedCptModality.match_count.desc()).all()
+    return jsonify({"mappings": [{
+        "cpt_prefix": e.cpt_prefix,
+        "modality": e.modality,
+        "confidence": e.confidence,
+        "source": e.source,
+        "match_count": e.match_count,
+    } for e in all_entries]})
+
+
+# ── Normalization (SM-09) ───────────────────────────────────────
+
+@api_bp.route("/smart/normalization/pending")
+def smart_normalization_pending():
+    """View unmapped values needing approval."""
+    from app.import_engine.normalization_learner import get_pending_normalizations
+    pending = get_pending_normalizations()
+    return jsonify({"pending": [{
+        "id": n.id,
+        "category": n.category,
+        "raw_value": n.raw_value,
+        "normalized_value": n.normalized_value,
+        "use_count": n.use_count,
+    } for n in pending]})
+
+
+@api_bp.route("/smart/normalization/approve", methods=["POST"])
+def smart_normalization_approve():
+    """Approve a normalization suggestion."""
+    from app.import_engine.normalization_learner import approve_normalization
+    data = request.get_json()
+    if not data or not data.get("id"):
+        return jsonify({"error": "id required"}), 400
+    result = approve_normalization(
+        int(data["id"]),
+        normalized_value=data.get("normalized_value"),
+    )
+    if result:
+        return jsonify({"status": "approved", "id": result.id})
+    return jsonify({"error": "Not found"}), 404
+
+
+@api_bp.route("/smart/normalization/reject", methods=["POST"])
+def smart_normalization_reject():
+    """Reject a normalization suggestion."""
+    from app.import_engine.normalization_learner import reject_normalization
+    data = request.get_json()
+    if not data or not data.get("id"):
+        return jsonify({"error": "id required"}), 400
+    reject_normalization(int(data["id"]))
+    return jsonify({"status": "rejected"})
+
+
+# ── Column Learning (SM-08) ─────────────────────────────────────
+
+@api_bp.route("/smart/column-mappings")
+def smart_column_mappings():
+    """View all learned column mappings."""
+    from app.models import ColumnAliasLearned
+    mappings = ColumnAliasLearned.query.order_by(ColumnAliasLearned.use_count.desc()).all()
+    return jsonify({"mappings": [{
+        "id": m.id,
+        "source_name": m.source_name,
+        "target_field": m.target_field,
+        "source_format": m.source_format,
+        "confidence": m.confidence,
+        "use_count": m.use_count,
+    } for m in mappings]})
+
+
+@api_bp.route("/smart/column-mappings", methods=["POST"])
+def smart_column_mapping_add():
+    """Add a learned column mapping."""
+    from app.import_engine.column_learner import learn_column_mapping
+    data = request.get_json()
+    if not data or not data.get("source_name") or not data.get("target_field"):
+        return jsonify({"error": "source_name and target_field required"}), 400
+    learn_column_mapping(
+        data["source_name"],
+        data["target_field"],
+        source_format=data.get("source_format"),
+    )
+    return jsonify({"status": "learned"})
+
+
+# ── Calibration (SM-10) ─────────────────────────────────────────
+
+@api_bp.route("/smart/calibration")
+def smart_calibration():
+    """View confidence calibration stats."""
+    from app.matching.calibration import get_calibration_stats
+    return jsonify(get_calibration_stats())
+
+
+# ── Smart Analytics Dashboard (SM-UI1) ──────────────────────────
+
+@api_bp.route("/smart/analytics")
+def smart_analytics():
+    """Comprehensive smart matching analytics."""
+    from app.matching.match_memory import get_outcome_stats
+    from app.matching.weight_optimizer import get_all_learned_weights
+    from app.matching.calibration import train_calibration, get_calibration_stats
+    from app.revenue.denial_memory import get_recovery_rates_list, detect_denial_patterns
+    from app.revenue.payment_patterns import get_payment_patterns, suggest_fee_updates
+    from app.models import NameAlias, MatchOutcome
+
+    outcome_stats = get_outcome_stats()
+    all_weights = get_all_learned_weights()
+    alias_count = NameAlias.query.count()
+    active_aliases = NameAlias.query.filter(NameAlias.match_count >= 2).count()
+    calibration = get_calibration_stats()
+    recovery_rates = get_recovery_rates_list()
+    denial_patterns = detect_denial_patterns()
+    payment_patterns = get_payment_patterns()
+    fee_suggestions = suggest_fee_updates()
+
+    # Accuracy trend (last 10 batches of 25)
+    accuracy_trend = []
+    total_outcomes = MatchOutcome.query.count()
+    if total_outcomes > 0:
+        all_outcomes = MatchOutcome.query.filter(
+            MatchOutcome.action.in_(["CONFIRMED", "REJECTED"]),
+            MatchOutcome.original_score.isnot(None),
+        ).order_by(MatchOutcome.created_at).all()
+
+        batch_size = max(25, len(all_outcomes) // 10)
+        for i in range(0, len(all_outcomes), batch_size):
+            batch = all_outcomes[i:i + batch_size]
+            if not batch:
+                break
+            correct = sum(1 for o in batch if (o.action == "CONFIRMED" and o.original_score >= 0.80) or
+                          (o.action == "REJECTED" and o.original_score < 0.80))
+            accuracy_trend.append({
+                "batch": i // batch_size + 1,
+                "sample_size": len(batch),
+                "accuracy": round(correct / len(batch), 4),
+            })
+
+    return jsonify({
+        "outcome_stats": outcome_stats,
+        "learned_weights": all_weights,
+        "aliases": {"total": alias_count, "active": active_aliases},
+        "calibration": calibration,
+        "recovery_rates": recovery_rates,
+        "denial_patterns": denial_patterns[:10],
+        "payment_patterns": payment_patterns[:10],
+        "fee_suggestions": fee_suggestions[:10],
+        "accuracy_trend": accuracy_trend,
+    })
+
+
+@api_bp.route("/smart/dashboard")
+def smart_dashboard_data():
+    """Summary data for the smart matching dashboard."""
+    from app.models import MatchOutcome, NameAlias, LearnedWeights, DenialOutcome
+    from app.matching.weight_optimizer import get_all_learned_weights
+
+    total_outcomes = MatchOutcome.query.count()
+    confirmed = MatchOutcome.query.filter_by(action="CONFIRMED").count()
+    rejected = MatchOutcome.query.filter_by(action="REJECTED").count()
+
+    all_weights = get_all_learned_weights()
+    active_aliases = NameAlias.query.filter(NameAlias.match_count >= 2).count()
+    total_denial_outcomes = DenialOutcome.query.count()
+
+    return jsonify({
+        "match_outcomes": {
+            "total": total_outcomes,
+            "confirmed": confirmed,
+            "rejected": rejected,
+            "confirm_rate": round(confirmed / total_outcomes, 4) if total_outcomes > 0 else 0,
+        },
+        "learned_weights_count": len(all_weights),
+        "active_aliases": active_aliases,
+        "denial_outcomes": total_denial_outcomes,
+        "features_active": {
+            "adaptive_weights": any(w["sample_size"] >= 50 for w in all_weights),
+            "name_aliases": active_aliases > 0,
+            "denial_learning": total_denial_outcomes >= 10,
+        },
+    })

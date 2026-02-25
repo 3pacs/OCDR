@@ -195,3 +195,104 @@ class ScheduleRecord(db.Model):
             "notes": self.notes,
             "import_source": self.import_source,
         }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Smart Matching Models (SM-01 through SM-12)
+# ══════════════════════════════════════════════════════════════════
+
+class MatchOutcome(db.Model):
+    """Stores every confirm/reject decision for learning (SM-01a)."""
+    __tablename__ = "match_outcomes"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    era_claim_id = db.Column(db.Integer, db.ForeignKey("era_claim_lines.id"), nullable=False, index=True)
+    billing_record_id = db.Column(db.Integer, db.ForeignKey("billing_records.id"), index=True)
+    action = db.Column(db.Text, nullable=False)  # CONFIRMED, REJECTED, REASSIGNED
+    original_score = db.Column(db.Float)
+    name_score = db.Column(db.Float)
+    date_score = db.Column(db.Float)
+    modality_score = db.Column(db.Float)
+    carrier = db.Column(db.Text, index=True)
+    modality = db.Column(db.Text, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class NameAlias(db.Model):
+    """Stores confirmed patient name pairs (SM-04)."""
+    __tablename__ = "name_aliases"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name_a = db.Column(db.Text, nullable=False, index=True)
+    name_b = db.Column(db.Text, nullable=False, index=True)
+    match_count = db.Column(db.Integer, default=1)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class LearnedWeights(db.Model):
+    """Stores optimized weights per carrier/modality (SM-01b, SM-02)."""
+    __tablename__ = "learned_weights"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    carrier = db.Column(db.Text, index=True)  # NULL = global default
+    modality = db.Column(db.Text, index=True)  # NULL = all modalities
+    name_weight = db.Column(db.Float, nullable=False, default=0.50)
+    date_weight = db.Column(db.Float, nullable=False, default=0.30)
+    modality_weight = db.Column(db.Float, nullable=False, default=0.20)
+    auto_accept_threshold = db.Column(db.Float, nullable=False, default=0.95)
+    review_threshold = db.Column(db.Float, nullable=False, default=0.80)
+    sample_size = db.Column(db.Integer, default=0)
+    accuracy = db.Column(db.Float)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class LearnedCptModality(db.Model):
+    """Stores CPT->modality mappings learned from confirmed matches (SM-05)."""
+    __tablename__ = "learned_cpt_modality"
+
+    cpt_prefix = db.Column(db.Text, primary_key=True)
+    modality = db.Column(db.Text, nullable=False)
+    confidence = db.Column(db.Float, default=1.0)
+    source = db.Column(db.Text, nullable=False, default="HARDCODED")  # HARDCODED or LEARNED
+    match_count = db.Column(db.Integer, default=1)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class DenialOutcome(db.Model):
+    """Stores appeal results for learning recovery rates (SM-03)."""
+    __tablename__ = "denial_outcomes"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    billing_record_id = db.Column(db.Integer, db.ForeignKey("billing_records.id"), nullable=False, index=True)
+    carrier = db.Column(db.Text, nullable=False, index=True)
+    denial_reason = db.Column(db.Text, index=True)
+    modality = db.Column(db.Text, index=True)
+    days_old_at_appeal = db.Column(db.Integer)
+    outcome = db.Column(db.Text, nullable=False)  # RECOVERED, PARTIAL, WRITTEN_OFF
+    recovered_amount = db.Column(db.Float, default=0.0)
+    expected_amount = db.Column(db.Float)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ColumnAliasLearned(db.Model):
+    """Stores import column mappings learned from user corrections (SM-08)."""
+    __tablename__ = "column_aliases_learned"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    source_name = db.Column(db.Text, nullable=False, index=True)
+    target_field = db.Column(db.Text, nullable=False)
+    source_format = db.Column(db.Text)  # CSV, EXCEL, PDF
+    confidence = db.Column(db.Float, default=1.0)
+    use_count = db.Column(db.Integer, default=1)
+
+
+class NormalizationLearned(db.Model):
+    """Stores new modality/carrier normalizations from user approvals (SM-09)."""
+    __tablename__ = "normalization_learned"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    category = db.Column(db.Text, nullable=False, index=True)  # MODALITY or CARRIER
+    raw_value = db.Column(db.Text, nullable=False, index=True)
+    normalized_value = db.Column(db.Text, nullable=False)
+    approved = db.Column(db.Boolean, default=False)
+    use_count = db.Column(db.Integer, default=1)

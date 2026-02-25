@@ -98,3 +98,8 @@ def import_page():
 @ui_bp.route("/admin")
 def admin_page():
     return render_template("admin.html")
+
+
+@ui_bp.route("/smart-matching")
+def smart_matching_page():
+    return render_template("smart_matching.html")
