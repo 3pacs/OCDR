@@ -2,13 +2,18 @@
 
 Extracts billing data from digital PDFs using pdfplumber.
 Falls back to basic text extraction if pdfplumber unavailable.
+Uses shared validation for normalization, dedup, and PSMA detection.
 """
 
 import os
 import re
-from datetime import datetime
 
 from app.models import db, BillingRecord
+from app.import_engine.validation import (
+    parse_date, parse_float, parse_bool, normalize_modality,
+    normalize_carrier, detect_psma, compute_total_payment,
+    build_dedup_set, is_duplicate,
+)
 
 
 try:
@@ -16,28 +21,6 @@ try:
     HAS_PDFPLUMBER = True
 except ImportError:
     HAS_PDFPLUMBER = False
-
-
-def _parse_date(val):
-    """Parse date from common formats."""
-    if not val:
-        return None
-    val = str(val).strip()
-    for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%m/%d/%y"):
-        try:
-            return datetime.strptime(val, fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
-def _parse_float(val):
-    if not val:
-        return 0.0
-    try:
-        return float(str(val).replace(",", "").replace("$", "").strip())
-    except (ValueError, TypeError):
-        return 0.0
 
 
 def import_pdf(filepath):
@@ -108,6 +91,7 @@ def _import_with_pdfplumber(filepath, result):
                 result["errors"].append(f"Cannot map PDF columns. Found: {headers}")
                 return result
 
+            existing = build_dedup_set()
             batch = []
             for row in all_rows[data_start:]:
                 result["total_rows"] += 1
@@ -122,20 +106,37 @@ def _import_with_pdfplumber(filepath, result):
                         result["skipped"] += 1
                         continue
 
-                    svc_date = _parse_date(data.get("service_date"))
+                    svc_date = parse_date(data.get("service_date"))
                     if not svc_date:
                         result["skipped"] += 1
                         continue
 
+                    scan_type = str(data.get("scan_type", "")).strip() or "UNKNOWN"
+                    modality = normalize_modality(data.get("modality"))
+
+                    if is_duplicate(patient, svc_date, scan_type, modality, existing):
+                        result["skipped"] += 1
+                        continue
+
+                    description = str(data.get("description", "")).strip() or None
+                    primary = parse_float(data.get("primary_payment"))
+                    secondary = parse_float(data.get("secondary_payment"))
+                    total = parse_float(data.get("total_payment"))
+                    total = compute_total_payment(primary, secondary, total)
+
                     rec = BillingRecord(
                         patient_name=patient,
                         referring_doctor=str(data.get("referring_doctor", "")).strip() or "UNKNOWN",
-                        scan_type=str(data.get("scan_type", "")).strip() or "UNKNOWN",
-                        modality=str(data.get("modality", "")).strip().upper() or "HMRI",
-                        insurance_carrier=str(data.get("insurance_carrier", "")).strip() or "UNKNOWN",
+                        scan_type=scan_type,
+                        gado_used=parse_bool(data.get("gado_used")),
+                        modality=modality,
+                        insurance_carrier=normalize_carrier(data.get("insurance_carrier")),
                         service_date=svc_date,
-                        total_payment=_parse_float(data.get("total_payment")),
-                        primary_payment=_parse_float(data.get("primary_payment")),
+                        primary_payment=primary,
+                        secondary_payment=secondary,
+                        total_payment=total,
+                        description=description,
+                        is_psma=detect_psma(description, scan_type),
                         import_source="PDF_IMPORT",
                     )
                     batch.append(rec)
@@ -172,14 +173,14 @@ def _import_from_text(pdf, result):
     date_pattern = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4})")
     money_pattern = re.compile(r"\$?([\d,]+\.\d{2})")
 
+    existing = build_dedup_set()
     batch = []
     for line in lines:
         dates = date_pattern.findall(line)
         amounts = money_pattern.findall(line)
 
         if dates and len(line) > 20:
-            # Heuristic: line has a date and is long enough to be a data row
-            svc_date = _parse_date(dates[0])
+            svc_date = parse_date(dates[0])
             if not svc_date:
                 continue
 
@@ -188,7 +189,11 @@ def _import_from_text(pdf, result):
             if len(name_part) < 3:
                 continue
 
-            total = _parse_float(amounts[-1]) if amounts else 0.0
+            if is_duplicate(name_part, svc_date, "UNKNOWN", "HMRI", existing):
+                result["skipped"] += 1
+                continue
+
+            total = parse_float(amounts[-1]) if amounts else 0.0
 
             rec = BillingRecord(
                 patient_name=name_part,
@@ -219,7 +224,11 @@ def _detect_columns(headers):
         "type": "modality", "modality": "modality",
         "date": "service_date", "dos": "service_date", "service date": "service_date",
         "total": "total_payment", "payment": "total_payment", "amount": "total_payment",
+        "primary": "primary_payment",
+        "secondary": "secondary_payment",
         "insurance": "insurance_carrier", "carrier": "insurance_carrier", "payer": "insurance_carrier",
+        "gado": "gado_used", "contrast": "gado_used",
+        "description": "description",
     }
     col_map = {}
     for i, h in enumerate(headers):

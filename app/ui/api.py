@@ -698,6 +698,18 @@ def era_upload():
             })
             continue
 
+        # Check for duplicate file upload
+        existing_upload = EraPayment.query.filter_by(filename=filename).first()
+        if existing_upload:
+            results.append({
+                "filename": filename,
+                "status": "skipped",
+                "errors": [f"File already uploaded (payment ID {existing_upload.id})"],
+                "payments": 0,
+                "claims": 0,
+            })
+            continue
+
         # Store EraPayment
         payment_info = parsed["payment"]
         era_payment = EraPayment(
@@ -709,10 +721,12 @@ def era_upload():
             payer_name=payment_info.get("payer_name"),
         )
         db.session.add(era_payment)
-        db.session.flush()  # Get the ID
+        db.session.flush()
 
         # Store EraClaimLines
         claim_count = 0
+        payment_date = payment_info.get("payment_date")  # fallback date
+
         for claim in parsed["claims"]:
             # Collect CPT codes and adjustments from service lines
             cpt_codes = []
@@ -722,9 +736,13 @@ def era_upload():
                     cpt_codes.append(svc["cpt_code"])
                 all_adjustments.extend(svc.get("adjustments", []))
 
-            # Primary adjustment (first one, or aggregated)
-            primary_adj = all_adjustments[0] if all_adjustments else {}
+            # Aggregate all unique group codes and reason codes
+            group_codes = sorted(set(a.get("group_code", "") for a in all_adjustments if a.get("group_code")))
+            reason_codes = sorted(set(a.get("reason_code", "") for a in all_adjustments if a.get("reason_code")))
             total_adj_amount = sum(a.get("amount", 0) for a in all_adjustments)
+
+            # Use service_date from claim, fall back to payment date
+            service_date = claim.get("service_date") or payment_date
 
             era_claim = EraClaimLine(
                 era_payment_id=era_payment.id,
@@ -733,10 +751,10 @@ def era_upload():
                 billed_amount=claim.get("billed_amount", 0.0),
                 paid_amount=claim.get("paid_amount", 0.0),
                 patient_name_835=claim.get("patient_name"),
-                service_date_835=claim.get("service_date"),
+                service_date_835=service_date,
                 cpt_code=", ".join(cpt_codes) if cpt_codes else None,
-                cas_group_code=primary_adj.get("group_code"),
-                cas_reason_code=primary_adj.get("reason_code"),
+                cas_group_code=", ".join(group_codes) if group_codes else None,
+                cas_reason_code=", ".join(reason_codes) if reason_codes else None,
                 cas_adjustment_amount=total_adj_amount if total_adj_amount else None,
             )
             db.session.add(era_claim)
