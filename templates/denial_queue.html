@@ -145,7 +145,7 @@ function renderQueue(data) {
     const tbody = document.getElementById('queue-tbody');
     document.getElementById('queue-count').textContent = formatNumber(data.total) + ' claims';
     if (!data.items.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No denied claims found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-5"><div class="empty-state"><i class="bi bi-clipboard-check"></i><p>No denied claims in the queue. Import billing data to find denials.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
         return;
     }
     tbody.innerHTML = data.items.map(r => {
@@ -182,15 +182,18 @@ function toggleSelect(id, checked) { checked ? selectedIds.add(id) : selectedIds
 
 async function appealOne(id) {
     await fetch(`/api/denials/${id}/appeal`, { method:'POST' });
+    showToast('Claim appealed', 'success');
     loadQueue();
 }
 async function resolveOne(id) {
     await fetch(`/api/denials/${id}/resolve`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{"resolution":"RESOLVED"}' });
+    showToast('Claim resolved', 'success');
     loadQueue();
 }
 async function bulkAppeal() {
-    if (!selectedIds.size) return;
+    if (!selectedIds.size) { showToast('Select claims first', 'warning'); return; }
     await fetch('/api/denials/bulk-appeal', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids: [...selectedIds]}) });
+    showToast(selectedIds.size + ' claims appealed', 'success');
     selectedIds.clear();
     loadQueue();
 }

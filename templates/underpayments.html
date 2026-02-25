@@ -127,6 +127,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Table
     document.getElementById('table-count').textContent = detail.total + ' records';
     const tbody = document.getElementById('underpay-table');
+    if (!detail.items.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5"><div class="empty-state"><i class="bi bi-check-circle"></i><p>No underpayments detected. This means your fee schedule is matching or you need to <a href="/admin">set up fee schedules</a> first.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
     tbody.innerHTML = detail.items.map(r => `
         <tr>
             <td class="fw-medium">${r.patient_name}</td>

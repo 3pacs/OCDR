@@ -192,31 +192,6 @@
 {% endblock %}
 
 {% block scripts %}
-<style>
-.upload-zone {
-    background: var(--bg-card);
-    border: 2px dashed var(--border-color);
-    border-radius: 12px;
-    padding: 2.5rem;
-    text-align: center;
-    transition: all 0.2s ease;
-    cursor: pointer;
-}
-.upload-zone:hover,
-.upload-zone.drag-over {
-    border-color: var(--accent-blue);
-    background: rgba(99,179,237,0.05);
-}
-.upload-zone.drag-over {
-    transform: scale(1.01);
-}
-.upload-progress {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-</style>
-
 <script>
 let claimsPage = 1;
 const claimsPerPage = 50;

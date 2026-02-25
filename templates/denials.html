@@ -124,6 +124,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     // Table sorted by recoverability
     const sorted = data.items.sort((a, b) => b.recoverability_score - a.recoverability_score);
     const tbody = document.getElementById('denial-table');
+    if (!sorted.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center py-5"><div class="empty-state"><i class="bi bi-shield-check"></i><p>No denied claims found. Import billing data to see denials.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
     tbody.innerHTML = sorted.slice(0, 100).map(r => `
         <tr>
             <td class="fw-medium">${r.patient_name}</td>

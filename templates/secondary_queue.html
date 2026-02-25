@@ -69,6 +69,10 @@ document.addEventListener('DOMContentLoaded', async function() {
     document.getElementById('table-count').textContent = data.total + ' records';
 
     const tbody = document.getElementById('secondary-table');
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5"><div class="empty-state"><i class="bi bi-layers"></i><p>No secondary billing claims found yet. Import billing data to get started.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
     tbody.innerHTML = data.items.slice(0, 200).map(r => `
         <tr>
             <td class="fw-medium">${r.patient_name}</td>

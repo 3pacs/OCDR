@@ -94,6 +94,10 @@ function applyFilter() {
 function renderTable(items) {
     document.getElementById('table-count').textContent = items.length + ' records';
     const tbody = document.getElementById('deadline-table');
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5"><div class="empty-state"><i class="bi bi-calendar-check"></i><p>No filing deadline alerts. Import unpaid claims to track deadlines.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
     tbody.innerHTML = items.slice(0, 200).map(r => `
         <tr>
             <td class="fw-medium">${r.patient_name}</td>

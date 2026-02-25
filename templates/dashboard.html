@@ -3,14 +3,37 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
+<!-- Welcome Banner (shown when no data) -->
+<div class="welcome-banner" id="welcome-banner" style="display:none;">
+    <h2>Welcome to OCDR</h2>
+    <p>Your billing reconciliation system is ready. Start by importing your data, then watch your dashboard come to life.</p>
+    <div class="welcome-steps">
+        <a href="/import" class="welcome-step">
+            <div class="step-number">1</div>
+            <div class="step-title">Import Data</div>
+            <div class="step-desc">Upload Excel, CSV, or 835 files</div>
+        </a>
+        <a href="/admin" class="welcome-step">
+            <div class="step-number">2</div>
+            <div class="step-title">Configure</div>
+            <div class="step-desc">Set up payers and fee schedules</div>
+        </a>
+        <a href="/match-review" class="welcome-step">
+            <div class="step-number">3</div>
+            <div class="step-title">Match Claims</div>
+            <div class="step-desc">Auto-match 835 to billing records</div>
+        </a>
+    </div>
+</div>
+
 <!-- KPI Cards Row -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="kpi-row-1">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue">
+        <div class="kpi-card kpi-revenue clickable" onclick="window.location='/import'">
             <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Revenue</div>
-                <div class="kpi-value" id="kpi-revenue">—</div>
+                <div class="kpi-value" id="kpi-revenue">--</div>
                 <div class="kpi-sub" id="kpi-records">Loading...</div>
             </div>
         </div>
@@ -20,7 +43,7 @@
             <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Unpaid / Denied</div>
-                <div class="kpi-value" id="kpi-denials">—</div>
+                <div class="kpi-value" id="kpi-denials">--</div>
                 <div class="kpi-sub">Claims with $0 collected</div>
             </div>
         </div>
@@ -30,7 +53,7 @@
             <div class="kpi-icon"><i class="bi bi-arrow-down-circle-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Underpayment Gap</div>
-                <div class="kpi-value" id="kpi-underpayment">—</div>
+                <div class="kpi-value" id="kpi-underpayment">--</div>
                 <div class="kpi-sub" id="kpi-underpayment-count">Flagged claims</div>
             </div>
         </div>
@@ -40,7 +63,7 @@
             <div class="kpi-icon"><i class="bi bi-alarm-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Filing Deadline Alerts</div>
-                <div class="kpi-value" id="kpi-deadlines">—</div>
+                <div class="kpi-value" id="kpi-deadlines">--</div>
                 <div class="kpi-sub" id="kpi-deadline-warning">Past deadline + warning</div>
             </div>
         </div>
@@ -48,13 +71,13 @@
 </div>
 
 <!-- Secondary row of KPI cards -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="kpi-row-2">
     <div class="col-xl-4 col-md-6">
         <div class="kpi-card kpi-info clickable" onclick="window.location='/secondary'">
             <div class="kpi-icon"><i class="bi bi-layers-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Secondary Follow-Up</div>
-                <div class="kpi-value" id="kpi-secondary">—</div>
+                <div class="kpi-value" id="kpi-secondary">--</div>
                 <div class="kpi-sub" id="kpi-secondary-est">Estimated recovery</div>
             </div>
         </div>
@@ -64,7 +87,7 @@
             <div class="kpi-icon"><i class="bi bi-building-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Payer Alerts</div>
-                <div class="kpi-value" id="kpi-payer-alerts">—</div>
+                <div class="kpi-value" id="kpi-payer-alerts">--</div>
                 <div class="kpi-sub">Revenue drop alerts</div>
             </div>
         </div>
@@ -74,7 +97,7 @@
             <div class="kpi-icon"><i class="bi bi-person-badge-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Top Physicians</div>
-                <div class="kpi-value" id="kpi-top-physician">—</div>
+                <div class="kpi-value" id="kpi-top-physician">--</div>
                 <div class="kpi-sub" id="kpi-physician-pct">Of total revenue</div>
             </div>
         </div>
@@ -82,14 +105,19 @@
 </div>
 
 <!-- Charts Row -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" id="charts-row">
     <div class="col-xl-8">
         <div class="chart-card">
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Monthly Revenue Trend</h6>
                 <div class="chart-legend" id="revenue-legend"></div>
             </div>
-            <div class="chart-body">
+            <div class="chart-body" id="revenue-chart-body">
+                <div class="empty-state" id="revenue-empty" style="display:none;">
+                    <i class="bi bi-graph-up"></i>
+                    <p>Revenue data will appear here after you import billing records</p>
+                    <a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a>
+                </div>
                 <canvas id="revenueChart"></canvas>
             </div>
         </div>
@@ -151,6 +179,17 @@ async function loadDashboard() {
             fetchJSON('/api/physicians?limit=5'),
         ]);
 
+        // Show welcome banner if no data
+        if (stats.total_records === 0) {
+            document.getElementById('welcome-banner').style.display = 'block';
+            document.getElementById('revenue-empty').style.display = 'block';
+            document.getElementById('revenueChart').style.display = 'none';
+        } else {
+            document.getElementById('welcome-banner').style.display = 'none';
+            document.getElementById('revenue-empty').style.display = 'none';
+            document.getElementById('revenueChart').style.display = 'block';
+        }
+
         // KPI cards
         document.getElementById('kpi-revenue').textContent = formatCurrency(stats.total_revenue);
         document.getElementById('kpi-records').textContent = formatNumber(stats.total_records) + ' total claims';
@@ -170,12 +209,15 @@ async function loadDashboard() {
         if (physicians.length > 0) {
             document.getElementById('kpi-top-physician').textContent = physicians[0].name;
             document.getElementById('kpi-physician-pct').textContent = physicians[0].pct_of_total + '% of total revenue';
+        } else {
+            document.getElementById('kpi-top-physician').textContent = '--';
+            document.getElementById('kpi-physician-pct').textContent = 'No data yet';
         }
 
-        // Charts
-        renderRevenueChart(byMonth);
-        renderCarrierChart(byCarrier);
-        renderModalityChart(byModality);
+        // Charts (only render if there's data)
+        if (byMonth.length > 0) renderRevenueChart(byMonth);
+        if (byCarrier.length > 0) renderCarrierChart(byCarrier);
+        if (byModality.length > 0) renderModalityChart(byModality);
 
         document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
     } catch (err) {

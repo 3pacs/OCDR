@@ -194,11 +194,13 @@ function renderResults(data) {
 
 async function confirmMatch(claimId) {
     await fetch(`/api/match/confirm/${claimId}`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    showToast('Match confirmed', 'success');
     loadResults();
 }
 
 async function rejectMatch(claimId) {
     await fetch(`/api/match/reject/${claimId}`, { method: 'POST' });
+    showToast('Match rejected', 'info');
     loadResults();
 }
 

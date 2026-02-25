@@ -25,7 +25,7 @@ function formatNumber(val) {
 }
 
 function formatDate(isoStr) {
-    if (!isoStr) return '—';
+    if (!isoStr) return '--';
     const d = new Date(isoStr + 'T00:00:00');
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -44,7 +44,51 @@ function statusBadge(status) {
     return `<span class="badge-status ${cls}">${status}</span>`;
 }
 
-// Chart.js global defaults
+// ── Toast Notifications ──────────────────────────────────────
+
+function showToast(message, type) {
+    type = type || 'info';
+    let container = document.querySelector('.toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
+    const icons = {
+        success: 'bi-check-circle-fill',
+        error: 'bi-x-circle-fill',
+        warning: 'bi-exclamation-circle-fill',
+        info: 'bi-info-circle-fill'
+    };
+    const toast = document.createElement('div');
+    toast.className = 'toast-msg toast-' + (type === 'warning' ? 'info' : type);
+    toast.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> ' + message;
+    container.appendChild(toast);
+    setTimeout(function() {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(function() { toast.remove(); }, 300);
+    }, 4000);
+}
+
+// ── Empty state helper ───────────────────────────────────────
+
+function renderEmptyState(containerId, icon, message, actionUrl, actionLabel) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    let html = '<div class="empty-state">';
+    html += '<i class="bi ' + icon + '"></i>';
+    html += '<p>' + message + '</p>';
+    if (actionUrl && actionLabel) {
+        html += '<a href="' + actionUrl + '" class="btn btn-sm btn-outline-primary">' + actionLabel + '</a>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+// ── Chart.js global defaults ─────────────────────────────────
+
 if (typeof Chart !== 'undefined') {
     Chart.defaults.color = '#94a3b8';
     Chart.defaults.borderColor = 'rgba(148,163,184,0.08)';
@@ -53,7 +97,8 @@ if (typeof Chart !== 'undefined') {
     Chart.defaults.plugins.legend.labels.boxWidth = 12;
 }
 
-// Auto-update timestamp
+// ── Auto-update timestamp ────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', function() {
     const el = document.getElementById('last-updated');
     if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString();
