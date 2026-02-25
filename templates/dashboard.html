@@ -214,12 +214,37 @@
                         </div>
                     </div>
 
-                    <div class="mt-3 p-3 rounded" style="background: rgba(111,66,193,0.08); border: 1px solid rgba(111,66,193,0.2);">
-                        <small class="text-muted">
-                            <i class="bi bi-info-circle me-1"></i>
-                            OCR processing will extract patient schedules from these PDFs and cross-reference
-                            them with billing records using patient IDs, jacket numbers, dates of birth, and name matching.
+                    <!-- OCR controls -->
+                    <div class="mt-3 p-3 rounded" style="background: rgba(139,92,246,0.06); border: 1px solid rgba(139,92,246,0.2);">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <small class="fw-bold" style="color: var(--cal-accent);">
+                                <i class="bi bi-eye me-1"></i>OCR Processing
+                            </small>
+                            <button class="btn btn-sm px-2 py-0" style="background-color: var(--cal-accent); color: #fff; font-size: 0.75rem;"
+                                    onclick="ocrStart()" id="ocrStartBtn">
+                                <i class="bi bi-play-fill me-1"></i>Process All
+                            </button>
+                        </div>
+                        <div class="ocr-progress-bar mb-2" id="ocrProgressBar" style="display:none;">
+                            <div class="fill" id="ocrProgressFill" style="width: 0%;"></div>
+                        </div>
+                        <small class="text-muted d-block" id="ocrStatusText">
+                            Extract patient schedules from PDFs and cross-reference with billing records.
                         </small>
+                        <div class="row g-2 mt-2" id="ocrStats" style="display:none;">
+                            <div class="col-4 text-center">
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--cal-accent);" id="ocrJobsDone">0</div>
+                                <div style="font-size: 0.6rem;" class="text-muted text-uppercase">PDFs done</div>
+                            </div>
+                            <div class="col-4 text-center">
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-primary);" id="ocrPagesStored">0</div>
+                                <div style="font-size: 0.6rem;" class="text-muted text-uppercase">Pages indexed</div>
+                            </div>
+                            <div class="col-4 text-center">
+                                <div style="font-size: 0.9rem; font-weight: 600; color: var(--candelis-accent);" id="ocrEntriesFound">0</div>
+                                <div style="font-size: 0.6rem;" class="text-muted text-uppercase">Entries</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 {% else %}
@@ -834,6 +859,72 @@ async function calLoadPdfs() {
 
     listEl.innerHTML = html;
 }
+
+
+/* ── OCR ── */
+let ocrPollTimer = null;
+
+async function ocrStart() {
+    const btn = document.getElementById('ocrStartBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    const res = await fetch(`${CAL_API}/ocr/start`, { method: 'POST' });
+    const data = await res.json();
+
+    if (data.ok) {
+        document.getElementById('ocrProgressBar').style.display = 'block';
+        document.getElementById('ocrStats').style.display = 'flex';
+        document.getElementById('ocrStatusText').textContent = 'Processing PDFs in background...';
+        ocrPoll();
+    } else {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Process All';
+        document.getElementById('ocrStatusText').innerHTML = `<span class="text-danger">${escapeHtml(data.message)}</span>`;
+    }
+}
+
+async function ocrPoll() {
+    const res = await fetch(`${CAL_API}/ocr/status`);
+    const s = await res.json();
+
+    // Update progress bar
+    const pct = s.total_pdfs > 0 ? Math.round((s.processed_pdfs / s.total_pdfs) * 100) : 0;
+    document.getElementById('ocrProgressFill').style.width = pct + '%';
+
+    // Update stats
+    document.getElementById('ocrStats').style.display = 'flex';
+    document.getElementById('ocrJobsDone').textContent = s.db_completed_jobs || s.processed_pdfs || 0;
+    document.getElementById('ocrPagesStored').textContent = s.db_pages_stored || 0;
+    document.getElementById('ocrEntriesFound').textContent = s.db_ocr_entries || s.total_entries || 0;
+
+    if (s.active) {
+        document.getElementById('ocrStatusText').textContent = `Processing... ${s.processed_pdfs}/${s.total_pdfs} PDFs`;
+        ocrPollTimer = setTimeout(ocrPoll, 2000);
+    } else {
+        document.getElementById('ocrProgressFill').style.width = '100%';
+        document.getElementById('ocrStartBtn').disabled = false;
+        document.getElementById('ocrStartBtn').innerHTML = '<i class="bi bi-play-fill me-1"></i>Process All';
+        const errCount = s.errors ? s.errors.length : (s.db_failed_jobs || 0);
+        let msg = `Done. ${s.db_completed_jobs || s.processed_pdfs} PDFs processed, ${s.db_ocr_entries || s.total_entries} entries found.`;
+        if (errCount > 0) msg += ` ${errCount} errors.`;
+        document.getElementById('ocrStatusText').textContent = msg;
+    }
+}
+
+// Check OCR status on page load
+fetch(`${CAL_API}/ocr/status`).then(r => r.json()).then(s => {
+    if (s.db_completed_jobs > 0 || s.active) {
+        document.getElementById('ocrStats').style.display = 'flex';
+        document.getElementById('ocrJobsDone').textContent = s.db_completed_jobs || 0;
+        document.getElementById('ocrPagesStored').textContent = s.db_pages_stored || 0;
+        document.getElementById('ocrEntriesFound').textContent = s.db_ocr_entries || 0;
+        if (s.active) {
+            document.getElementById('ocrProgressBar').style.display = 'block';
+            ocrPoll();
+        }
+    }
+}).catch(() => {});
 
 
 /* ── Utilities ── */

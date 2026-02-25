@@ -233,6 +233,57 @@ class CandelisStudy(db.Model):
                            onupdate=lambda: datetime.now(timezone.utc))
 
 
+class OcrJob(db.Model):
+    """Tracks background OCR processing of schedule PDFs."""
+    __tablename__ = 'ocr_jobs'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    pdf_path = db.Column(db.Text, nullable=False, index=True)
+    pdf_name = db.Column(db.Text, nullable=False)
+    status = db.Column(db.Text, nullable=False, default='pending')  # pending, processing, completed, failed
+    total_pages = db.Column(db.Integer, default=0)
+    processed_pages = db.Column(db.Integer, default=0)
+    entries_found = db.Column(db.Integer, default=0)
+    error_message = db.Column(db.Text)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class OcrPage(db.Model):
+    """Raw OCR output per PDF page — stores full text for re-parsing."""
+    __tablename__ = 'ocr_pages'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ocr_job_id = db.Column(db.Integer, db.ForeignKey('ocr_jobs.id'), index=True)
+    page_number = db.Column(db.Integer, nullable=False)
+    raw_text = db.Column(db.Text)
+    has_table = db.Column(db.Boolean, default=False)
+    entries_extracted = db.Column(db.Integer, default=0)
+    processed_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    ocr_job = db.relationship('OcrJob', backref='pages')
+
+
+class ImportJob(db.Model):
+    """Tracks file import jobs (Excel, CSV uploads)."""
+    __tablename__ = 'import_jobs'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    filename = db.Column(db.Text, nullable=False)
+    file_type = db.Column(db.Text, nullable=False)  # excel, csv
+    status = db.Column(db.Text, nullable=False, default='pending')  # pending, processing, completed, failed
+    total_rows = db.Column(db.Integer, default=0)
+    imported_rows = db.Column(db.Integer, default=0)
+    skipped_rows = db.Column(db.Integer, default=0)
+    error_rows = db.Column(db.Integer, default=0)
+    errors = db.Column(db.Text)  # JSON list of row-level errors
+    column_mapping = db.Column(db.Text)  # JSON map of source→target columns
+    error_message = db.Column(db.Text)
+    completed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class DevNote(db.Model):
     """Development notes stored via the chatbot interface.
 

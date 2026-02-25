@@ -40,7 +40,7 @@
                     <small class="text-muted px-3 text-uppercase">Data</small>
                 </li>
                 <li class="nav-item">
-                    <a href="#" class="nav-link disabled">
+                    <a href="/import" class="nav-link {% if request.endpoint and 'import' in request.endpoint %}active{% endif %}">
                         <i class="bi bi-upload me-2"></i> Import
                     </a>
                 </li>

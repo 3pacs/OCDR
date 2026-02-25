@@ -362,6 +362,65 @@ body {
     background: var(--text-muted);
 }
 
+/* ── Import Page ── */
+.upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.upload-zone:hover,
+.upload-zone.drag-over {
+    border-color: var(--accent);
+    background-color: rgba(79, 140, 255, 0.05);
+}
+
+.mapping-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+}
+
+.mapping-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.mapping-label {
+    font-size: 0.7rem;
+    text-transform: capitalize;
+    color: var(--text-muted);
+    min-width: 100px;
+    white-space: nowrap;
+}
+
+.mapping-select {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    flex: 1;
+}
+
+.mapping-check {
+    font-size: 0.7rem;
+    flex-shrink: 0;
+}
+
+/* ── OCR Progress ── */
+.ocr-progress-bar {
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--border-color);
+    overflow: hidden;
+}
+
+.ocr-progress-bar .fill {
+    height: 100%;
+    background-color: var(--cal-accent);
+    transition: width 0.3s ease;
+}
+
 /* Empty state */
 .empty-state {
     text-align: center;

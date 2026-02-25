@@ -1,9 +1,9 @@
 import os
 import glob
 from datetime import datetime, timezone
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from app import db
-from app.models import CalendarConfig, CalendarEntry
+from app.models import CalendarConfig, CalendarEntry, OcrJob, OcrPage
 
 calendar_bp = Blueprint('calendar', __name__)
 
@@ -123,20 +123,78 @@ def _serialize_entry(entry):
     return {
         'id': entry.id,
         'source_pdf': entry.source_pdf,
+        'source_system': entry.source_system,
         'page_number': entry.page_number,
         'schedule_date': entry.schedule_date.isoformat() if entry.schedule_date else None,
         'time_slot': entry.time_slot,
         'patient_name': entry.patient_name,
         'patient_id': entry.patient_id,
+        'mrn': entry.mrn,
         'jacket_number': entry.jacket_number,
         'birth_date': entry.birth_date.isoformat() if entry.birth_date else None,
         'scan_type': entry.scan_type,
         'modality': entry.modality,
         'referring_doctor': entry.referring_doctor,
         'insurance_carrier': entry.insurance_carrier,
+        'accession_number': entry.accession_number,
+        'study_status': entry.study_status,
         'notes': entry.notes,
         'billing_record_id': entry.billing_record_id,
         'match_confidence': float(entry.match_confidence) if entry.match_confidence else None,
         'match_method': entry.match_method,
         'created_at': entry.created_at.isoformat() if entry.created_at else None,
     }
+
+
+# ── OCR endpoints ───────────────────────────────────────────────
+
+@calendar_bp.route('/api/calendar/ocr/start', methods=['POST'])
+def ocr_start():
+    """Start background OCR processing for all PDFs in configured folder."""
+    cfg = CalendarConfig.query.order_by(CalendarConfig.set_at.desc()).first()
+    if not cfg:
+        return jsonify({'error': 'No PDF folder configured'}), 400
+
+    from app.ocr.worker import start_ocr_run
+    ok, msg = start_ocr_run(current_app._get_current_object(), cfg.pdf_folder_path)
+    return jsonify({'ok': ok, 'message': msg})
+
+
+@calendar_bp.route('/api/calendar/ocr/status', methods=['GET'])
+def ocr_status():
+    """Poll background OCR progress."""
+    from app.ocr.worker import get_ocr_status
+    status = get_ocr_status()
+
+    # Also include DB-level stats
+    total_jobs = OcrJob.query.count()
+    completed_jobs = OcrJob.query.filter_by(status='completed').count()
+    failed_jobs = OcrJob.query.filter_by(status='failed').count()
+    total_pages_stored = db.session.query(OcrPage).count()
+    ocr_entries = CalendarEntry.query.filter_by(source_system='PDF_OCR').count()
+
+    return jsonify({
+        **status,
+        'db_total_jobs': total_jobs,
+        'db_completed_jobs': completed_jobs,
+        'db_failed_jobs': failed_jobs,
+        'db_pages_stored': total_pages_stored,
+        'db_ocr_entries': ocr_entries,
+    })
+
+
+@calendar_bp.route('/api/calendar/ocr/jobs', methods=['GET'])
+def ocr_jobs():
+    """List all OCR job records."""
+    jobs = OcrJob.query.order_by(OcrJob.created_at.desc()).limit(200).all()
+    return jsonify([{
+        'id': j.id,
+        'pdf_name': j.pdf_name,
+        'status': j.status,
+        'total_pages': j.total_pages,
+        'processed_pages': j.processed_pages,
+        'entries_found': j.entries_found,
+        'error_message': j.error_message,
+        'started_at': j.started_at.isoformat() if j.started_at else None,
+        'completed_at': j.completed_at.isoformat() if j.completed_at else None,
+    } for j in jobs])
