@@ -4,41 +4,194 @@
 {% block content %}
 <!-- KPI row -->
 <div class="row g-3 mb-4">
-    <div class="col-md-3">
+    <div class="col">
         <div class="kpi-card">
             <div class="kpi-value">{{ stats.total_records | default(0) }}</div>
             <div class="kpi-label">Billing Records</div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col">
+        <div class="kpi-card">
+            <div class="kpi-value" style="color: var(--candelis-accent);">{{ stats.candelis_studies | default(0) }}</div>
+            <div class="kpi-label">Candelis Studies</div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="kpi-card">
+            <div class="kpi-value text-success">{{ stats.candelis_matched | default(0) }}</div>
+            <div class="kpi-label">Matched to Billing</div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="kpi-card">
+            <div class="kpi-value" style="color: var(--cal-accent);">{{ stats.calendar_entries | default(0) }}</div>
+            <div class="kpi-label">Schedule Entries</div>
+        </div>
+    </div>
+    <div class="col">
         <div class="kpi-card">
             <div class="kpi-value text-primary">{{ stats.open_notes | default(0) }}</div>
             <div class="kpi-label">Open Dev Notes</div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="kpi-card">
-            <div class="kpi-value" style="color: var(--cal-accent);">{{ stats.calendar_pdfs | default(0) }}</div>
-            <div class="kpi-label">Schedule PDFs</div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="kpi-card">
-            <div class="kpi-value text-success">{{ stats.calendar_entries | default(0) }}</div>
-            <div class="kpi-label">Calendar Entries</div>
-        </div>
-    </div>
 </div>
 
-<!-- Two-panel layout: Calendar + Dev Notes -->
+<!-- Three-panel layout: Candelis + Calendar (left) | Dev Notes (right) -->
 <div class="row g-3 dashboard-panels">
-    <!-- Calendar Panel -->
-    <div class="col-lg-6">
-        <div class="card panel-card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-calendar3 me-2"></i>Schedule Calendar</span>
-                <span class="badge bg-secondary" id="calPdfBadge">{{ stats.calendar_pdfs | default(0) }} PDFs</span>
+    <!-- Left column: Candelis + Calendar -->
+    <div class="col-lg-6 d-flex flex-column gap-3">
+
+    <!-- Candelis Panel -->
+    <div class="card candelis-panel-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-database me-2" style="color: var(--candelis-accent);"></i>Candelis RIS</span>
+            <div class="d-flex gap-2 align-items-center">
+                {% if stats.candelis_configured %}
+                <span class="badge" style="background-color: rgba(16,185,129,0.2); color: #10b981;">Connected</span>
+                {% else %}
+                <span class="badge bg-secondary">Not configured</span>
+                {% endif %}
             </div>
+        </div>
+        <div class="card-body" id="candelisPanel">
+            {% if stats.candelis_configured %}
+            <!-- Connected state -->
+            <div id="candelisConnected">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <small class="text-muted d-block">Server</small>
+                        <code class="small">{{ stats.candelis_server }}/{{ stats.candelis_database }}</code>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="candelisShowSetup()" title="Settings">
+                            <i class="bi bi-gear"></i>
+                        </button>
+                        <button class="btn btn-sm" style="background-color: var(--candelis-accent); color: #fff;"
+                                onclick="candelisSync()" id="candelisSyncBtn">
+                            <i class="bi bi-arrow-repeat me-1"></i> Sync Now
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Sync stats -->
+                <div class="row g-2 mb-3">
+                    <div class="col-4">
+                        <div class="candelis-stat-box">
+                            <div class="candelis-stat-val" id="cdlStudyCount">{{ stats.candelis_studies | default(0) }}</div>
+                            <div class="candelis-stat-label">Studies</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="candelis-stat-box">
+                            <div class="candelis-stat-val" id="cdlEntryCount">{{ stats.candelis_entries | default(0) }}</div>
+                            <div class="candelis-stat-label">Schedule</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="candelis-stat-box">
+                            <div class="candelis-stat-val text-success" id="cdlMatchCount">{{ stats.candelis_matched | default(0) }}</div>
+                            <div class="candelis-stat-label">Matched</div>
+                        </div>
+                    </div>
+                </div>
+
+                {% if stats.candelis_last_sync %}
+                <small class="text-muted d-block">
+                    <i class="bi bi-clock me-1"></i>Last sync: {{ stats.candelis_last_sync }}
+                    {% if stats.candelis_last_status == 'success' %}
+                    <span class="text-success ms-1"><i class="bi bi-check-circle"></i></span>
+                    {% elif stats.candelis_last_status == 'error' %}
+                    <span class="text-danger ms-1"><i class="bi bi-exclamation-circle"></i></span>
+                    {% endif %}
+                </small>
+                {% endif %}
+
+                <div id="candelisSyncResult" class="mt-2" style="display:none;"></div>
+            </div>
+            {% else %}
+            <!-- Setup form -->
+            <div id="candelisSetup">
+                <div class="empty-state py-3">
+                    <i class="bi bi-database d-block" style="color: var(--candelis-accent);"></i>
+                    <p class="mb-1">Connect to Candelis</p>
+                    <small class="text-muted d-block mb-3">
+                        Enter your Candelis SQL Server connection details.<br>
+                        Data stays 100% local on your LAN.
+                    </small>
+                </div>
+                <div class="px-2" id="candelisForm">
+                    <div class="row g-2 mb-2">
+                        <div class="col-8">
+                            <label class="form-label small text-muted">Server (hostname or IP)</label>
+                            <input type="text" id="cdlServer" class="form-control form-control-sm input-dark"
+                                   placeholder="192.168.1.100 or CANDELIS-SRV">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small text-muted">Port</label>
+                            <input type="number" id="cdlPort" class="form-control form-control-sm input-dark"
+                                   value="1433">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small text-muted">Database name</label>
+                        <input type="text" id="cdlDatabase" class="form-control form-control-sm input-dark"
+                               placeholder="Candelis or ImageGrid">
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col">
+                            <label class="form-label small text-muted">Username</label>
+                            <input type="text" id="cdlUsername" class="form-control form-control-sm input-dark">
+                        </div>
+                        <div class="col">
+                            <label class="form-label small text-muted">Password</label>
+                            <input type="password" id="cdlPassword" class="form-control form-control-sm input-dark">
+                        </div>
+                    </div>
+                    <details class="mb-2">
+                        <summary class="small text-muted" style="cursor:pointer;">Advanced options</summary>
+                        <div class="row g-2 mt-1">
+                            <div class="col">
+                                <label class="form-label small text-muted">ODBC Driver</label>
+                                <input type="text" id="cdlDriver" class="form-control form-control-sm input-dark"
+                                       value="ODBC Driver 17 for SQL Server">
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-1">
+                            <div class="col">
+                                <label class="form-label small text-muted">Study table</label>
+                                <input type="text" id="cdlStudyTable" class="form-control form-control-sm input-dark"
+                                       value="Study" placeholder="Study">
+                            </div>
+                            <div class="col">
+                                <label class="form-label small text-muted">Patient table</label>
+                                <input type="text" id="cdlPatientTable" class="form-control form-control-sm input-dark"
+                                       value="Patient" placeholder="Patient">
+                            </div>
+                        </div>
+                    </details>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary btn-sm flex-grow-1" onclick="candelisTest()" id="cdlTestBtn">
+                            <i class="bi bi-plug me-1"></i> Test
+                        </button>
+                        <button class="btn btn-sm flex-grow-1" style="background-color: var(--candelis-accent); color: #fff;"
+                                onclick="candelisSave()">
+                            <i class="bi bi-check-lg me-1"></i> Save &amp; Connect
+                        </button>
+                    </div>
+                    <div id="cdlError" class="text-danger small mt-2" style="display:none;"></div>
+                    <div id="cdlSuccess" class="text-success small mt-2" style="display:none;"></div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Calendar Panel -->
+    <div class="card panel-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-calendar3 me-2"></i>Schedule Calendar</span>
+            <span class="badge bg-secondary" id="calPdfBadge">{{ stats.calendar_pdfs | default(0) }} PDFs</span>
+        </div>
             <div class="card-body panel-body" id="calendarPanel">
                 {% if stats.calendar_configured %}
                 <!-- Configured state -->
@@ -96,6 +249,7 @@
             </div>
         </div>
     </div>
+    </div><!-- /col-lg-6 left column -->
 
     <!-- Dev Notes Panel -->
     <div class="col-lg-6">
@@ -367,6 +521,219 @@ document.getElementById('noteInput').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendNote(); }
 });
 
+
+/* ── Candelis ── */
+const CDL_API = '/api/candelis';
+
+async function candelisSave() {
+    const errEl = document.getElementById('cdlError');
+    const okEl = document.getElementById('cdlSuccess');
+    errEl.style.display = 'none';
+    okEl.style.display = 'none';
+
+    const payload = {
+        server:        document.getElementById('cdlServer').value.trim(),
+        database:      document.getElementById('cdlDatabase').value.trim(),
+        username:      document.getElementById('cdlUsername').value.trim(),
+        password:      document.getElementById('cdlPassword').value.trim(),
+        port:          parseInt(document.getElementById('cdlPort').value) || 1433,
+        driver:        document.getElementById('cdlDriver')?.value.trim() || 'ODBC Driver 17 for SQL Server',
+        study_table:   document.getElementById('cdlStudyTable')?.value.trim() || 'Study',
+        patient_table: document.getElementById('cdlPatientTable')?.value.trim() || 'Patient',
+    };
+
+    if (!payload.server || !payload.database || !payload.username || !payload.password) {
+        errEl.textContent = 'All connection fields are required.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    const res = await fetch(`${CDL_API}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+        errEl.textContent = data.error || 'Failed to save.';
+        errEl.style.display = 'block';
+        return;
+    }
+
+    // Reload to show connected state
+    location.reload();
+}
+
+async function candelisTest() {
+    const errEl = document.getElementById('cdlError');
+    const okEl = document.getElementById('cdlSuccess');
+    errEl.style.display = 'none';
+    okEl.style.display = 'none';
+
+    const btn = document.getElementById('cdlTestBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Testing...';
+
+    // Save first so test uses latest creds
+    await candelisSave_silent();
+
+    const res = await fetch(`${CDL_API}/test`, { method: 'POST' });
+    const data = await res.json();
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-plug me-1"></i> Test';
+
+    if (data.ok) {
+        okEl.textContent = `${data.message}` + (data.study_count != null ? ` (${data.study_count} studies found)` : '');
+        okEl.style.display = 'block';
+    } else {
+        errEl.textContent = data.message || 'Connection failed.';
+        errEl.style.display = 'block';
+    }
+}
+
+async function candelisSave_silent() {
+    // Save config without reload (used before test)
+    const payload = {
+        server:        document.getElementById('cdlServer')?.value.trim() || '',
+        database:      document.getElementById('cdlDatabase')?.value.trim() || '',
+        username:      document.getElementById('cdlUsername')?.value.trim() || '',
+        password:      document.getElementById('cdlPassword')?.value.trim() || '',
+        port:          parseInt(document.getElementById('cdlPort')?.value) || 1433,
+        driver:        document.getElementById('cdlDriver')?.value.trim() || 'ODBC Driver 17 for SQL Server',
+        study_table:   document.getElementById('cdlStudyTable')?.value.trim() || 'Study',
+        patient_table: document.getElementById('cdlPatientTable')?.value.trim() || 'Patient',
+    };
+    await fetch(`${CDL_API}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+}
+
+async function candelisSync() {
+    const btn = document.getElementById('candelisSyncBtn');
+    const resultEl = document.getElementById('candelisSyncResult');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Syncing...';
+    resultEl.style.display = 'none';
+
+    const res = await fetch(`${CDL_API}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+    });
+    const data = await res.json();
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Sync Now';
+
+    if (data.ok) {
+        resultEl.className = 'mt-2 p-2 rounded';
+        resultEl.style.cssText = 'background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2);';
+        resultEl.innerHTML = `
+            <small class="text-success">
+                <i class="bi bi-check-circle me-1"></i>
+                Synced <strong>${data.studies_fetched}</strong> studies &mdash;
+                ${data.studies_inserted} new, ${data.studies_updated} updated<br>
+                <i class="bi bi-calendar-check me-1"></i>
+                ${data.calendar_created} schedule entries created,
+                <strong>${data.billing_matched}</strong> matched to billing
+            </small>`;
+        resultEl.style.display = 'block';
+
+        // Update stat boxes
+        if (document.getElementById('cdlStudyCount'))
+            document.getElementById('cdlStudyCount').textContent = data.studies_fetched;
+        if (document.getElementById('cdlEntryCount'))
+            document.getElementById('cdlEntryCount').textContent = data.calendar_created + data.calendar_updated;
+        if (document.getElementById('cdlMatchCount'))
+            document.getElementById('cdlMatchCount').textContent = data.billing_matched;
+    } else {
+        resultEl.className = 'mt-2 p-2 rounded';
+        resultEl.style.cssText = 'background: rgba(220,53,69,0.08); border: 1px solid rgba(220,53,69,0.2);';
+        resultEl.innerHTML = `<small class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>${escapeHtml(data.error || 'Sync failed')}</small>`;
+        resultEl.style.display = 'block';
+    }
+}
+
+function candelisShowSetup() {
+    // Switch connected view to setup form
+    const panel = document.getElementById('candelisPanel');
+    panel.innerHTML = `
+        <div class="px-2 py-2" id="candelisForm">
+            <div class="row g-2 mb-2">
+                <div class="col-8">
+                    <label class="form-label small text-muted">Server</label>
+                    <input type="text" id="cdlServer" class="form-control form-control-sm input-dark" value="">
+                </div>
+                <div class="col-4">
+                    <label class="form-label small text-muted">Port</label>
+                    <input type="number" id="cdlPort" class="form-control form-control-sm input-dark" value="1433">
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small text-muted">Database</label>
+                <input type="text" id="cdlDatabase" class="form-control form-control-sm input-dark" value="">
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col">
+                    <label class="form-label small text-muted">Username</label>
+                    <input type="text" id="cdlUsername" class="form-control form-control-sm input-dark">
+                </div>
+                <div class="col">
+                    <label class="form-label small text-muted">Password</label>
+                    <input type="password" id="cdlPassword" class="form-control form-control-sm input-dark">
+                </div>
+            </div>
+            <details class="mb-2">
+                <summary class="small text-muted" style="cursor:pointer;">Advanced options</summary>
+                <div class="row g-2 mt-1">
+                    <div class="col">
+                        <label class="form-label small text-muted">ODBC Driver</label>
+                        <input type="text" id="cdlDriver" class="form-control form-control-sm input-dark"
+                               value="ODBC Driver 17 for SQL Server">
+                    </div>
+                </div>
+                <div class="row g-2 mt-1">
+                    <div class="col">
+                        <label class="form-label small text-muted">Study table</label>
+                        <input type="text" id="cdlStudyTable" class="form-control form-control-sm input-dark" value="Study">
+                    </div>
+                    <div class="col">
+                        <label class="form-label small text-muted">Patient table</label>
+                        <input type="text" id="cdlPatientTable" class="form-control form-control-sm input-dark" value="Patient">
+                    </div>
+                </div>
+            </details>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary btn-sm flex-grow-1" onclick="candelisTest()" id="cdlTestBtn">
+                    <i class="bi bi-plug me-1"></i> Test
+                </button>
+                <button class="btn btn-sm flex-grow-1" style="background-color: var(--candelis-accent); color: #fff;"
+                        onclick="candelisSave()">
+                    <i class="bi bi-check-lg me-1"></i> Save
+                </button>
+            </div>
+            <div id="cdlError" class="text-danger small mt-2" style="display:none;"></div>
+            <div id="cdlSuccess" class="text-success small mt-2" style="display:none;"></div>
+        </div>`;
+
+    // Pre-fill from current config
+    fetch(CDL_API + '/config').then(r => r.json()).then(cfg => {
+        if (cfg.configured) {
+            document.getElementById('cdlServer').value = cfg.server || '';
+            document.getElementById('cdlPort').value = cfg.port || 1433;
+            document.getElementById('cdlDatabase').value = cfg.database || '';
+            document.getElementById('cdlUsername').value = cfg.username || '';
+            if (cfg.driver) document.getElementById('cdlDriver').value = cfg.driver;
+            if (cfg.study_table) document.getElementById('cdlStudyTable').value = cfg.study_table;
+            if (cfg.patient_table) document.getElementById('cdlPatientTable').value = cfg.patient_table;
+        }
+    });
+}
 
 /* ── Calendar ── */
 const CAL_API = '/api/calendar';

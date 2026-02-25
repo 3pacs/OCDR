@@ -34,6 +34,9 @@ def create_app(config_class=None):
     from app.ui.calendar import calendar_bp
     app.register_blueprint(calendar_bp)
 
+    from app.ui.candelis import candelis_bp
+    app.register_blueprint(candelis_bp)
+
     # Create tables
     with app.app_context():
         from app import models  # noqa: F401

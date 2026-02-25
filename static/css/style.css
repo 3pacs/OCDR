@@ -9,6 +9,8 @@
     --accent-hover: #6da0ff;
     --cal-accent: #8b5cf6;
     --cal-accent-hover: #a78bfa;
+    --candelis-accent: #10b981;
+    --candelis-accent-hover: #34d399;
     --text-primary: #e4e6eb;
     --text-muted: #8b8d93;
     --border-color: #2d3039;
@@ -105,9 +107,14 @@ body {
 
 /* ── Dashboard Panels ── */
 .dashboard-panels .panel-card {
-    height: calc(100vh - 180px);
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.dashboard-panels > .col-lg-6:last-child > .card {
+    height: calc(100vh - 180px);
 }
 
 .dashboard-panels .panel-body {
@@ -294,6 +301,33 @@ body {
 
 .cal-pdf-item:hover {
     background-color: rgba(139, 92, 246, 0.08);
+}
+
+/* ── Candelis Panel ── */
+.candelis-panel-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.candelis-stat-box {
+    text-align: center;
+    padding: 0.5rem;
+    border-radius: 8px;
+    background-color: rgba(16, 185, 129, 0.05);
+    border: 1px solid rgba(16, 185, 129, 0.15);
+}
+
+.candelis-stat-val {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--candelis-accent);
+}
+
+.candelis-stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
 }
 
 /* ── Shared input styling for dark theme ── */
