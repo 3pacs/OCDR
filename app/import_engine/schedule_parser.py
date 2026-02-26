@@ -35,7 +35,7 @@ _TIME_RE = re.compile(
 
 # Date patterns for schedule headers
 _DATE_HEADER_RE = re.compile(
-    r'(?:date|schedule|day)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+    r'(?:date|schedule|day)[:\s\-]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
     re.IGNORECASE
 )
 
@@ -305,6 +305,11 @@ def _store_schedule_entries(entries, filename, used_ocr=False):
             skipped += 1
             continue
 
+        # scheduled_date is NOT NULL — skip entries without a date
+        if not sched_date:
+            skipped += 1
+            continue
+
         # Check for existing schedule entry (dedup)
         existing = ScheduleRecord.query.filter_by(
             patient_name=patient_name,
@@ -329,19 +334,22 @@ def _store_schedule_entries(entries, filename, used_ocr=False):
         stored += 1
 
         # Try to match to a billing record
-        billing_match = BillingRecord.query.filter_by(
-            patient_name=patient_name,
-        )
-        if sched_date:
-            billing_match = billing_match.filter_by(service_date=sched_date)
-        billing_record = billing_match.first()
+        try:
+            billing_match = BillingRecord.query.filter_by(
+                patient_name=patient_name,
+            )
+            if sched_date:
+                billing_match = billing_match.filter_by(service_date=sched_date)
+            billing_record = billing_match.first()
 
-        if billing_record:
-            sched.matched_billing_id = billing_record.id
-            sched.match_status = 'MATCHED'
-            sched.status = 'COMPLETED'
-            matched += 1
-        else:
+            if billing_record:
+                sched.matched_billing_id = billing_record.id
+                sched.match_status = 'MATCHED'
+                sched.status = 'COMPLETED'
+                matched += 1
+            else:
+                sched.match_status = 'UNMATCHED'
+        except Exception:
             sched.match_status = 'UNMATCHED'
 
     db.session.commit()

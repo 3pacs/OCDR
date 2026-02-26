@@ -53,7 +53,7 @@ COLUMN_MAP = {
     "comments": "notes",
 }
 
-VALID_MODALITIES = {"MRI", "CT", "PET", "HMRI", "OPEN", "BONE", "DX"}
+VALID_MODALITIES = {"HMRI", "CT", "PET", "OPEN", "BONE", "DX", "GH"}
 
 DATE_FORMATS = [
     "%Y-%m-%d",
@@ -85,8 +85,8 @@ def _normalize_modality(val):
         return None
     val = val.strip().upper()
     aliases = {
-        "MRI": "MRI",
-        "HMRI": "MRI",
+        "MRI": "HMRI",
+        "HMRI": "HMRI",
         "CT": "CT",
         "CAT": "CT",
         "PET": "PET",
@@ -98,6 +98,7 @@ def _normalize_modality(val):
         "DX": "DX",
         "X-RAY": "DX",
         "XRAY": "DX",
+        "GH": "GH",
     }
     return aliases.get(val, val)
 
@@ -114,8 +115,10 @@ def _resolve_columns(headers):
 
 def import_csv(filepath):
     """Import a single CSV file. Returns (imported_count, errors)."""
+    filename = os.path.basename(filepath)
     records = []
     errors = []
+    skipped_dupes = 0
     with open(filepath, "r", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         headers = next(reader, None)
@@ -133,6 +136,7 @@ def import_csv(filepath):
                     if idx < len(row):
                         data[field] = row[idx].strip()
 
+                patient_name = data.get("patient_name", "UNKNOWN").upper()
                 sched_date = _parse_date(data.get("scheduled_date", ""))
                 if not sched_date:
                     errors.append(f"Row {row_num}: invalid date '{data.get('scheduled_date', '')}'")
@@ -143,8 +147,17 @@ def import_csv(filepath):
                     errors.append(f"Row {row_num}: missing modality")
                     continue
 
+                # Dedup: skip if same patient+date already exists
+                existing = ScheduleRecord.query.filter_by(
+                    patient_name=patient_name,
+                    scheduled_date=sched_date,
+                ).first()
+                if existing:
+                    skipped_dupes += 1
+                    continue
+
                 records.append(ScheduleRecord(
-                    patient_name=data.get("patient_name", "UNKNOWN"),
+                    patient_name=patient_name,
                     scan_type=data.get("scan_type", data.get("modality", "")),
                     modality=modality,
                     scheduled_date=sched_date,
@@ -154,6 +167,7 @@ def import_csv(filepath):
                     location=data.get("location"),
                     status=data.get("status", "SCHEDULED").upper(),
                     notes=data.get("notes"),
+                    source_file=filename,
                     import_source="FOLDER_IMPORT",
                 ))
             except Exception as e:
@@ -173,6 +187,7 @@ def import_excel(filepath):
     except ImportError:
         return 0, ["openpyxl not installed"]
 
+    filename = os.path.basename(filepath)
     records = []
     errors = []
 
@@ -197,6 +212,7 @@ def import_excel(filepath):
                     val = row[idx]
                     data[field] = str(val).strip() if val is not None else ""
 
+            patient_name = data.get("patient_name", "UNKNOWN").upper()
             raw_date = data.get("scheduled_date", "")
             # openpyxl may return datetime objects directly
             if isinstance(row[next(i for i, f in col_map.items() if f == "scheduled_date")], datetime):
@@ -213,8 +229,16 @@ def import_excel(filepath):
                 errors.append(f"Row {row_num}: missing modality")
                 continue
 
+            # Dedup: skip if same patient+date already exists
+            existing = ScheduleRecord.query.filter_by(
+                patient_name=patient_name,
+                scheduled_date=sched_date,
+            ).first()
+            if existing:
+                continue
+
             records.append(ScheduleRecord(
-                patient_name=data.get("patient_name", "UNKNOWN"),
+                patient_name=patient_name,
                 scan_type=data.get("scan_type", data.get("modality", "")),
                 modality=modality,
                 scheduled_date=sched_date,
@@ -224,6 +248,7 @@ def import_excel(filepath):
                 location=data.get("location"),
                 status=data.get("status", "SCHEDULED").upper(),
                 notes=data.get("notes"),
+                source_file=filename,
                 import_source="FOLDER_IMPORT",
             ))
         except Exception as e:
