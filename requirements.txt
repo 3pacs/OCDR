@@ -4,10 +4,10 @@ Flask-Migrate==4.0.7
 alembic==1.14.1
 SQLAlchemy==2.0.36
 openpyxl==3.1.5
-rapidfuzz==3.10.1
+rapidfuzz>=3.10
 pdfplumber==0.11.4
 pytesseract==0.3.13
-opencv-python-headless==4.10.0.84
+opencv-python-headless>=4.10
 watchdog==6.0.0
 python-dotenv==1.0.1
 cryptography==44.0.0
