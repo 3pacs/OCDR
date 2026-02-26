@@ -200,6 +200,35 @@ class Physician(db.Model):
         }
 
 
+class ScheduleEntry(db.Model):
+    __tablename__ = 'schedule_entries'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    patient_name = db.Column(db.Text, nullable=False, index=True)
+    schedule_date = db.Column(db.Date, index=True)
+    appointment_time = db.Column(db.Text)
+    modality = db.Column(db.Text, index=True)
+    scan_type = db.Column(db.Text)
+    source_file = db.Column(db.Text)
+    match_status = db.Column(db.Text, default='UNMATCHED', index=True)
+    matched_billing_id = db.Column(db.Integer, db.ForeignKey('billing_records.id'), index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'patient_name': self.patient_name,
+            'schedule_date': self.schedule_date.isoformat() if self.schedule_date else None,
+            'appointment_time': self.appointment_time,
+            'modality': self.modality,
+            'scan_type': self.scan_type,
+            'source_file': self.source_file,
+            'match_status': self.match_status,
+            'matched_billing_id': self.matched_billing_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class PhysicianStatement(db.Model):
     __tablename__ = 'physician_statements'
 

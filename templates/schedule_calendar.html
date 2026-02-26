@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}Schedule Calendars{% endblock %}
+
+{% block head %}
+<style>
+    .calendar-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 1px;
+        background: #dee2e6;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .calendar-header {
+        background: #343a40;
+        color: white;
+        padding: 6px 4px;
+        text-align: center;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .calendar-day {
+        background: white;
+        min-height: 100px;
+        padding: 2px;
+        position: relative;
+    }
+    .calendar-day.other-month {
+        background: #f8f9fa;
+    }
+    .calendar-day.today {
+        background: #fff3cd;
+    }
+    .day-number {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 2px 4px;
+        color: #495057;
+    }
+    .day-events {
+        font-size: 0.65rem;
+        overflow-y: auto;
+        max-height: 80px;
+    }
+    .cal-event {
+        padding: 1px 3px;
+        margin: 1px 0;
+        border-radius: 2px;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+    }
+    .cal-event.scheduled { background: #0d6efd; }
+    .cal-event.matched { background: #0d6efd; border-left: 3px solid #198754; }
+    .cal-event.billed { background: #198754; }
+    .cal-event.unmatched { background: #dc3545; }
+    .legend-item {
+        display: inline-flex;
+        align-items: center;
+        margin-right: 12px;
+        font-size: 0.75rem;
+    }
+    .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        margin-right: 4px;
+        display: inline-block;
+    }
+    .stat-badge {
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Schedule Calendars</h1>
+    <div>
+        <button class="btn btn-sm btn-outline-secondary" onclick="changeMonth(-1)">&laquo; Prev</button>
+        <span id="month-label" class="mx-2 fw-bold"></span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="changeMonth(1)">Next &raquo;</button>
+        <button class="btn btn-sm btn-outline-primary ms-2" onclick="goToday()">Today</button>
+    </div>
+</div>
+
+<!-- Legend -->
+<div class="mb-3">
+    <span class="legend-item"><span class="legend-dot" style="background:#0d6efd"></span> Scheduled (matched)</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#dc3545"></span> Scheduled (no billing match)</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#198754"></span> Billed (no schedule)</span>
+</div>
+
+<!-- Summary Stats Row -->
+<div class="row g-3 mb-4" id="calendar-stats">
+    <!-- Filled by JS -->
+</div>
+
+<!-- Two Calendars Side by Side -->
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white py-2">
+                <h5 class="mb-0">MRI Schedule</h5>
+                <small>HMRI &amp; Open MRI</small>
+            </div>
+            <div class="card-body p-2">
+                <div id="mri-calendar"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header bg-info text-white py-2">
+                <h5 class="mb-0">PET/CT Schedule</h5>
+                <small>PET, CT &amp; Bone Scan</small>
+            </div>
+            <div class="card-body p-2">
+                <div id="petct-calendar"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Event Detail Modal -->
+<div class="modal fade" id="eventModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title" id="event-modal-title">Event Detail</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body small" id="event-modal-body"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTHS = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+
+let currentYear, currentMonth;
+let mriEvents = [];
+let petctEvents = [];
+
+// Initialize to current month
+const now = new Date();
+currentYear = now.getFullYear();
+currentMonth = now.getMonth() + 1;
+
+function changeMonth(delta) {
+    currentMonth += delta;
+    if (currentMonth > 12) { currentMonth = 1; currentYear++; }
+    if (currentMonth < 1) { currentMonth = 12; currentYear--; }
+    loadCalendars();
+}
+
+function goToday() {
+    currentYear = now.getFullYear();
+    currentMonth = now.getMonth() + 1;
+    loadCalendars();
+}
+
+function loadCalendars() {
+    const monthStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    document.getElementById('month-label').textContent = `${MONTHS[currentMonth-1]} ${currentYear}`;
+
+    // Load both calendars in parallel
+    Promise.all([
+        fetch(`/api/import/schedule/calendar?month=${monthStr}&modality_group=mri`).then(r => r.json()),
+        fetch(`/api/import/schedule/calendar?month=${monthStr}&modality_group=pet_ct`).then(r => r.json()),
+    ]).then(([mriData, petctData]) => {
+        mriEvents = mriData.events || [];
+        petctEvents = petctData.events || [];
+
+        renderCalendar('mri-calendar', mriEvents);
+        renderCalendar('petct-calendar', petctEvents);
+        renderStats(mriData.summary, petctData.summary);
+    }).catch(err => {
+        console.error('Calendar load error:', err);
+    });
+}
+
+function renderCalendar(containerId, events) {
+    const container = document.getElementById(containerId);
+    const firstDay = new Date(currentYear, currentMonth - 1, 1);
+    const lastDay = new Date(currentYear, currentMonth, 0);
+    const startDow = firstDay.getDay(); // 0=Sun
+    const totalDays = lastDay.getDate();
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+    // Group events by date
+    const eventsByDate = {};
+    for (const evt of events) {
+        if (!evt.date) continue;
+        if (!eventsByDate[evt.date]) eventsByDate[evt.date] = [];
+        eventsByDate[evt.date].push(evt);
+    }
+
+    let html = '<div class="calendar-grid">';
+
+    // Header row
+    for (const d of DAYS) {
+        html += `<div class="calendar-header">${d}</div>`;
+    }
+
+    // Fill leading blanks
+    for (let i = 0; i < startDow; i++) {
+        html += '<div class="calendar-day other-month"></div>';
+    }
+
+    // Day cells
+    for (let day = 1; day <= totalDays; day++) {
+        const dateStr = `${currentYear}-${String(currentMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const isToday = dateStr === todayStr;
+        const dayEvents = eventsByDate[dateStr] || [];
+
+        html += `<div class="calendar-day${isToday ? ' today' : ''}">`;
+        html += `<div class="day-number">${day}</div>`;
+        html += '<div class="day-events">';
+
+        for (const evt of dayEvents) {
+            let cls = 'cal-event';
+            if (evt.type === 'scheduled' && evt.matched) cls += ' matched';
+            else if (evt.type === 'scheduled') cls += ' unmatched';
+            else cls += ' billed';
+
+            const title = evt.title || '';
+            const displayName = title.length > 15 ? title.substring(0, 15) + '...' : title;
+            const timeStr = evt.time ? evt.time.substring(0, 5) + ' ' : '';
+
+            html += `<div class="${cls}" onclick="showEvent(${JSON.stringify(evt).replace(/"/g, '&quot;')})"
+                          title="${title}">${timeStr}${displayName}</div>`;
+        }
+
+        html += '</div></div>';
+    }
+
+    // Trailing blanks to fill the grid
+    const totalCells = startDow + totalDays;
+    const remaining = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+    for (let i = 0; i < remaining; i++) {
+        html += '<div class="calendar-day other-month"></div>';
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+function renderStats(mriSummary, petctSummary) {
+    const stats = document.getElementById('calendar-stats');
+    const m = mriSummary || {};
+    const p = petctSummary || {};
+
+    stats.innerHTML = `
+        <div class="col-md-2">
+            <div class="card text-bg-primary">
+                <div class="card-body p-2 text-center">
+                    <small>MRI Scheduled</small>
+                    <h4 class="mb-0 stat-badge">${m.total_scheduled || 0}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-success">
+                <div class="card-body p-2 text-center">
+                    <small>MRI Matched</small>
+                    <h4 class="mb-0 stat-badge">${m.total_matched || 0}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-danger">
+                <div class="card-body p-2 text-center">
+                    <small>MRI Unmatched</small>
+                    <h4 class="mb-0 stat-badge">${m.total_unmatched || 0}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-info">
+                <div class="card-body p-2 text-center">
+                    <small>PET/CT Scheduled</small>
+                    <h4 class="mb-0 stat-badge">${p.total_scheduled || 0}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-success">
+                <div class="card-body p-2 text-center">
+                    <small>PET/CT Matched</small>
+                    <h4 class="mb-0 stat-badge">${p.total_matched || 0}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-bg-danger">
+                <div class="card-body p-2 text-center">
+                    <small>PET/CT Unmatched</small>
+                    <h4 class="mb-0 stat-badge">${p.total_unmatched || 0}</h4>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+let eventModal = null;
+function showEvent(evt) {
+    if (!eventModal) {
+        eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
+    }
+    document.getElementById('event-modal-title').textContent = evt.title || 'Event';
+
+    let html = '<table class="table table-sm table-borderless mb-0">';
+    html += `<tr><td class="fw-bold">Type</td><td>${evt.type === 'scheduled' ? 'Scheduled' : 'Billed'}</td></tr>`;
+    html += `<tr><td class="fw-bold">Date</td><td>${evt.date || 'N/A'}</td></tr>`;
+    if (evt.time) html += `<tr><td class="fw-bold">Time</td><td>${evt.time}</td></tr>`;
+    if (evt.modality) html += `<tr><td class="fw-bold">Modality</td><td>${evt.modality}</td></tr>`;
+    if (evt.scan_type) html += `<tr><td class="fw-bold">Scan Type</td><td>${evt.scan_type}</td></tr>`;
+    if (evt.total_payment !== undefined) html += `<tr><td class="fw-bold">Payment</td><td>$${evt.total_payment.toLocaleString()}</td></tr>`;
+    if (evt.matched !== undefined) {
+        const badge = evt.matched
+            ? '<span class="badge bg-success">Matched to billing</span>'
+            : '<span class="badge bg-danger">No billing match</span>';
+        html += `<tr><td class="fw-bold">Status</td><td>${badge}</td></tr>`;
+    }
+    html += '</table>';
+
+    document.getElementById('event-modal-body').innerHTML = html;
+    eventModal.show();
+}
+
+// Load on page ready
+loadCalendars();
+</script>
+{% endblock %}

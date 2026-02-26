@@ -8,17 +8,24 @@
     <!-- Drag & Drop Upload -->
     <div class="col-md-8">
         <div class="card">
-            <div class="card-header"><h5 class="mb-0">Upload Files</h5></div>
+            <div class="card-header">
+                <h5 class="mb-0">Smart Upload
+                    <span class="badge bg-info ms-2">AI-Assisted</span>
+                </h5>
+            </div>
             <div class="card-body">
                 <div id="drop-zone" class="border border-2 border-dashed rounded p-5 text-center"
                      style="cursor:pointer; background:#f8f9fa; transition: background 0.2s;">
-                    <h4>Drag &amp; Drop Files Here</h4>
+                    <h4>Drag &amp; Drop Any File Here</h4>
                     <p class="text-muted mb-3">or click to browse</p>
                     <p class="small text-muted">
-                        Supported: <strong>.xlsx</strong> (Excel), <strong>.835 / .edi</strong> (ERA),
-                        <strong>.csv</strong>, <strong>.pdf</strong>
+                        Auto-detected: <strong>.xlsx</strong> (Excel), <strong>.835 / .edi / .txt</strong> (ERA),
+                        <strong>.csv</strong> (Delimited), <strong>.pdf</strong> (EOB or Schedule),
+                        <strong>.png / .jpg / .tiff</strong> (Scanned — OCR)
                     </p>
-                    <input type="file" id="file-input" multiple accept=".xlsx,.xls,.835,.edi,.csv,.pdf,.txt" class="d-none">
+                    <input type="file" id="file-input" multiple
+                           accept=".xlsx,.xls,.835,.edi,.csv,.pdf,.txt,.png,.jpg,.jpeg,.tiff,.tif,.bmp"
+                           class="d-none">
                 </div>
 
                 <!-- Upload Queue -->
@@ -26,6 +33,25 @@
 
                 <!-- Upload Results -->
                 <div id="upload-results" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- Schedule PDF Upload -->
+        <div class="card mt-4">
+            <div class="card-header"><h5 class="mb-0">Schedule PDF Import</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Upload daily schedule PDFs to match scheduled appointments against billed records.
+                    View results on the <a href="/schedules">Schedule Calendars</a>.
+                </p>
+                <div class="input-group">
+                    <input type="file" class="form-control form-control-sm" id="schedule-file-input"
+                           accept=".pdf,.csv,.xlsx,.txt">
+                    <button class="btn btn-sm btn-primary" onclick="uploadSchedule()">
+                        Import Schedule
+                    </button>
+                </div>
+                <div id="schedule-result" class="mt-2"></div>
             </div>
         </div>
     </div>
@@ -46,8 +72,8 @@
             <div class="card-body">
                 <p class="small text-muted">
                     Point to your EOB directory. Recursively scans all subfolders for
-                    <strong>.835</strong>, <strong>.edi</strong>, and <strong>.txt</strong> files.
-                    Duplicates are automatically skipped.
+                    <strong>all file types</strong> (.835, .edi, .txt, .pdf, .csv, images).
+                    Duplicates are automatically skipped at both file and claim level.
                 </p>
                 <div class="input-group mb-2">
                     <input type="text" id="eob-folder-path" class="form-control form-control-sm"
@@ -55,11 +81,30 @@
                     <button class="btn btn-sm btn-outline-secondary" type="button" onclick="openFolderBrowser()">
                         Browse
                     </button>
-                    <button class="btn btn-sm btn-primary" id="eob-scan-btn" onclick="scanEobDirectory()">
+                </div>
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-sm btn-primary flex-fill" id="eob-scan-btn" onclick="scanEobDirectory()">
                         Scan &amp; Import
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary flex-fill" id="smart-scan-btn" onclick="smartScanDirectory()">
+                        Smart Scan (All Types)
                     </button>
                 </div>
                 <div id="eob-scan-result"></div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Format Detection</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Drop a file to detect its format without importing:
+                </p>
+                <div class="input-group">
+                    <input type="file" class="form-control form-control-sm" id="detect-file-input">
+                    <button class="btn btn-sm btn-outline-info" onclick="detectFormat()">Detect</button>
+                </div>
+                <div id="detect-result" class="mt-2"></div>
             </div>
         </div>
 
@@ -161,30 +206,19 @@ function handleFiles(files) {
 }
 
 function uploadFile(file) {
-    const ext = file.name.split('.').pop().toLowerCase();
-    let endpoint;
-    if (['xlsx', 'xls'].includes(ext)) {
-        endpoint = '/api/import/excel';
-    } else if (['835', 'edi'].includes(ext)) {
-        endpoint = '/api/import/835';
-    } else {
-        showResult(file.name, 'error', `Unsupported file type: .${ext}`);
-        return;
-    }
-
-    // Show progress
+    // Route ALL files through the smart import endpoint
     const id = 'upload-' + Math.random().toString(36).substr(2, 9);
     uploadQueue.innerHTML += `
         <div id="${id}" class="alert alert-info py-2">
             <span class="spinner-border spinner-border-sm me-2"></span>
-            Uploading <strong>${file.name}</strong>...
+            Detecting format &amp; importing <strong>${file.name}</strong>...
         </div>
     `;
 
     const formData = new FormData();
     formData.append('file', file);
 
-    fetch(endpoint, { method: 'POST', body: formData })
+    fetch('/api/import/smart', { method: 'POST', body: formData })
         .then(r => r.json())
         .then(data => {
             const el = document.getElementById(id);
@@ -192,17 +226,44 @@ function uploadFile(file) {
 
             if (data.error) {
                 showResult(file.name, 'error', data.error);
-            } else if (data.imported !== undefined) {
-                showResult(file.name, 'success',
-                    `Imported: ${data.imported}, Skipped: ${data.skipped || 0}, ` +
-                    `Errors: ${(data.errors || []).length}, Duration: ${data.duration_ms || 0}ms`);
-            } else if (data.files_parsed !== undefined) {
-                showResult(file.name, 'success',
-                    `Files parsed: ${data.files_parsed}, Claims: ${data.claims_found}, ` +
-                    `Total payments: $${(data.payments_total || 0).toLocaleString()}`);
+                return;
             }
 
-            // Refresh status and trigger analysis
+            let msg = `<strong>Format:</strong> ${data.detected_format || 'unknown'}`;
+            msg += ` (${(data.detection_confidence * 100).toFixed(0)}% confidence)`;
+
+            if (data.status === 'skipped') {
+                msg += `<br>${data.reason || 'Skipped'}`;
+                showResult(file.name, 'warning', msg);
+            } else if (data.status === 'error') {
+                msg += `<br>Error: ${data.reason || 'Unknown error'}`;
+                showResult(file.name, 'error', msg);
+            } else {
+                // Build result details based on format
+                if (data.imported !== undefined) {
+                    msg += `<br>Imported: ${data.imported}, Skipped: ${data.skipped || 0}`;
+                    if (data.columns_detected) {
+                        const cols = Object.keys(data.columns_detected).length;
+                        msg += `, Columns matched: ${cols}`;
+                    }
+                }
+                if (data.claims_found !== undefined) {
+                    msg += `<br>Claims: ${data.claims_found}`;
+                    if (data.claims_new !== undefined) msg += ` (${data.claims_new} new, ${data.claims_duplicate} duplicate)`;
+                }
+                if (data.entries_found !== undefined) {
+                    msg += `<br>Schedule entries: ${data.entries_found}`;
+                    if (data.entries_matched !== undefined) msg += ` (${data.entries_matched} matched to billing)`;
+                }
+                if (data.payment_amount) {
+                    msg += `<br>Payment total: $${data.payment_amount.toLocaleString()}`;
+                }
+                if (data.needs_ocr) {
+                    msg += `<br><em>Note: Scanned document — OCR was used for text extraction</em>`;
+                }
+                showResult(file.name, 'success', msg);
+            }
+
             refreshStatus();
             runAnalysis();
         })
@@ -214,13 +275,78 @@ function uploadFile(file) {
 }
 
 function showResult(filename, type, message) {
-    const cls = type === 'error' ? 'alert-danger' : 'alert-success';
+    const clsMap = { error: 'alert-danger', warning: 'alert-warning', success: 'alert-success' };
+    const cls = clsMap[type] || 'alert-info';
     uploadResults.innerHTML += `
         <div class="alert ${cls} py-2 alert-dismissible fade show">
             <strong>${filename}:</strong> ${message}
             <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
         </div>
     `;
+}
+
+// ---- Schedule Upload ----
+function uploadSchedule() {
+    const input = document.getElementById('schedule-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    const resultDiv = document.getElementById('schedule-result');
+    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing schedule...';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/schedule', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${data.error}</div>`;
+                return;
+            }
+            let html = '<div class="alert alert-success py-1 small">';
+            html += `<strong>${file.name}:</strong> `;
+            html += `${data.entries_found || 0} entries found, `;
+            html += `${data.entries_stored || 0} stored, `;
+            html += `${data.entries_matched || 0} matched to billing`;
+            if (data.entries_skipped) html += `, ${data.entries_skipped} duplicates skipped`;
+            html += `<br><a href="/schedules">View on Calendar &rarr;</a>`;
+            html += '</div>';
+            resultDiv.innerHTML = html;
+        })
+        .catch(err => {
+            resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${err.message}</div>`;
+        });
+}
+
+// ---- Format Detection ----
+function detectFormat() {
+    const input = document.getElementById('detect-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    const resultDiv = document.getElementById('detect-result');
+    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/detect', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            const pct = ((data.confidence || 0) * 100).toFixed(0);
+            const color = data.confidence >= 0.8 ? 'success' : data.confidence >= 0.5 ? 'warning' : 'danger';
+            resultDiv.innerHTML = `
+                <div class="small">
+                    <span class="badge bg-${color}">${pct}%</span>
+                    <strong>${data.format || 'unknown'}</strong><br>
+                    <span class="text-muted">${data.details || ''}</span>
+                </div>
+            `;
+        })
+        .catch(err => {
+            resultDiv.innerHTML = `<span class="text-danger small">${err.message}</span>`;
+        });
 }
 
 // ---- Folder Browser ----
@@ -232,7 +358,6 @@ function openFolderBrowser() {
     if (!browserModal) {
         browserModal = new bootstrap.Modal(document.getElementById('folderBrowserModal'));
     }
-    // Start from whatever is currently typed, or from root
     const typed = document.getElementById('eob-folder-path').value.trim();
     browserModal.show();
     loadFolderList(typed || '');
@@ -295,7 +420,7 @@ function selectCurrentFolder() {
     if (browserModal) browserModal.hide();
 }
 
-// ---- EOB Scan ----
+// ---- EOB Scan (835 only) ----
 function scanEobDirectory() {
     const path = document.getElementById('eob-folder-path').value.trim();
     if (!path) return;
@@ -305,7 +430,7 @@ function scanEobDirectory() {
     resultDiv.innerHTML = `
         <div class="d-flex align-items-center mt-2">
             <span class="spinner-border spinner-border-sm me-2"></span>
-            <span class="small">Scanning directory and subfolders...</span>
+            <span class="small">Scanning for 835/EDI files...</span>
         </div>`;
 
     fetch('/api/import/eob-scan', {
@@ -320,55 +445,102 @@ function scanEobDirectory() {
             resultDiv.innerHTML = `<p class="text-danger small mt-2">${data.error}</p>`;
             return;
         }
-
-        let html = '<div class="mt-2">';
-        html += `<p class="small mb-1"><strong>Scan Complete</strong></p>`;
-        html += '<table class="table table-sm table-bordered small mb-2">';
-        html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
-        html += `<tr class="table-success"><td>Imported</td><td class="text-end fw-bold">${data.files_imported}</td></tr>`;
-        html += `<tr><td>Skipped (total)</td><td class="text-end">${data.files_skipped}</td></tr>`;
-
-        if (data.skip_reasons) {
-            const sr = data.skip_reasons;
-            if (sr.duplicate_content > 0)
-                html += `<tr><td class="ps-3 text-muted">Duplicate content</td><td class="text-end text-muted">${sr.duplicate_content}</td></tr>`;
-            if (sr.already_imported > 0)
-                html += `<tr><td class="ps-3 text-muted">Already imported</td><td class="text-end text-muted">${sr.already_imported}</td></tr>`;
-            if (sr.not_835_content > 0)
-                html += `<tr><td class="ps-3 text-muted">Not 835 content (.txt)</td><td class="text-end text-muted">${sr.not_835_content}</td></tr>`;
-        }
-
-        if (data.files_errored > 0)
-            html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
-
-        html += `<tr><td>Claims found</td><td class="text-end">${data.claims_found}</td></tr>`;
-        html += `<tr><td>Total payments</td><td class="text-end">$${(data.payments_total || 0).toLocaleString()}</td></tr>`;
-        html += '</table>';
-
-        // Show error/skip details if any
-        if (data.details) {
-            const errored = data.details.filter(d => d.status === 'error');
-            if (errored.length > 0) {
-                html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
-                for (const e of errored) {
-                    html += `<li>${e.filename}: ${e.reason}</li>`;
-                }
-                html += '</ul></details>';
-            }
-        }
-
-        html += '</div>';
-        resultDiv.innerHTML = html;
-
-        if (data.files_imported > 0) {
-            refreshStatus();
-            runAnalysis();
-        }
+        resultDiv.innerHTML = buildScanResultTable(data, false);
+        if (data.files_imported > 0) { refreshStatus(); runAnalysis(); }
     })
     .catch(err => {
         btn.disabled = false;
         resultDiv.innerHTML = `<p class="text-danger small mt-2">${err.message}</p>`;
     });
+}
+
+// ---- Smart Scan (all file types) ----
+function smartScanDirectory() {
+    const path = document.getElementById('eob-folder-path').value.trim();
+    if (!path) return;
+    const resultDiv = document.getElementById('eob-scan-result');
+    const btn = document.getElementById('smart-scan-btn');
+    btn.disabled = true;
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center mt-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Smart scanning all file types...</span>
+        </div>`;
+
+    fetch('/api/import/smart-scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        if (data.error) {
+            resultDiv.innerHTML = `<p class="text-danger small mt-2">${data.error}</p>`;
+            return;
+        }
+        resultDiv.innerHTML = buildScanResultTable(data, true);
+        if (data.files_imported > 0) { refreshStatus(); runAnalysis(); }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        resultDiv.innerHTML = `<p class="text-danger small mt-2">${err.message}</p>`;
+    });
+}
+
+function buildScanResultTable(data, showFormats) {
+    let html = '<div class="mt-2">';
+    html += `<p class="small mb-1"><strong>Scan Complete</strong></p>`;
+    html += '<table class="table table-sm table-bordered small mb-2">';
+    html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
+    html += `<tr class="table-success"><td>Imported</td><td class="text-end fw-bold">${data.files_imported}</td></tr>`;
+    html += `<tr><td>Skipped</td><td class="text-end">${data.files_skipped}</td></tr>`;
+
+    if (data.skip_reasons) {
+        const sr = data.skip_reasons;
+        for (const [reason, count] of Object.entries(sr)) {
+            if (count > 0) {
+                html += `<tr><td class="ps-3 text-muted">${reason.replace(/_/g, ' ')}</td><td class="text-end text-muted">${count}</td></tr>`;
+            }
+        }
+    }
+
+    if (data.files_errored > 0)
+        html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
+
+    if (data.claims_found !== undefined)
+        html += `<tr><td>Claims found</td><td class="text-end">${data.claims_found}</td></tr>`;
+    if (data.claims_new !== undefined)
+        html += `<tr><td class="ps-3 text-muted">New claims</td><td class="text-end text-muted">${data.claims_new}</td></tr>`;
+    if (data.claims_duplicate !== undefined && data.claims_duplicate > 0)
+        html += `<tr><td class="ps-3 text-muted">Duplicate claims</td><td class="text-end text-muted">${data.claims_duplicate}</td></tr>`;
+    if (data.payments_total !== undefined)
+        html += `<tr><td>Total payments</td><td class="text-end">$${(data.payments_total || 0).toLocaleString()}</td></tr>`;
+
+    // Show format breakdown for smart scan
+    if (showFormats && data.format_breakdown) {
+        html += '<tr><td colspan="2" class="fw-bold pt-2">Format Breakdown</td></tr>';
+        for (const [fmt, count] of Object.entries(data.format_breakdown)) {
+            html += `<tr><td class="ps-3">${fmt}</td><td class="text-end">${count}</td></tr>`;
+        }
+    }
+
+    html += '</table>';
+
+    // Error details
+    if (data.details) {
+        const errored = data.details.filter(d => d.status === 'error');
+        if (errored.length > 0) {
+            html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
+            for (const e of errored) {
+                html += `<li>${e.filename}: ${e.reason}</li>`;
+            }
+            html += '</ul></details>';
+        }
+    }
+
+    html += '</div>';
+    return html;
 }
 
 function refreshStatus() {
@@ -393,7 +565,6 @@ function runAnalysis() {
         .then(r => r.json())
         .then(data => {
             let html = '<div class="row g-3">';
-            // KPI cards
             const kpis = [
                 { label: 'Total Records', value: (data.total_records || 0).toLocaleString(), color: 'primary' },
                 { label: 'Unpaid Claims', value: (data.unpaid_claims || 0).toLocaleString(), color: 'danger' },
@@ -410,7 +581,6 @@ function runAnalysis() {
             }
             html += '</div>';
 
-            // Recommendations
             if (data.recommendations && data.recommendations.length > 0) {
                 html += '<h6 class="mt-3">Recommended Next Steps:</h6><ul>';
                 for (const rec of data.recommendations) {
@@ -419,7 +589,6 @@ function runAnalysis() {
                 html += '</ul>';
             }
 
-            // Carrier breakdown
             if (data.by_carrier && data.by_carrier.length > 0) {
                 html += '<h6 class="mt-3">Revenue by Carrier (Top 10):</h6>';
                 html += '<table class="table table-sm table-striped"><thead><tr>';

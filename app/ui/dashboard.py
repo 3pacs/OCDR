@@ -16,3 +16,9 @@ def index():
 def import_page():
     """GET /import - File import dashboard"""
     return render_template('import_dashboard.html')
+
+
+@ui_bp.route('/schedules')
+def schedules_page():
+    """GET /schedules - Dual calendar view (MRI + PET/CT)"""
+    return render_template('schedule_calendar.html')
