@@ -395,5 +395,279 @@ class TestScheduleCalendarPage:
         resp = client.get('/import')
         assert resp.status_code == 200
         assert b'Smart Upload' in resp.data
-        assert b'Schedule PDF Import' in resp.data
+        assert b'Schedule Import' in resp.data
         assert b'Smart Scan' in resp.data
+        assert b'Scan Folder' in resp.data
+
+
+class TestScheduleCRUD:
+    """Test the editable schedule CRUD operations."""
+
+    @pytest.fixture
+    def app(self):
+        app = create_app(TestConfig)
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
+
+    @pytest.fixture
+    def client(self, app):
+        return app.test_client()
+
+    def test_create_entry(self, client):
+        """POST /api/import/schedule/entries creates a new entry."""
+        import json
+        resp = client.post('/api/import/schedule/entries',
+                           data=json.dumps({
+                               'patient_name': 'SMITH, JOHN',
+                               'schedule_date': '2024-01-15',
+                               'appointment_time': '08:00',
+                               'modality': 'HMRI',
+                               'scan_type': 'BRAIN',
+                               'notes': 'Contrast required',
+                           }),
+                           content_type='application/json')
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data['patient_name'] == 'SMITH, JOHN'
+        assert data['modality'] == 'HMRI'
+        assert data['scan_type'] == 'BRAIN'
+        assert data['notes'] == 'Contrast required'
+        assert data['status'] == 'SCHEDULED'
+        assert data['source_file'] == 'MANUAL'
+
+    def test_create_entry_requires_name(self, client):
+        import json
+        resp = client.post('/api/import/schedule/entries',
+                           data=json.dumps({}),
+                           content_type='application/json')
+        assert resp.status_code == 400
+
+    def test_get_entry(self, app, client):
+        """GET /api/import/schedule/entries/<id> retrieves an entry."""
+        import json
+        with app.app_context():
+            # Create entry first
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({
+                                   'patient_name': 'DOE, JANE',
+                                   'schedule_date': '2024-01-16',
+                                   'modality': 'CT',
+                               }),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+
+            # Fetch it
+            resp = client.get(f'/api/import/schedule/entries/{entry_id}')
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data['patient_name'] == 'DOE, JANE'
+
+    def test_get_entry_not_found(self, client):
+        resp = client.get('/api/import/schedule/entries/99999')
+        assert resp.status_code == 404
+
+    def test_update_entry(self, app, client):
+        """PUT /api/import/schedule/entries/<id> updates fields."""
+        import json
+        with app.app_context():
+            # Create
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({
+                                   'patient_name': 'WILSON, TOM',
+                                   'schedule_date': '2024-01-17',
+                                   'modality': 'PET',
+                               }),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+
+            # Update status and notes
+            resp = client.put(f'/api/import/schedule/entries/{entry_id}',
+                              data=json.dumps({
+                                  'status': 'COMPLETED',
+                                  'notes': 'Scan completed on time',
+                                  'scan_type': 'WHOLE BODY',
+                              }),
+                              content_type='application/json')
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data['status'] == 'COMPLETED'
+            assert data['notes'] == 'Scan completed on time'
+            assert data['scan_type'] == 'WHOLE BODY'
+
+    def test_update_entry_invalid_status(self, app, client):
+        """Invalid status values are ignored."""
+        import json
+        with app.app_context():
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({'patient_name': 'TEST, USER'}),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+
+            resp = client.put(f'/api/import/schedule/entries/{entry_id}',
+                              data=json.dumps({'status': 'INVALID'}),
+                              content_type='application/json')
+            assert resp.status_code == 200
+            assert resp.get_json()['status'] == 'SCHEDULED'  # unchanged
+
+    def test_delete_entry(self, app, client):
+        """DELETE /api/import/schedule/entries/<id> removes an entry."""
+        import json
+        with app.app_context():
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({
+                                   'patient_name': 'DELETE, ME',
+                                   'modality': 'CT',
+                               }),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+
+            resp = client.delete(f'/api/import/schedule/entries/{entry_id}')
+            assert resp.status_code == 200
+            assert resp.get_json()['deleted'] == entry_id
+
+            # Verify gone
+            resp = client.get(f'/api/import/schedule/entries/{entry_id}')
+            assert resp.status_code == 404
+
+    def test_list_entries_filter_status(self, app, client):
+        """Filter entries by status."""
+        import json
+        with app.app_context():
+            client.post('/api/import/schedule/entries',
+                        data=json.dumps({'patient_name': 'A, B', 'modality': 'CT'}),
+                        content_type='application/json')
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({'patient_name': 'C, D', 'modality': 'CT'}),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+            client.put(f'/api/import/schedule/entries/{entry_id}',
+                       data=json.dumps({'status': 'CANCELLED'}),
+                       content_type='application/json')
+
+            # Filter cancelled
+            resp = client.get('/api/import/schedule/entries?status=CANCELLED')
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data['total'] == 1
+            assert data['entries'][0]['patient_name'] == 'C, D'
+
+
+class TestScheduleFolderScan:
+    """Test the schedule folder scan functionality."""
+
+    @pytest.fixture
+    def app(self):
+        app = create_app(TestConfig)
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
+
+    @pytest.fixture
+    def client(self, app):
+        return app.test_client()
+
+    def test_scan_folder_with_text_files(self, app):
+        """Folder scan finds and imports text schedule files."""
+        from app.import_engine.schedule_parser import scan_schedule_folder
+        with app.app_context():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Create schedule text files (names must be LAST, FIRST format)
+                path1 = os.path.join(tmpdir, 'mri_schedule.txt')
+                with open(path1, 'w') as f:
+                    f.write("DAILY SCHEDULE\nDate: 01/15/2024\n\n")
+                    f.write("8:00 AM  ADAMS, BOB  MRI BRAIN\n")
+                    f.write("9:00 AM  BAKER, SUE  MRI SPINE\n")
+                path2 = os.path.join(tmpdir, 'pet_schedule.txt')
+                with open(path2, 'w') as f:
+                    f.write("DAILY SCHEDULE\nDate: 01/16/2024\n\n")
+                    f.write("8:00 AM  CLARK, DAN  PET CHEST\n")
+                    f.write("9:00 AM  DAVIS, EVE  PET BRAIN\n")
+
+                result = scan_schedule_folder(tmpdir)
+                assert result['total_files_found'] == 2
+                assert result['total_entries_found'] == 4
+
+    def test_scan_folder_recursive(self, app):
+        """Folder scan recursively finds files in subfolders."""
+        from app.import_engine.schedule_parser import scan_schedule_folder
+        with app.app_context():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Create a subfolder with a file
+                subdir = os.path.join(tmpdir, 'january')
+                os.makedirs(subdir)
+                path = os.path.join(subdir, 'schedule.txt')
+                with open(path, 'w') as f:
+                    f.write("DAILY SCHEDULE\nDate: 01/15/2024\n\n")
+                    f.write("8:00 AM  SMITH, JOHN  MRI BRAIN\n")
+
+                result = scan_schedule_folder(tmpdir)
+                assert result['total_files_found'] == 1
+                assert result['total_entries_found'] == 1
+
+    def test_scan_folder_dedup(self, app):
+        """Second scan of same folder skips duplicates."""
+        from app.import_engine.schedule_parser import scan_schedule_folder
+        with app.app_context():
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = os.path.join(tmpdir, 'schedule.txt')
+                with open(path, 'w') as f:
+                    f.write("DAILY SCHEDULE\nDate: 01/15/2024\n\n")
+                    f.write("8:00 AM  JONES, MARY  MRI KNEE\n")
+
+                scan_schedule_folder(tmpdir)
+                result2 = scan_schedule_folder(tmpdir)
+                # Second scan should find the file but skip the entry
+                assert result2['total_files_found'] == 1
+                assert result2['total_entries_skipped'] >= 1
+
+    def test_scan_folder_missing(self, client):
+        """Scanning a nonexistent folder returns error."""
+        import json
+        resp = client.post('/api/import/schedule/scan-folder',
+                           data=json.dumps({'folder_path': '/nonexistent/path/xyz'}),
+                           content_type='application/json')
+        assert resp.status_code == 400
+
+    def test_scan_folder_no_body(self, client):
+        resp = client.post('/api/import/schedule/scan-folder')
+        assert resp.status_code == 400
+
+    def test_schedule_text_file_import(self, app):
+        """import_schedule_text_file works with plain text."""
+        from app.import_engine.schedule_parser import import_schedule_text_file
+        with app.app_context():
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                f.write(SAMPLE_SCHEDULE_TEXT)
+                tmp_path = f.name
+            try:
+                result = import_schedule_text_file(tmp_path)
+                assert result['entries_found'] == 4
+                assert result['source'] == 'SCHEDULE_TEXT'
+            finally:
+                os.unlink(tmp_path)
+
+    def test_calendar_excludes_cancelled(self, app, client):
+        """Calendar data excludes cancelled entries."""
+        import json
+        with app.app_context():
+            # Create entry then cancel it
+            resp = client.post('/api/import/schedule/entries',
+                               data=json.dumps({
+                                   'patient_name': 'CANCEL, ME',
+                                   'schedule_date': '2024-01-15',
+                                   'modality': 'HMRI',
+                               }),
+                               content_type='application/json')
+            entry_id = resp.get_json()['id']
+            client.put(f'/api/import/schedule/entries/{entry_id}',
+                       data=json.dumps({'status': 'CANCELLED'}),
+                       content_type='application/json')
+
+            resp = client.get('/api/import/schedule/calendar?month=2024-01&modality_group=mri')
+            data = resp.get_json()
+            assert data['summary']['total_scheduled'] == 0

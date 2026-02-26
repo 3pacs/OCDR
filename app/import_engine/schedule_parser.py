@@ -7,6 +7,13 @@ Handles common schedule PDF formats:
   - Daily scan schedules (patient name, time, scan type, modality)
   - Weekly schedule reports
   - Appointment lists
+  - Scanned/image PDFs via OCR fallback
+
+Features:
+  - Single file upload or folder scan (recursively finds all PDFs/images)
+  - pdfplumber text extraction with OCR fallback for scanned documents
+  - Editable schedule entries with status tracking
+  - Automatic matching to billing records
 """
 import re
 import os
@@ -57,6 +64,9 @@ _SCAN_KEYWORDS = [
 
 # Name pattern: LAST, FIRST (comma required to reduce false positives)
 _NAME_RE = re.compile(r'\b([A-Z][A-Z\'-]{1,}),\s+([A-Z][A-Z\'-]{1,})\b')
+
+# File extensions for schedule folder scanning
+_SCHEDULE_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp', '.txt'}
 
 
 def _parse_date_flexible(date_str):
@@ -195,40 +205,94 @@ def parse_schedule_text(text, filename='unknown'):
     }
 
 
-def import_schedule_pdf(filepath):
-    """Import a schedule PDF file.
+def _extract_text_from_pdf(filepath):
+    """Extract text from PDF using pdfplumber, with OCR fallback for scanned pages.
 
-    Extracts text with pdfplumber, parses schedule entries,
-    stores in ScheduleEntry table, and matches to billing records.
+    Returns (text, used_ocr) tuple.
     """
     import pdfplumber
 
-    filename = os.path.basename(filepath)
     all_text = ''
+    used_ocr = False
 
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
+            # Try direct text extraction first
             page_text = page.extract_text()
-            if page_text:
+            if page_text and len(page_text.strip()) > 30:
                 all_text += page_text + '\n'
+                continue
 
-            # Also try tables
+            # Try tables
             tables = page.extract_tables()
+            table_text = ''
             for table in tables:
                 for row in table:
                     if row:
-                        all_text += '\t'.join(str(cell) if cell else '' for cell in row) + '\n'
+                        table_text += '\t'.join(str(cell) if cell else '' for cell in row) + '\n'
+            if table_text.strip():
+                all_text += table_text
+                continue
 
-    if not all_text.strip():
-        return {
-            'entries_found': 0,
-            'needs_ocr': True,
-            'message': 'No selectable text in schedule PDF — requires OCR',
-        }
+            # Fall back to OCR for this page
+            ocr_text = _ocr_pdf_page(page)
+            if ocr_text:
+                all_text += ocr_text + '\n'
+                used_ocr = True
 
-    parsed = parse_schedule_text(all_text, filename)
-    entries = parsed.get('entries', [])
+    return all_text, used_ocr
 
+
+def _ocr_pdf_page(page):
+    """OCR a single PDF page by rendering to image."""
+    try:
+        page_image = page.to_image(resolution=300)
+        img_path = tempfile.mktemp(suffix='.png')
+        try:
+            page_image.save(img_path)
+            return _ocr_image_file(img_path)
+        finally:
+            if os.path.exists(img_path):
+                os.unlink(img_path)
+    except Exception:
+        return None
+
+
+def _ocr_image_file(filepath):
+    """OCR a single image file. Returns extracted text or None."""
+    try:
+        import cv2
+        import pytesseract
+
+        image = cv2.imread(filepath)
+        if image is None:
+            return None
+
+        # Preprocessing: grayscale → denoise → adaptive threshold
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+
+        denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
+        thresh = cv2.adaptiveThreshold(
+            denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2
+        )
+
+        text = pytesseract.image_to_string(thresh, config='--psm 6 --oem 3')
+        return text if text.strip() else None
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+
+def _store_schedule_entries(entries, filename, used_ocr=False):
+    """Store parsed schedule entries in the database and match to billing.
+
+    Returns summary dict with counts.
+    """
     stored = 0
     matched = 0
     skipped = 0
@@ -241,7 +305,7 @@ def import_schedule_pdf(filepath):
             skipped += 1
             continue
 
-        # Check for existing schedule entry
+        # Check for existing schedule entry (dedup)
         existing = ScheduleEntry.query.filter_by(
             patient_name=patient_name,
             schedule_date=sched_date,
@@ -258,6 +322,7 @@ def import_schedule_pdf(filepath):
             modality=entry.get('modality'),
             scan_type=entry.get('scan_type'),
             source_file=filename,
+            ocr_source=used_ocr,
         )
         db.session.add(sched)
         stored += 1
@@ -273,6 +338,7 @@ def import_schedule_pdf(filepath):
         if billing_record:
             sched.matched_billing_id = billing_record.id
             sched.match_status = 'MATCHED'
+            sched.status = 'COMPLETED'
             matched += 1
         else:
             sched.match_status = 'UNMATCHED'
@@ -280,12 +346,185 @@ def import_schedule_pdf(filepath):
     db.session.commit()
 
     return {
-        'entries_found': len(entries),
         'entries_stored': stored,
         'entries_matched': matched,
         'entries_skipped': skipped,
-        'schedule_date': parsed.get('schedule_date'),
-        'source': 'SCHEDULE_PDF',
+    }
+
+
+def import_schedule_pdf(filepath):
+    """Import a schedule PDF file.
+
+    Extracts text with pdfplumber (OCR fallback for scanned pages),
+    parses schedule entries, stores in ScheduleEntry table, and matches
+    to billing records.
+    """
+    filename = os.path.basename(filepath)
+
+    try:
+        all_text, used_ocr = _extract_text_from_pdf(filepath)
+    except Exception:
+        # If pdfplumber fails entirely, try pure OCR
+        all_text = _ocr_image_file(filepath) or ''
+        used_ocr = True if all_text else False
+
+    if not all_text.strip():
+        return {
+            'entries_found': 0,
+            'needs_ocr': True,
+            'message': 'Could not extract text from schedule PDF (pdfplumber + OCR both failed)',
+        }
+
+    parsed = parse_schedule_text(all_text, filename)
+    entries = parsed.get('entries', [])
+
+    result = _store_schedule_entries(entries, filename, used_ocr)
+
+    result['entries_found'] = len(entries)
+    result['schedule_date'] = parsed.get('schedule_date')
+    result['source'] = 'SCHEDULE_PDF'
+    result['used_ocr'] = used_ocr
+    return result
+
+
+def import_schedule_image(filepath):
+    """Import a schedule from an image file (PNG, JPG, TIFF, BMP).
+
+    Uses OCR to extract text, then parses schedule entries.
+    """
+    filename = os.path.basename(filepath)
+    text = _ocr_image_file(filepath)
+
+    if not text or not text.strip():
+        return {
+            'entries_found': 0,
+            'message': 'OCR could not extract readable text from image',
+        }
+
+    parsed = parse_schedule_text(text, filename)
+    entries = parsed.get('entries', [])
+
+    result = _store_schedule_entries(entries, filename, used_ocr=True)
+
+    result['entries_found'] = len(entries)
+    result['schedule_date'] = parsed.get('schedule_date')
+    result['source'] = 'SCHEDULE_IMAGE_OCR'
+    result['used_ocr'] = True
+    return result
+
+
+def import_schedule_text_file(filepath):
+    """Import a schedule from a plain text file."""
+    filename = os.path.basename(filepath)
+    with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+        text = f.read()
+
+    if not text.strip():
+        return {'entries_found': 0, 'message': 'Empty file'}
+
+    parsed = parse_schedule_text(text, filename)
+    entries = parsed.get('entries', [])
+
+    result = _store_schedule_entries(entries, filename, used_ocr=False)
+
+    result['entries_found'] = len(entries)
+    result['schedule_date'] = parsed.get('schedule_date')
+    result['source'] = 'SCHEDULE_TEXT'
+    return result
+
+
+def import_schedule_file(filepath):
+    """Import a single schedule file of any type.
+
+    Detects the file type and routes to the appropriate importer.
+    """
+    ext = os.path.splitext(filepath)[1].lower()
+
+    if ext == '.pdf':
+        return import_schedule_pdf(filepath)
+    elif ext in ('.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp'):
+        return import_schedule_image(filepath)
+    elif ext == '.txt':
+        return import_schedule_text_file(filepath)
+    else:
+        return {'status': 'error', 'reason': f'Unsupported file type: {ext}'}
+
+
+def scan_schedule_folder(folder_path):
+    """Recursively scan a folder for schedule files and import them all.
+
+    Handles PDFs (with OCR fallback), images, and text files.
+    Returns a summary of the entire scan.
+    """
+    if not os.path.isdir(folder_path):
+        return {'error': f'Folder not found: {folder_path}'}
+
+    total_found = 0
+    total_imported = 0
+    total_entries = 0
+    total_matched = 0
+    total_skipped = 0
+    total_ocr = 0
+    files_errored = 0
+    details = []
+
+    for root, _dirs, files in os.walk(folder_path):
+        for fname in sorted(files):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in _SCHEDULE_EXTENSIONS:
+                continue
+
+            total_found += 1
+            filepath = os.path.join(root, fname)
+
+            try:
+                result = import_schedule_file(filepath)
+
+                entries_found = result.get('entries_found', 0)
+                entries_stored = result.get('entries_stored', 0)
+                entries_matched = result.get('entries_matched', 0)
+                entries_skipped = result.get('entries_skipped', 0)
+
+                total_entries += entries_found
+                total_matched += entries_matched
+                total_skipped += entries_skipped
+
+                if entries_stored > 0:
+                    total_imported += 1
+
+                if result.get('used_ocr'):
+                    total_ocr += 1
+
+                detail = {
+                    'filename': fname,
+                    'status': 'imported' if entries_stored > 0 else 'skipped',
+                    'entries_found': entries_found,
+                    'entries_stored': entries_stored,
+                    'entries_matched': entries_matched,
+                    'used_ocr': result.get('used_ocr', False),
+                }
+                if result.get('message'):
+                    detail['message'] = result['message']
+                details.append(detail)
+
+            except Exception as e:
+                files_errored += 1
+                details.append({
+                    'filename': fname,
+                    'status': 'error',
+                    'reason': str(e),
+                })
+
+    return {
+        'folder': folder_path,
+        'total_files_found': total_found,
+        'files_with_new_entries': total_imported,
+        'files_errored': files_errored,
+        'total_entries_found': total_entries,
+        'total_entries_matched': total_matched,
+        'total_entries_skipped': total_skipped,
+        'files_using_ocr': total_ocr,
+        'details': details,
     }
 
 
@@ -293,10 +532,10 @@ def import_schedule_pdf(filepath):
 
 @import_bp.route('/schedule', methods=['POST'])
 def import_schedule():
-    """POST /api/import/schedule - Upload a schedule PDF.
+    """POST /api/import/schedule - Upload a schedule PDF/image.
 
-    Parses the PDF, extracts appointments, stores them,
-    and matches to existing billing records.
+    Parses the file (with OCR for scanned docs), extracts appointments,
+    stores them, and matches to existing billing records.
     """
     if 'file' not in request.files:
         return jsonify({'error': 'No file provided'}), 400
@@ -310,7 +549,7 @@ def import_schedule():
     os.close(fd)
     try:
         file.save(tmp_path)
-        result = import_schedule_pdf(tmp_path)
+        result = import_schedule_file(tmp_path)
         result['filename'] = file.filename
         return jsonify(result)
     except Exception as e:
@@ -320,11 +559,32 @@ def import_schedule():
             os.unlink(tmp_path)
 
 
+@import_bp.route('/schedule/scan-folder', methods=['POST'])
+def scan_schedule_folder_endpoint():
+    """POST /api/import/schedule/scan-folder - Scan a folder for schedule files.
+
+    Recursively finds all PDFs, images, and text files in the given folder,
+    extracts schedule data (using OCR when needed), and stores entries.
+
+    JSON body: { "folder_path": "/path/to/schedules" }
+    """
+    data = request.get_json(silent=True)
+    if not data or 'folder_path' not in data:
+        return jsonify({'error': 'Provide folder_path in JSON body'}), 400
+
+    folder_path = data['folder_path'].strip()
+    if not os.path.isdir(folder_path):
+        return jsonify({'error': f'Folder not found: {folder_path}'}), 400
+
+    result = scan_schedule_folder(folder_path)
+    return jsonify(result)
+
+
 @import_bp.route('/schedule/entries', methods=['GET'])
 def list_schedule_entries():
     """GET /api/import/schedule/entries - List schedule entries with filters.
 
-    Query params: date_from, date_to, modality, match_status, page, per_page
+    Query params: date_from, date_to, modality, match_status, status, page, per_page
     """
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
@@ -332,6 +592,7 @@ def list_schedule_entries():
     date_to = request.args.get('date_to')
     modality = request.args.get('modality')
     match_status = request.args.get('match_status')
+    status = request.args.get('status')
 
     query = ScheduleEntry.query
     if date_from:
@@ -342,6 +603,8 @@ def list_schedule_entries():
         query = query.filter(ScheduleEntry.modality == modality.upper())
     if match_status:
         query = query.filter(ScheduleEntry.match_status == match_status.upper())
+    if status:
+        query = query.filter(ScheduleEntry.status == status.upper())
 
     query = query.order_by(ScheduleEntry.schedule_date.desc())
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
@@ -352,6 +615,137 @@ def list_schedule_entries():
         'page': page,
         'pages': pagination.pages,
     })
+
+
+@import_bp.route('/schedule/entries/<int:entry_id>', methods=['GET'])
+def get_schedule_entry(entry_id):
+    """GET /api/import/schedule/entries/<id> - Get a single schedule entry."""
+    entry = ScheduleEntry.query.get(entry_id)
+    if not entry:
+        return jsonify({'error': 'Entry not found'}), 404
+    return jsonify(entry.to_dict())
+
+
+@import_bp.route('/schedule/entries/<int:entry_id>', methods=['PUT'])
+def update_schedule_entry(entry_id):
+    """PUT /api/import/schedule/entries/<id> - Update a schedule entry.
+
+    JSON body can include any editable field:
+    patient_name, schedule_date, appointment_time, modality, scan_type,
+    status, notes, referring_doctor, insurance_carrier
+    """
+    entry = ScheduleEntry.query.get(entry_id)
+    if not entry:
+        return jsonify({'error': 'Entry not found'}), 404
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Provide JSON body'}), 400
+
+    # Editable fields
+    if 'patient_name' in data:
+        entry.patient_name = data['patient_name'].strip().upper()
+    if 'schedule_date' in data:
+        if data['schedule_date']:
+            entry.schedule_date = datetime.strptime(data['schedule_date'], '%Y-%m-%d').date()
+        else:
+            entry.schedule_date = None
+    if 'appointment_time' in data:
+        entry.appointment_time = data['appointment_time']
+    if 'modality' in data:
+        entry.modality = data['modality'].upper() if data['modality'] else None
+    if 'scan_type' in data:
+        entry.scan_type = data['scan_type'].upper() if data['scan_type'] else None
+    if 'status' in data:
+        valid_statuses = ('SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW')
+        status_val = data['status'].upper()
+        if status_val in valid_statuses:
+            entry.status = status_val
+    if 'notes' in data:
+        entry.notes = data['notes']
+    if 'referring_doctor' in data:
+        entry.referring_doctor = data['referring_doctor']
+    if 'insurance_carrier' in data:
+        entry.insurance_carrier = data['insurance_carrier']
+
+    db.session.commit()
+
+    # Re-run matching if name or date changed
+    if 'patient_name' in data or 'schedule_date' in data:
+        _rematch_single(entry)
+        db.session.commit()
+
+    return jsonify(entry.to_dict())
+
+
+@import_bp.route('/schedule/entries/<int:entry_id>', methods=['DELETE'])
+def delete_schedule_entry(entry_id):
+    """DELETE /api/import/schedule/entries/<id> - Delete a schedule entry."""
+    entry = ScheduleEntry.query.get(entry_id)
+    if not entry:
+        return jsonify({'error': 'Entry not found'}), 404
+
+    db.session.delete(entry)
+    db.session.commit()
+
+    return jsonify({'deleted': entry_id})
+
+
+@import_bp.route('/schedule/entries', methods=['POST'])
+def create_schedule_entry():
+    """POST /api/import/schedule/entries - Create a new schedule entry manually.
+
+    JSON body: { patient_name, schedule_date, appointment_time, modality,
+                 scan_type, notes, referring_doctor, insurance_carrier }
+    """
+    data = request.get_json(silent=True)
+    if not data or 'patient_name' not in data:
+        return jsonify({'error': 'patient_name is required'}), 400
+
+    sched_date = None
+    if data.get('schedule_date'):
+        try:
+            sched_date = datetime.strptime(data['schedule_date'], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
+
+    entry = ScheduleEntry(
+        patient_name=data['patient_name'].strip().upper(),
+        schedule_date=sched_date,
+        appointment_time=data.get('appointment_time'),
+        modality=data.get('modality', '').upper() if data.get('modality') else None,
+        scan_type=data.get('scan_type', '').upper() if data.get('scan_type') else None,
+        status=data.get('status', 'SCHEDULED').upper(),
+        notes=data.get('notes'),
+        referring_doctor=data.get('referring_doctor'),
+        insurance_carrier=data.get('insurance_carrier'),
+        source_file='MANUAL',
+    )
+    db.session.add(entry)
+
+    # Try to match
+    _rematch_single(entry)
+
+    db.session.commit()
+
+    return jsonify(entry.to_dict()), 201
+
+
+def _rematch_single(entry):
+    """Try to match a single schedule entry to a billing record."""
+    billing_match = BillingRecord.query.filter_by(
+        patient_name=entry.patient_name,
+    )
+    if entry.schedule_date:
+        billing_match = billing_match.filter_by(service_date=entry.schedule_date)
+    billing_record = billing_match.first()
+
+    if billing_record:
+        entry.matched_billing_id = billing_record.id
+        entry.match_status = 'MATCHED'
+    else:
+        entry.matched_billing_id = None
+        entry.match_status = 'UNMATCHED'
 
 
 @import_bp.route('/schedule/calendar', methods=['GET'])
@@ -386,11 +780,12 @@ def schedule_calendar_data():
         modalities = ('PET', 'CT', 'BONE')
         title = 'PET/CT Schedule'
 
-    # Get scheduled appointments
+    # Get scheduled appointments (exclude cancelled)
     scheduled = ScheduleEntry.query.filter(
         ScheduleEntry.schedule_date >= first_day,
         ScheduleEntry.schedule_date <= last_day,
         ScheduleEntry.modality.in_(modalities),
+        ScheduleEntry.status != 'CANCELLED',
     ).all()
 
     # Get billing records (actual scans performed)
@@ -403,19 +798,25 @@ def schedule_calendar_data():
     # Build events list
     events = []
 
-    # Scheduled events (blue)
+    # Scheduled events
     for s in scheduled:
         event = {
             'id': f'sched-{s.id}',
+            'entry_id': s.id,
             'title': s.patient_name,
             'date': s.schedule_date.isoformat() if s.schedule_date else None,
             'time': s.appointment_time,
             'type': 'scheduled',
             'modality': s.modality,
             'scan_type': s.scan_type,
+            'status': s.status,
+            'notes': s.notes,
             'matched': s.match_status == 'MATCHED',
             'color': '#0d6efd' if s.match_status == 'MATCHED' else '#dc3545',
+            'ocr_source': s.ocr_source,
         }
+        if s.status == 'NO_SHOW':
+            event['color'] = '#6c757d'
         events.append(event)
 
     # Billed events (green) — only those NOT already matched to a schedule entry
@@ -442,6 +843,7 @@ def schedule_calendar_data():
     total_matched = sum(1 for s in scheduled if s.match_status == 'MATCHED')
     total_unmatched = total_scheduled - total_matched
     total_billed_only = len([e for e in events if e['type'] == 'billed'])
+    total_no_show = sum(1 for s in scheduled if s.status == 'NO_SHOW')
 
     return jsonify({
         'title': title,
@@ -454,6 +856,7 @@ def schedule_calendar_data():
             'total_unmatched': total_unmatched,
             'total_billed_only': total_billed_only,
             'total_billed': len(billed),
+            'total_no_show': total_no_show,
         },
     })
 

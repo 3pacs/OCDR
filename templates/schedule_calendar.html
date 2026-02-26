@@ -57,6 +57,8 @@
     .cal-event.matched { background: #0d6efd; border-left: 3px solid #198754; }
     .cal-event.billed { background: #198754; }
     .cal-event.unmatched { background: #dc3545; }
+    .cal-event.no-show { background: #6c757d; }
+    .cal-event.cancelled { background: #adb5bd; text-decoration: line-through; }
     .legend-item {
         display: inline-flex;
         align-items: center;
@@ -84,6 +86,7 @@
         <span id="month-label" class="mx-2 fw-bold"></span>
         <button class="btn btn-sm btn-outline-secondary" onclick="changeMonth(1)">Next &raquo;</button>
         <button class="btn btn-sm btn-outline-primary ms-2" onclick="goToday()">Today</button>
+        <button class="btn btn-sm btn-primary ms-3" data-bs-toggle="modal" data-bs-target="#addEntryModal">+ Add Entry</button>
     </div>
 </div>
 
@@ -92,6 +95,7 @@
     <span class="legend-item"><span class="legend-dot" style="background:#0d6efd"></span> Scheduled (matched)</span>
     <span class="legend-item"><span class="legend-dot" style="background:#dc3545"></span> Scheduled (no billing match)</span>
     <span class="legend-item"><span class="legend-dot" style="background:#198754"></span> Billed (no schedule)</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#6c757d"></span> No-show</span>
 </div>
 
 <!-- Summary Stats Row -->
@@ -125,15 +129,132 @@
     </div>
 </div>
 
-<!-- Event Detail Modal -->
+<!-- Schedule Entries Table -->
+<div class="card mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">Schedule Entries</h5>
+        <div class="d-flex gap-2">
+            <select class="form-select form-select-sm" id="filter-status" style="width:auto" onchange="loadEntries()">
+                <option value="">All Statuses</option>
+                <option value="SCHEDULED">Scheduled</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="CANCELLED">Cancelled</option>
+                <option value="NO_SHOW">No-show</option>
+            </select>
+            <select class="form-select form-select-sm" id="filter-match" style="width:auto" onchange="loadEntries()">
+                <option value="">All Match</option>
+                <option value="MATCHED">Matched</option>
+                <option value="UNMATCHED">Unmatched</option>
+            </select>
+            <button class="btn btn-sm btn-outline-success" onclick="rematchAll()">Re-match All</button>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" id="entries-table">
+                <thead class="table-light">
+                    <tr>
+                        <th>Patient</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Modality</th>
+                        <th>Scan</th>
+                        <th>Status</th>
+                        <th>Match</th>
+                        <th>Notes</th>
+                        <th style="width:100px">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="entries-tbody">
+                    <tr><td colspan="9" class="text-muted text-center py-3">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="d-flex justify-content-between align-items-center px-3 py-2 border-top">
+            <small class="text-muted" id="entries-info"></small>
+            <div>
+                <button class="btn btn-sm btn-outline-secondary" id="prev-page-btn" onclick="changePage(-1)" disabled>&laquo;</button>
+                <button class="btn btn-sm btn-outline-secondary" id="next-page-btn" onclick="changePage(1)" disabled>&raquo;</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Event Detail / Edit Modal -->
 <div class="modal fade" id="eventModal" tabindex="-1">
-    <div class="modal-dialog modal-sm">
+    <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header py-2">
                 <h6 class="modal-title" id="event-modal-title">Event Detail</h6>
                 <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body small" id="event-modal-body"></div>
+            <div class="modal-body" id="event-modal-body"></div>
+            <div class="modal-footer py-1" id="event-modal-footer" style="display:none">
+                <button type="button" class="btn btn-sm btn-danger" id="btn-delete-entry">Delete</button>
+                <button type="button" class="btn btn-sm btn-primary" id="btn-save-entry">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add New Entry Modal -->
+<div class="modal fade" id="addEntryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title">Add Schedule Entry</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-2">
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">Patient Name (LAST, FIRST)</label>
+                        <input type="text" class="form-control form-control-sm" id="new-patient-name"
+                               placeholder="SMITH, JOHN">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Date</label>
+                        <input type="date" class="form-control form-control-sm" id="new-schedule-date">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Time</label>
+                        <input type="time" class="form-control form-control-sm" id="new-appt-time">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Modality</label>
+                        <select class="form-select form-select-sm" id="new-modality">
+                            <option value="">--</option>
+                            <option value="HMRI">HMRI</option>
+                            <option value="OPEN">Open MRI</option>
+                            <option value="CT">CT</option>
+                            <option value="PET">PET</option>
+                            <option value="BONE">Bone</option>
+                            <option value="DX">DX (X-Ray)</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Scan Type</label>
+                        <input type="text" class="form-control form-control-sm" id="new-scan-type"
+                               placeholder="BRAIN, CHEST, etc.">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Referring Doctor</label>
+                        <input type="text" class="form-control form-control-sm" id="new-referring-doctor">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold">Insurance</label>
+                        <input type="text" class="form-control form-control-sm" id="new-insurance">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">Notes</label>
+                        <textarea class="form-control form-control-sm" id="new-notes" rows="2"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="createEntry()">Create Entry</button>
+            </div>
         </div>
     </div>
 </div>
@@ -148,6 +269,9 @@ const MONTHS = ['January','February','March','April','May','June',
 let currentYear, currentMonth;
 let mriEvents = [];
 let petctEvents = [];
+let entriesPage = 1;
+let entriesTotal = 0;
+const entriesPerPage = 25;
 
 // Initialize to current month
 const now = new Date();
@@ -185,6 +309,8 @@ function loadCalendars() {
     }).catch(err => {
         console.error('Calendar load error:', err);
     });
+
+    loadEntries();
 }
 
 function renderCalendar(containerId, events) {
@@ -228,7 +354,9 @@ function renderCalendar(containerId, events) {
 
         for (const evt of dayEvents) {
             let cls = 'cal-event';
-            if (evt.type === 'scheduled' && evt.matched) cls += ' matched';
+            if (evt.status === 'NO_SHOW') cls += ' no-show';
+            else if (evt.status === 'CANCELLED') cls += ' cancelled';
+            else if (evt.type === 'scheduled' && evt.matched) cls += ' matched';
             else if (evt.type === 'scheduled') cls += ' unmatched';
             else cls += ' billed';
 
@@ -311,30 +439,249 @@ function renderStats(mriSummary, petctSummary) {
     `;
 }
 
+// ---- Event Detail / Edit ----
 let eventModal = null;
+let currentEditEntryId = null;
+
 function showEvent(evt) {
     if (!eventModal) {
         eventModal = new bootstrap.Modal(document.getElementById('eventModal'));
     }
     document.getElementById('event-modal-title').textContent = evt.title || 'Event';
 
-    let html = '<table class="table table-sm table-borderless mb-0">';
-    html += `<tr><td class="fw-bold">Type</td><td>${evt.type === 'scheduled' ? 'Scheduled' : 'Billed'}</td></tr>`;
-    html += `<tr><td class="fw-bold">Date</td><td>${evt.date || 'N/A'}</td></tr>`;
-    if (evt.time) html += `<tr><td class="fw-bold">Time</td><td>${evt.time}</td></tr>`;
-    if (evt.modality) html += `<tr><td class="fw-bold">Modality</td><td>${evt.modality}</td></tr>`;
-    if (evt.scan_type) html += `<tr><td class="fw-bold">Scan Type</td><td>${evt.scan_type}</td></tr>`;
-    if (evt.total_payment !== undefined) html += `<tr><td class="fw-bold">Payment</td><td>$${evt.total_payment.toLocaleString()}</td></tr>`;
-    if (evt.matched !== undefined) {
-        const badge = evt.matched
-            ? '<span class="badge bg-success">Matched to billing</span>'
-            : '<span class="badge bg-danger">No billing match</span>';
-        html += `<tr><td class="fw-bold">Status</td><td>${badge}</td></tr>`;
+    const isScheduled = evt.type === 'scheduled';
+    const footer = document.getElementById('event-modal-footer');
+    footer.style.display = isScheduled ? '' : 'none';
+    currentEditEntryId = evt.entry_id || null;
+
+    let html = '';
+    if (isScheduled) {
+        // Editable form
+        html = `<div class="row g-2">
+            <div class="col-12"><label class="form-label small fw-bold">Patient Name</label>
+                <input type="text" class="form-control form-control-sm" id="edit-patient-name" value="${escHtml(evt.title || '')}">
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Date</label>
+                <input type="date" class="form-control form-control-sm" id="edit-date" value="${evt.date || ''}">
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Time</label>
+                <input type="time" class="form-control form-control-sm" id="edit-time" value="${evt.time || ''}">
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Modality</label>
+                <select class="form-select form-select-sm" id="edit-modality">
+                    <option value="">--</option>
+                    ${['HMRI','OPEN','CT','PET','BONE','DX'].map(m =>
+                        `<option value="${m}" ${evt.modality===m?'selected':''}>${m}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Scan Type</label>
+                <input type="text" class="form-control form-control-sm" id="edit-scan-type" value="${escHtml(evt.scan_type || '')}">
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Status</label>
+                <select class="form-select form-select-sm" id="edit-status">
+                    ${['SCHEDULED','COMPLETED','CANCELLED','NO_SHOW'].map(s =>
+                        `<option value="${s}" ${evt.status===s?'selected':''}>${s.replace('_',' ')}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            <div class="col-6"><label class="form-label small fw-bold">Match</label>
+                <div class="mt-1">${evt.matched
+                    ? '<span class="badge bg-success">Matched to billing</span>'
+                    : '<span class="badge bg-danger">No billing match</span>'}</div>
+            </div>
+            <div class="col-12"><label class="form-label small fw-bold">Notes</label>
+                <textarea class="form-control form-control-sm" id="edit-notes" rows="2">${escHtml(evt.notes || '')}</textarea>
+            </div>
+            ${evt.ocr_source ? '<div class="col-12"><small class="text-muted"><em>Extracted via OCR</em></small></div>' : ''}
+        </div>`;
+    } else {
+        // Read-only billing record view
+        html = '<table class="table table-sm table-borderless mb-0">';
+        html += `<tr><td class="fw-bold">Type</td><td>Billed</td></tr>`;
+        html += `<tr><td class="fw-bold">Date</td><td>${evt.date || 'N/A'}</td></tr>`;
+        if (evt.modality) html += `<tr><td class="fw-bold">Modality</td><td>${evt.modality}</td></tr>`;
+        if (evt.scan_type) html += `<tr><td class="fw-bold">Scan Type</td><td>${evt.scan_type}</td></tr>`;
+        if (evt.total_payment !== undefined) html += `<tr><td class="fw-bold">Payment</td><td>$${evt.total_payment.toLocaleString()}</td></tr>`;
+        html += '</table>';
     }
-    html += '</table>';
 
     document.getElementById('event-modal-body').innerHTML = html;
+
+    // Wire up save/delete buttons
+    if (isScheduled) {
+        document.getElementById('btn-save-entry').onclick = () => saveEntry(currentEditEntryId);
+        document.getElementById('btn-delete-entry').onclick = () => deleteEntry(currentEditEntryId);
+    }
+
     eventModal.show();
+}
+
+function escHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function saveEntry(entryId) {
+    if (!entryId) return;
+    const data = {
+        patient_name: document.getElementById('edit-patient-name').value,
+        schedule_date: document.getElementById('edit-date').value || null,
+        appointment_time: document.getElementById('edit-time').value || null,
+        modality: document.getElementById('edit-modality').value || null,
+        scan_type: document.getElementById('edit-scan-type').value || null,
+        status: document.getElementById('edit-status').value,
+        notes: document.getElementById('edit-notes').value,
+    };
+
+    fetch(`/api/import/schedule/entries/${entryId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) {
+            alert(result.error);
+            return;
+        }
+        if (eventModal) eventModal.hide();
+        loadCalendars();
+    })
+    .catch(err => alert(err.message));
+}
+
+function deleteEntry(entryId) {
+    if (!entryId || !confirm('Delete this schedule entry?')) return;
+
+    fetch(`/api/import/schedule/entries/${entryId}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) { alert(result.error); return; }
+        if (eventModal) eventModal.hide();
+        loadCalendars();
+    })
+    .catch(err => alert(err.message));
+}
+
+// ---- Add new entry ----
+function createEntry() {
+    const data = {
+        patient_name: document.getElementById('new-patient-name').value,
+        schedule_date: document.getElementById('new-schedule-date').value || null,
+        appointment_time: document.getElementById('new-appt-time').value || null,
+        modality: document.getElementById('new-modality').value || null,
+        scan_type: document.getElementById('new-scan-type').value || null,
+        referring_doctor: document.getElementById('new-referring-doctor').value || null,
+        insurance_carrier: document.getElementById('new-insurance').value || null,
+        notes: document.getElementById('new-notes').value || null,
+    };
+
+    if (!data.patient_name) { alert('Patient name is required'); return; }
+
+    fetch('/api/import/schedule/entries', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) { alert(result.error); return; }
+        bootstrap.Modal.getInstance(document.getElementById('addEntryModal')).hide();
+        // Clear form
+        ['new-patient-name','new-schedule-date','new-appt-time','new-scan-type',
+         'new-referring-doctor','new-insurance','new-notes'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        document.getElementById('new-modality').value = '';
+        loadCalendars();
+    })
+    .catch(err => alert(err.message));
+}
+
+// ---- Entries Table ----
+function loadEntries() {
+    const status = document.getElementById('filter-status').value;
+    const match = document.getElementById('filter-match').value;
+    let url = `/api/import/schedule/entries?page=${entriesPage}&per_page=${entriesPerPage}`;
+    if (status) url += `&status=${status}`;
+    if (match) url += `&match_status=${match}`;
+
+    fetch(url)
+    .then(r => r.json())
+    .then(data => {
+        entriesTotal = data.total || 0;
+        const tbody = document.getElementById('entries-tbody');
+        const entries = data.entries || [];
+
+        if (entries.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-muted text-center py-3">No entries found</td></tr>';
+        } else {
+            tbody.innerHTML = entries.map(e => {
+                const statusBadge = {
+                    'SCHEDULED': 'bg-primary', 'COMPLETED': 'bg-success',
+                    'CANCELLED': 'bg-secondary', 'NO_SHOW': 'bg-warning text-dark',
+                }[e.status] || 'bg-secondary';
+                const matchBadge = e.match_status === 'MATCHED' ? 'bg-success' : 'bg-danger';
+                return `<tr>
+                    <td class="small">${escHtml(e.patient_name)}</td>
+                    <td class="small">${e.schedule_date || ''}</td>
+                    <td class="small">${e.appointment_time || ''}</td>
+                    <td class="small">${e.modality || ''}</td>
+                    <td class="small">${e.scan_type || ''}</td>
+                    <td><span class="badge ${statusBadge} small">${(e.status||'').replace('_',' ')}</span></td>
+                    <td><span class="badge ${matchBadge} small">${e.match_status || ''}</span></td>
+                    <td class="small text-truncate" style="max-width:150px">${escHtml(e.notes || '')}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary py-0 px-1" onclick="editEntryById(${e.id})">Edit</button>
+                        <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteEntry(${e.id})">Del</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        document.getElementById('entries-info').textContent =
+            `Showing ${entries.length} of ${entriesTotal} entries (page ${data.page}/${data.pages || 1})`;
+        document.getElementById('prev-page-btn').disabled = (data.page <= 1);
+        document.getElementById('next-page-btn').disabled = (data.page >= (data.pages || 1));
+    });
+}
+
+function changePage(delta) {
+    entriesPage += delta;
+    if (entriesPage < 1) entriesPage = 1;
+    loadEntries();
+}
+
+function editEntryById(id) {
+    fetch(`/api/import/schedule/entries/${id}`)
+    .then(r => r.json())
+    .then(entry => {
+        showEvent({
+            entry_id: entry.id,
+            title: entry.patient_name,
+            date: entry.schedule_date,
+            time: entry.appointment_time,
+            type: 'scheduled',
+            modality: entry.modality,
+            scan_type: entry.scan_type,
+            status: entry.status,
+            notes: entry.notes,
+            matched: entry.match_status === 'MATCHED',
+            ocr_source: entry.ocr_source,
+        });
+    });
+}
+
+function rematchAll() {
+    fetch('/api/import/schedule/rematch', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+        alert(`Re-matched: ${data.newly_matched} entries (${data.still_unmatched} still unmatched)`);
+        loadCalendars();
+    })
+    .catch(err => alert(err.message));
 }
 
 // Load on page ready

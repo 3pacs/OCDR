@@ -212,6 +212,13 @@ class ScheduleEntry(db.Model):
     source_file = db.Column(db.Text)
     match_status = db.Column(db.Text, default='UNMATCHED', index=True)
     matched_billing_id = db.Column(db.Integer, db.ForeignKey('billing_records.id'), index=True)
+    # Editable fields
+    status = db.Column(db.Text, default='SCHEDULED', index=True)  # SCHEDULED, COMPLETED, CANCELLED, NO_SHOW
+    notes = db.Column(db.Text)
+    referring_doctor = db.Column(db.Text)
+    insurance_carrier = db.Column(db.Text)
+    ocr_source = db.Column(db.Boolean, default=False)  # True if extracted via OCR
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -225,6 +232,12 @@ class ScheduleEntry(db.Model):
             'source_file': self.source_file,
             'match_status': self.match_status,
             'matched_billing_id': self.matched_billing_id,
+            'status': self.status,
+            'notes': self.notes,
+            'referring_doctor': self.referring_doctor,
+            'insurance_carrier': self.insurance_carrier,
+            'ocr_source': self.ocr_source,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

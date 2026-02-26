@@ -36,21 +36,36 @@
             </div>
         </div>
 
-        <!-- Schedule PDF Upload -->
+        <!-- Schedule Import -->
         <div class="card mt-4">
-            <div class="card-header"><h5 class="mb-0">Schedule PDF Import</h5></div>
+            <div class="card-header"><h5 class="mb-0">Schedule Import
+                <span class="badge bg-success ms-2">OCR Enabled</span>
+            </h5></div>
             <div class="card-body">
                 <p class="small text-muted">
-                    Upload daily schedule PDFs to match scheduled appointments against billed records.
-                    View results on the <a href="/schedules">Schedule Calendars</a>.
+                    Import schedule files to match appointments against billing records.
+                    Supports PDFs, scanned images (OCR), and text files.
+                    View results on the <a href="/schedules">Schedule Calendars</a> (editable).
                 </p>
-                <div class="input-group">
+                <!-- Single file upload -->
+                <div class="input-group mb-2">
                     <input type="file" class="form-control form-control-sm" id="schedule-file-input"
-                           accept=".pdf,.csv,.xlsx,.txt">
+                           accept=".pdf,.csv,.xlsx,.txt,.png,.jpg,.jpeg,.tiff,.tif,.bmp">
                     <button class="btn btn-sm btn-primary" onclick="uploadSchedule()">
-                        Import Schedule
+                        Import File
                     </button>
                 </div>
+                <!-- Folder scan -->
+                <div class="input-group mb-2">
+                    <input type="text" class="form-control form-control-sm" id="schedule-folder-path"
+                           placeholder="C:\Schedules or /path/to/schedules">
+                    <button class="btn btn-sm btn-outline-primary" onclick="scanScheduleFolder()">
+                        Scan Folder
+                    </button>
+                </div>
+                <small class="text-muted d-block mb-2">
+                    Folder scan recursively finds all PDFs and images, OCRs scanned pages, and imports all entries.
+                </small>
                 <div id="schedule-result" class="mt-2"></div>
             </div>
         </div>
@@ -378,6 +393,63 @@ function uploadSchedule() {
         .catch(err => {
             resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${err.message}</div>`;
         });
+}
+
+// ---- Schedule Folder Scan ----
+function scanScheduleFolder() {
+    const path = document.getElementById('schedule-folder-path').value.trim();
+    if (!path) return;
+
+    const resultDiv = document.getElementById('schedule-result');
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Scanning folder for schedules (OCR may take a moment)...</span>
+        </div>`;
+
+    fetch('/api/import/schedule/scan-folder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${data.error}</div>`;
+            return;
+        }
+        let html = '<div class="alert alert-success py-2 small">';
+        html += '<strong>Schedule Folder Scan Complete</strong>';
+        html += '<table class="table table-sm table-bordered small mb-1 mt-2">';
+        html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
+        html += `<tr class="table-success"><td>Files with new entries</td><td class="text-end fw-bold">${data.files_with_new_entries}</td></tr>`;
+        html += `<tr><td>Total entries found</td><td class="text-end">${data.total_entries_found}</td></tr>`;
+        html += `<tr><td>Matched to billing</td><td class="text-end">${data.total_entries_matched}</td></tr>`;
+        html += `<tr><td>Duplicates skipped</td><td class="text-end">${data.total_entries_skipped}</td></tr>`;
+        if (data.files_using_ocr > 0)
+            html += `<tr><td>Files using OCR</td><td class="text-end">${data.files_using_ocr}</td></tr>`;
+        if (data.files_errored > 0)
+            html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
+        html += '</table>';
+
+        if (data.details) {
+            const errored = data.details.filter(d => d.status === 'error');
+            if (errored.length > 0) {
+                html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
+                for (const e of errored) {
+                    html += `<li>${e.filename}: ${e.reason}</li>`;
+                }
+                html += '</ul></details>';
+            }
+        }
+
+        html += `<a href="/schedules">View on Calendar &rarr;</a>`;
+        html += '</div>';
+        resultDiv.innerHTML = html;
+    })
+    .catch(err => {
+        resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${err.message}</div>`;
+    });
 }
 
 // ---- Format Detection ----
