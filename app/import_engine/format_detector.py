@@ -224,8 +224,8 @@ def route_file(filepath, filename=None):
 
     try:
         if fmt == 'xlsx':
-            from app.import_engine.excel_importer import import_excel_file
-            import_result = import_excel_file(filepath)
+            from app.import_engine.excel_importer import import_excel
+            import_result = import_excel(filepath)
             result.update(import_result)
             result['status'] = 'imported'
 
@@ -236,9 +236,8 @@ def route_file(filepath, filename=None):
             result['status'] = 'imported'
 
         elif fmt == 'csv':
-            from app.import_engine.csv_importer import import_csv_file
-            delimiter = detection.get('delimiter', ',')
-            import_result = import_csv_file(filepath, delimiter=delimiter)
+            from app.import_engine.csv_importer import import_csv
+            import_result = import_csv(filepath)
             result.update(import_result)
             result['status'] = 'imported'
 

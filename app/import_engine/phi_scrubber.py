@@ -235,7 +235,7 @@ def extract_safe_db_schema():
 
     Returns table structures, column types, and aggregate counts only.
     """
-    from app.models import db, BillingRecord, EraPayment, EraClaimLine, ScheduleEntry
+    from app.models import db, BillingRecord, EraPayment, EraClaimLine, ScheduleRecord
 
     schema = {
         'tables': {},
@@ -243,7 +243,7 @@ def extract_safe_db_schema():
     }
 
     # Table structures (column names + types = metadata, not PHI)
-    for model in [BillingRecord, EraPayment, EraClaimLine, ScheduleEntry]:
+    for model in [BillingRecord, EraPayment, EraClaimLine, ScheduleRecord]:
         table_name = model.__tablename__
         columns = []
         for col in model.__table__.columns:
@@ -262,7 +262,7 @@ def extract_safe_db_schema():
             'billing_records_total': BillingRecord.query.count(),
             'era_payments_total': EraPayment.query.count(),
             'era_claim_lines_total': EraClaimLine.query.count(),
-            'schedule_entries_total': ScheduleEntry.query.count(),
+            'schedule_entries_total': ScheduleRecord.query.count(),
             'distinct_modalities': [
                 r[0] for r in db.session.query(BillingRecord.modality)
                 .distinct().all() if r[0]

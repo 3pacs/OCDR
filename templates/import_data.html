@@ -3,7 +3,7 @@
 {% block page_title %}Import Data{% endblock %}
 
 {% block content %}
-<!-- How many records do you have? -->
+<!-- KPI Cards -->
 <div class="row g-3 mb-4">
     <div class="col-md-3">
         <div class="kpi-card kpi-card-blue">
@@ -31,10 +31,10 @@
     </div>
 </div>
 
-<!-- Step-by-step instructions -->
+<!-- Guide for first-time users -->
 <div class="welcome-banner" id="import-guide" style="display:none;">
     <h2>Upload Your Data</h2>
-    <p>Drop your files below to get started. We accept billing spreadsheets (Excel or CSV), PDF reports, and 835 ERA remittance files.</p>
+    <p>Drop your files below to get started. We accept billing spreadsheets, schedule files, PDF reports, and 835 ERA remittance files.</p>
     <div class="step-indicator">
         <div class="step-dot active">1</div>
         <div class="step-connector"></div>
@@ -49,15 +49,87 @@
     </div>
 </div>
 
+<!-- Interactive Prompt Banner (shown when app needs user input) -->
+<div class="data-card padded mb-4" id="prompt-banner" style="display:none;">
+    <div class="d-flex align-items-start gap-3">
+        <div class="text-accent-yellow fs-4"><i class="bi bi-chat-dots-fill"></i></div>
+        <div class="flex-grow-1">
+            <h6 class="fw-semibold mb-1" id="prompt-title">Action Needed</h6>
+            <p class="text-muted small mb-2" id="prompt-message" style="white-space:pre-wrap"></p>
+            <div id="prompt-actions"></div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" onclick="dismissPrompt()"><i class="bi bi-x"></i></button>
+    </div>
+</div>
+
 <!-- Upload Cards -->
 <div class="row g-4 mb-4">
-    <!-- Excel Upload -->
+    <!-- Smart Upload (any file) -->
     <div class="col-lg-6">
         <div class="data-card padded h-100">
-            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-spreadsheet me-2 text-accent-green"></i>Excel / CSV Import</h6>
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-magic me-2 text-accent-purple"></i>Smart Upload
+                <span class="badge bg-info-subtle text-info-emphasis ms-2 small">Auto-Detect</span>
+            </h6>
+            <p class="text-muted small mb-3">Drop any file and we'll figure out what it is. Works with billing spreadsheets, schedules, 835 ERA files, PDFs, and scanned images.</p>
+            <div class="upload-zone" id="smart-zone">
+                <i class="bi bi-cloud-arrow-up upload-icon text-accent-purple"></i>
+                <div class="upload-title">Drop any file here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.xlsx</span>
+                    <span class="format-tag">.csv</span>
+                    <span class="format-tag">.835</span>
+                    <span class="format-tag">.pdf</span>
+                    <span class="format-tag">.txt</span>
+                    <span class="format-tag">.png/.jpg</span>
+                </div>
+                <input type="file" class="d-none" id="smart-input"
+                       accept=".xlsx,.xls,.csv,.835,.edi,.txt,.pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp" multiple>
+            </div>
+            <div class="upload-progress" id="smart-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Detecting format and importing...</div>
+            </div>
+            <div class="upload-result" id="smart-result"></div>
+        </div>
+    </div>
+
+    <!-- Schedule Upload -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-calendar-week me-2 text-accent-green"></i>Schedule Import
+            </h6>
+            <p class="text-muted small mb-3">Upload your appointment schedules (Excel, CSV, or PDF). Matches patients to billing records automatically.</p>
+            <div class="upload-zone" id="schedule-zone">
+                <i class="bi bi-calendar-week upload-icon text-accent-green"></i>
+                <div class="upload-title">Drop your schedule here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.xlsx</span>
+                    <span class="format-tag">.csv</span>
+                    <span class="format-tag">.pdf</span>
+                </div>
+                <input type="file" class="d-none" id="schedule-input" accept=".xlsx,.xls,.csv,.pdf">
+            </div>
+            <div class="upload-progress" id="schedule-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Importing schedule...</div>
+            </div>
+            <div class="upload-result" id="schedule-result"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Excel/CSV Billing -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-spreadsheet me-2 text-accent-blue"></i>Billing Spreadsheet</h6>
             <p class="text-muted small mb-3">Upload billing spreadsheets. Auto-detects columns and normalizes modality codes, carrier names, and dates.</p>
             <div class="upload-zone" id="spreadsheet-zone">
-                <i class="bi bi-file-earmark-spreadsheet upload-icon text-accent-green"></i>
+                <i class="bi bi-file-earmark-spreadsheet upload-icon text-accent-blue"></i>
                 <div class="upload-title">Drop your spreadsheet here</div>
                 <div class="upload-subtitle">or click to browse files</div>
                 <div class="upload-formats">
@@ -75,13 +147,13 @@
         </div>
     </div>
 
-    <!-- PDF + 835 Upload -->
+    <!-- 835 ERA / PDF -->
     <div class="col-lg-6">
         <div class="data-card padded h-100">
-            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-medical me-2 text-accent-blue"></i>835 ERA / PDF Import</h6>
+            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-medical me-2 text-accent-amber"></i>835 ERA / PDF Import</h6>
             <p class="text-muted small mb-3">Upload 835 remittance files or PDF billing reports. Parses payments, claim lines, and adjustment codes.</p>
             <div class="upload-zone" id="era-pdf-zone">
-                <i class="bi bi-file-earmark-medical upload-icon text-accent-blue"></i>
+                <i class="bi bi-file-earmark-medical upload-icon text-accent-amber"></i>
                 <div class="upload-title">Drop your 835 or PDF here</div>
                 <div class="upload-subtitle">or click to browse (multiple files OK)</div>
                 <div class="upload-formats">
@@ -99,6 +171,37 @@
             <div class="upload-result" id="era-pdf-result"></div>
         </div>
     </div>
+</div>
+
+<!-- AI Assistant Config -->
+<div class="data-card padded mb-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="fw-semibold mb-0"><i class="bi bi-robot me-2 text-accent-purple"></i>AI Assistant</h6>
+        <span class="badge" id="ai-status-badge">Checking...</span>
+    </div>
+    <p class="text-muted small mb-3">
+        Connect to Claude API for smart file analysis, column mapping suggestions, and database health checks.
+        Only structural metadata is sent (column names, patterns, counts) — never patient data.
+    </p>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+            <label class="form-label small text-muted">Anthropic API Key</label>
+            <div class="input-group">
+                <input type="password" class="form-control form-control-sm" id="api-key-input"
+                       placeholder="sk-ant-api03-...">
+                <button class="btn btn-sm btn-outline-light" onclick="saveApiKey()">
+                    <i class="bi bi-key me-1"></i>Save Key
+                </button>
+            </div>
+            <small class="text-muted d-block mt-1">Or set <code>ANTHROPIC_API_KEY</code> env variable.</small>
+        </div>
+        <div class="col-md-6">
+            <button class="btn btn-sm btn-outline-info" onclick="analyzeDb()" id="btn-analyze-db" disabled>
+                <i class="bi bi-database-check me-1"></i>Analyze Database
+            </button>
+        </div>
+    </div>
+    <div id="ai-result" class="mt-3" style="display:none;"></div>
 </div>
 
 <!-- Import History + Source Chart -->
@@ -138,6 +241,14 @@
             <i class="bi bi-grid-1x2-fill text-accent-blue"></i>
             <span>Dashboard</span>
         </a>
+        <a href="/schedule" class="quick-nav-item">
+            <i class="bi bi-calendar-week text-accent-green"></i>
+            <span>Schedule Viewer</span>
+        </a>
+        <a href="/schedules" class="quick-nav-item">
+            <i class="bi bi-calendar3 text-accent-purple"></i>
+            <span>Schedule Calendar</span>
+        </a>
         <a href="/match-review" class="quick-nav-item">
             <i class="bi bi-link-45deg text-accent-purple"></i>
             <span>Match ERA to Billing</span>
@@ -166,38 +277,125 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     loadImportStatus();
+    checkAiStatus();
     setupUploads();
 });
+
+// ── Interactive Prompt System ─────────────────────────────────
+function showPrompt(title, message, actions) {
+    var banner = document.getElementById('prompt-banner');
+    document.getElementById('prompt-title').textContent = title;
+    document.getElementById('prompt-message').textContent = message;
+    var actionsDiv = document.getElementById('prompt-actions');
+    actionsDiv.innerHTML = '';
+    if (actions && actions.length) {
+        actions.forEach(function(action) {
+            var btn = document.createElement('button');
+            btn.className = 'btn btn-sm ' + (action.primary ? 'btn-primary' : 'btn-outline-light') + ' me-2';
+            btn.innerHTML = action.icon ? '<i class="bi ' + action.icon + ' me-1"></i>' + action.label : action.label;
+            btn.onclick = action.handler;
+            actionsDiv.appendChild(btn);
+        });
+    }
+    banner.style.display = 'block';
+    banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function dismissPrompt() {
+    document.getElementById('prompt-banner').style.display = 'none';
+}
+
+// ── AI Assistant ──────────────────────────────────────────────
+async function checkAiStatus() {
+    try {
+        var data = await fetchJSON('/api/import/ai/status');
+        var badge = document.getElementById('ai-status-badge');
+        if (data.configured) {
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis';
+            document.getElementById('btn-analyze-db').disabled = false;
+        } else {
+            badge.textContent = 'Not configured';
+            badge.className = 'badge bg-warning-subtle text-warning-emphasis';
+        }
+    } catch (e) {
+        var badge = document.getElementById('ai-status-badge');
+        badge.textContent = 'Unavailable';
+        badge.className = 'badge bg-secondary';
+    }
+}
+
+async function saveApiKey() {
+    var key = document.getElementById('api-key-input').value.trim();
+    if (!key) { showToast('Enter an API key first', 'warning'); return; }
+    try {
+        var resp = await fetch('/api/import/ai/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key }),
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            showToast('API key saved and encrypted', 'success');
+            document.getElementById('api-key-input').value = '';
+            checkAiStatus();
+        } else {
+            showToast(data.error || 'Failed to save key', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving key: ' + e.message, 'error');
+    }
+}
+
+async function analyzeDb() {
+    var btn = document.getElementById('btn-analyze-db');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analyzing...';
+    var resultDiv = document.getElementById('ai-result');
+    try {
+        var data = await fetchJSON('/api/import/ai/analyze-db');
+        resultDiv.style.display = 'block';
+        if (data.response) {
+            resultDiv.innerHTML = '<div class="data-card padded"><pre class="text-light small mb-0" style="white-space:pre-wrap">' +
+                escapeHtml(data.response) + '</pre></div>';
+        } else if (data.error) {
+            resultDiv.innerHTML = '<div class="alert alert-warning small">' + escapeHtml(data.error) + '</div>';
+        }
+    } catch (e) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="alert alert-danger small">Error: ' + escapeHtml(e.message) + '</div>';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-database-check me-1"></i>Analyze Database';
+}
 
 // ── Load current counts ──────────────────────────────────────
 async function loadImportStatus() {
     try {
-        const data = await fetchJSON('/api/import/status');
-        const billing = data.total_billing_records || 0;
-        const schedule = data.total_schedule_records || 0;
-        const era = data.total_era_payments || 0;
+        var data = await fetchJSON('/api/import/status');
+        var billing = data.total_billing_records || 0;
+        var schedule = data.total_schedule_records || 0;
+        var era = data.total_era_payments || 0;
 
         document.getElementById('kpi-billing').textContent = formatNumber(billing);
         document.getElementById('kpi-schedule').textContent = formatNumber(schedule);
         document.getElementById('kpi-era').textContent = formatNumber(era);
         document.getElementById('kpi-sources').textContent = data.by_source.length;
 
-        // Show guide if no data yet
         if (billing + schedule + era === 0) {
             document.getElementById('import-guide').style.display = 'block';
         }
 
-        // Draw chart if we have data
         if (data.by_source.length > 0) {
             document.getElementById('chart-empty').style.display = 'none';
-            const canvas = document.getElementById('sourceChart');
+            var canvas = document.getElementById('sourceChart');
             canvas.style.display = 'block';
             new Chart(canvas, {
                 type: 'doughnut',
                 data: {
-                    labels: data.by_source.map(s => s.source),
+                    labels: data.by_source.map(function(s) { return s.source; }),
                     datasets: [{
-                        data: data.by_source.map(s => s.count),
+                        data: data.by_source.map(function(s) { return s.count; }),
                         backgroundColor: ['#63b3ed', '#34d399', '#a78bfa', '#f472b6', '#fbbf24', '#fb923c'],
                         borderWidth: 0,
                     }]
@@ -217,34 +415,32 @@ async function loadImportStatus() {
 
 // ── Setup upload zones ───────────────────────────────────────
 function setupUploads() {
-    // Spreadsheet zone: handles both Excel and CSV
     setupZone({
-        zoneId: 'spreadsheet-zone',
-        inputId: 'spreadsheet-input',
-        progressId: 'spreadsheet-progress',
-        resultId: 'spreadsheet-result',
-        getUrl: function(file) {
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (ext === 'csv') return '/api/import/csv';
-            return '/api/import/excel';
-        },
-        fieldName: 'file',
-        multi: false,
+        zoneId: 'smart-zone', inputId: 'smart-input', progressId: 'smart-progress', resultId: 'smart-result',
+        getUrl: function() { return '/api/import/smart'; },
+        fieldName: 'file', multi: true, processIndividually: true,
     });
-
-    // ERA/PDF zone: handles 835, EDI, TXT (as 835), and PDF
     setupZone({
-        zoneId: 'era-pdf-zone',
-        inputId: 'era-pdf-input',
-        progressId: 'era-pdf-progress',
-        resultId: 'era-pdf-result',
+        zoneId: 'schedule-zone', inputId: 'schedule-input', progressId: 'schedule-progress', resultId: 'schedule-result',
+        getUrl: function() { return '/api/import/schedule/upload'; },
+        fieldName: 'file', multi: false,
+    });
+    setupZone({
+        zoneId: 'spreadsheet-zone', inputId: 'spreadsheet-input', progressId: 'spreadsheet-progress', resultId: 'spreadsheet-result',
         getUrl: function(file) {
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (ext === 'pdf') return '/api/import/pdf';
-            return '/api/era/upload';
+            var ext = file.name.split('.').pop().toLowerCase();
+            return ext === 'csv' ? '/api/import/csv' : '/api/import/excel';
+        },
+        fieldName: 'file', multi: false,
+    });
+    setupZone({
+        zoneId: 'era-pdf-zone', inputId: 'era-pdf-input', progressId: 'era-pdf-progress', resultId: 'era-pdf-result',
+        getUrl: function(file) {
+            var ext = file.name.split('.').pop().toLowerCase();
+            return ext === 'pdf' ? '/api/import/pdf' : '/api/era/upload';
         },
         fieldName: function(file) {
-            const ext = file.name.split('.').pop().toLowerCase();
+            var ext = file.name.split('.').pop().toLowerCase();
             return ext === 'pdf' ? 'file' : 'files';
         },
         multi: true,
@@ -252,183 +448,149 @@ function setupUploads() {
 }
 
 function setupZone(cfg) {
-    const zone = document.getElementById(cfg.zoneId);
-    const input = document.getElementById(cfg.inputId);
+    var zone = document.getElementById(cfg.zoneId);
+    var input = document.getElementById(cfg.inputId);
 
-    // Click to browse
-    zone.addEventListener('click', function(e) {
-        if (e.target.tagName !== 'INPUT') input.click();
-    });
-
-    // Drag events
-    zone.addEventListener('dragover', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        zone.classList.add('drag-over');
-    });
-    zone.addEventListener('dragleave', function(e) {
-        e.preventDefault();
-        zone.classList.remove('drag-over');
-    });
+    zone.addEventListener('click', function(e) { if (e.target.tagName !== 'INPUT') input.click(); });
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); e.stopPropagation(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', function(e) { e.preventDefault(); zone.classList.remove('drag-over'); });
     zone.addEventListener('drop', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        zone.classList.remove('drag-over');
+        e.preventDefault(); e.stopPropagation(); zone.classList.remove('drag-over');
         processFiles(Array.from(e.dataTransfer.files), cfg);
     });
-
-    // File input change
-    input.addEventListener('change', function() {
-        processFiles(Array.from(input.files), cfg);
-        input.value = ''; // reset so same file can be re-selected
-    });
+    input.addEventListener('change', function() { processFiles(Array.from(input.files), cfg); input.value = ''; });
 }
 
 async function processFiles(files, cfg) {
     if (!files.length) return;
-
-    const zone = document.getElementById(cfg.zoneId);
-    const progress = document.getElementById(cfg.progressId);
-    const resultDiv = document.getElementById(cfg.resultId);
-
-    // Show progress
+    var zone = document.getElementById(cfg.zoneId);
+    var progress = document.getElementById(cfg.progressId);
+    var resultDiv = document.getElementById(cfg.resultId);
     zone.classList.add('uploading');
     progress.classList.add('active');
     resultDiv.classList.remove('show');
 
-    // Group files by URL for proper upload
-    const groups = {};
-    for (const file of files) {
-        const url = typeof cfg.getUrl === 'function' ? cfg.getUrl(file) : cfg.getUrl;
-        const field = typeof cfg.fieldName === 'function' ? cfg.fieldName(file) : cfg.fieldName;
-        const key = url + '|' + field;
-        if (!groups[key]) groups[key] = { url, field, files: [] };
-        groups[key].files.push(file);
-    }
+    var totalImported = 0, totalErrors = 0, allMessages = [], prompts = [];
 
-    let totalImported = 0;
-    let totalErrors = 0;
-    let allMessages = [];
-
-    for (const key of Object.keys(groups)) {
-        const g = groups[key];
-        const formData = new FormData();
-
-        if (g.field === 'files') {
-            for (const f of g.files) formData.append('files', f);
-        } else {
-            formData.append(g.field, g.files[0]);
-        }
-
-        try {
-            progress.querySelector('.progress-text').textContent =
-                'Uploading ' + g.files.map(f => f.name).join(', ') + '...';
-
-            const resp = await fetch(g.url, { method: 'POST', body: formData });
-            const data = await resp.json();
-
-            if (resp.ok) {
-                const count = data.imported || data.total_payments || data.total_claims || 0;
-                totalImported += count;
-                const errs = data.errors ? data.errors.length : 0;
-                totalErrors += errs;
-
-                let msg = '<strong>' + g.files.map(f=>f.name).join(', ') + '</strong>: ';
-                if (count > 0) msg += count + ' records imported';
-                else msg += 'Processed';
-                if (data.skipped) msg += ', ' + data.skipped + ' skipped';
-                if (data.total_rows) msg += ' (' + data.total_rows + ' total rows)';
-                if (data.total_claims) msg += ', ' + data.total_claims + ' claim lines';
-                if (errs) msg += ' <span class="text-accent-yellow">(' + errs + ' errors)</span>';
-                allMessages.push(msg);
-
-                // Log each file
-                for (const f of g.files) {
-                    addImportLog(f.name, count, errs);
+    if (cfg.processIndividually) {
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var url = typeof cfg.getUrl === 'function' ? cfg.getUrl(file) : cfg.getUrl;
+            progress.querySelector('.progress-text').textContent = 'Processing ' + file.name + '...';
+            var formData = new FormData();
+            formData.append('file', file);
+            try {
+                var resp = await fetch(url, { method: 'POST', body: formData });
+                var data = await resp.json();
+                if (resp.ok) {
+                    var count = data.imported || data.entries_stored || data.entries_found || data.total_payments || data.total_claims || 0;
+                    totalImported += count;
+                    var msg = '<strong>' + escapeHtml(file.name) + '</strong>: ';
+                    if (data.detected_format) msg += '<span class="badge bg-info-subtle text-info-emphasis me-1">' + data.detected_format + '</span>';
+                    msg += count > 0 ? count + ' records imported' : (data.status || 'Processed');
+                    if (data.errors && data.errors.length) { totalErrors += data.errors.length; msg += ' <span class="text-accent-yellow">(' + data.errors.length + ' errors)</span>'; }
+                    allMessages.push(msg);
+                    addImportLog(file.name, count, data.errors ? data.errors.length : 0);
+                    if (data.needs_input && data.prompt) prompts.push({ filename: file.name, prompt: data.prompt });
+                } else {
+                    totalErrors++;
+                    allMessages.push('<strong>' + escapeHtml(file.name) + '</strong>: <span class="text-accent-red">' + escapeHtml(data.error || 'Upload failed') + '</span>');
+                    if (data.needs_input && data.prompt) prompts.push({ filename: file.name, prompt: data.prompt });
                 }
-            } else {
+            } catch (e) {
                 totalErrors++;
-                allMessages.push('<strong>' + g.files[0].name + '</strong>: ' +
-                    '<span class="text-accent-red">' + (data.error || 'Upload failed') + '</span>');
+                allMessages.push('<strong>' + escapeHtml(file.name) + '</strong>: <span class="text-accent-red">Network error</span>');
             }
-        } catch (e) {
-            totalErrors++;
-            allMessages.push('<strong>' + g.files[0].name + '</strong>: ' +
-                '<span class="text-accent-red">Network error: ' + e.message + '</span>');
+        }
+    } else {
+        var groups = {};
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var url = typeof cfg.getUrl === 'function' ? cfg.getUrl(file) : cfg.getUrl;
+            var field = typeof cfg.fieldName === 'function' ? cfg.fieldName(file) : cfg.fieldName;
+            var key = url + '|' + field;
+            if (!groups[key]) groups[key] = { url: url, field: field, files: [] };
+            groups[key].files.push(file);
+        }
+        var keys = Object.keys(groups);
+        for (var k = 0; k < keys.length; k++) {
+            var g = groups[keys[k]];
+            var formData = new FormData();
+            if (g.field === 'files') { for (var j = 0; j < g.files.length; j++) formData.append('files', g.files[j]); }
+            else { formData.append(g.field, g.files[0]); }
+            try {
+                progress.querySelector('.progress-text').textContent = 'Uploading ' + g.files.map(function(f){return f.name}).join(', ') + '...';
+                var resp = await fetch(g.url, { method: 'POST', body: formData });
+                var data = await resp.json();
+                if (resp.ok) {
+                    var count = data.imported || data.entries_stored || data.total_payments || data.total_claims || 0;
+                    totalImported += count;
+                    var errs = data.errors ? data.errors.length : 0;
+                    totalErrors += errs;
+                    var msg = '<strong>' + g.files.map(function(f){return escapeHtml(f.name)}).join(', ') + '</strong>: ';
+                    msg += count > 0 ? count + ' records imported' : 'Processed';
+                    if (data.skipped) msg += ', ' + data.skipped + ' skipped';
+                    if (errs) msg += ' <span class="text-accent-yellow">(' + errs + ' errors)</span>';
+                    allMessages.push(msg);
+                    for (var j = 0; j < g.files.length; j++) addImportLog(g.files[j].name, count, errs);
+                    if (data.needs_input && data.prompt) prompts.push({ filename: g.files[0].name, prompt: data.prompt });
+                } else {
+                    totalErrors++;
+                    allMessages.push('<strong>' + escapeHtml(g.files[0].name) + '</strong>: <span class="text-accent-red">' + escapeHtml(data.error || 'Failed') + '</span>');
+                    if (data.needs_input && data.prompt) prompts.push({ filename: g.files[0].name, prompt: data.prompt });
+                }
+            } catch (e) {
+                totalErrors++;
+                allMessages.push('<strong>' + escapeHtml(g.files[0].name) + '</strong>: <span class="text-accent-red">Network error</span>');
+            }
         }
     }
 
-    // Show result
     zone.classList.remove('uploading');
     progress.classList.remove('active');
-
-    if (totalErrors > 0 && totalImported === 0) {
-        resultDiv.className = 'upload-result show result-error';
-        zone.classList.add('upload-error');
-    } else if (totalErrors > 0) {
-        resultDiv.className = 'upload-result show result-warning';
-        zone.classList.add('upload-success');
-    } else {
-        resultDiv.className = 'upload-result show result-success';
-        zone.classList.add('upload-success');
-    }
-
+    resultDiv.className = 'upload-result show ' + (totalErrors > 0 && totalImported === 0 ? 'result-error' : totalErrors > 0 ? 'result-warning' : 'result-success');
+    zone.classList.add(totalErrors > 0 && totalImported === 0 ? 'upload-error' : 'upload-success');
     resultDiv.innerHTML = allMessages.join('<br>');
 
-    // Clear zone state after 5 seconds
-    setTimeout(function() {
-        zone.classList.remove('upload-success', 'upload-error');
-    }, 5000);
+    if (prompts.length > 0) {
+        var combinedMsg = prompts.map(function(p) { return p.filename + ': ' + p.prompt; }).join('\n\n');
+        showPrompt('Import needs your attention', combinedMsg, [
+            { label: 'Try Smart Upload', icon: 'bi-magic', primary: true, handler: function() { document.getElementById('smart-input').click(); dismissPrompt(); }},
+            { label: 'View Schedule', icon: 'bi-calendar-week', handler: function() { window.location.href = '/schedule'; }},
+        ]);
+    }
 
-    // Refresh KPIs
+    setTimeout(function() { zone.classList.remove('upload-success', 'upload-error'); }, 5000);
     loadImportStatus();
-    showToast(totalImported > 0
-        ? totalImported + ' records imported successfully!'
-        : 'Upload complete',
-        totalErrors > 0 ? 'warning' : 'success');
+    showToast(totalImported > 0 ? totalImported + ' records imported!' : 'Upload complete' + (totalErrors > 0 ? ' with errors' : ''), totalErrors > 0 ? 'warning' : 'success');
 }
 
 function addImportLog(filename, count, errors) {
-    const log = document.getElementById('import-log');
-    const empty = document.getElementById('log-empty');
+    var log = document.getElementById('import-log');
+    var empty = document.getElementById('log-empty');
     if (empty) empty.style.display = 'none';
-
-    const time = new Date().toLocaleTimeString();
-    const icon = errors > 0 ? 'text-accent-yellow' : 'text-accent-green';
-    const biIcon = errors > 0 ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill';
-
+    var time = new Date().toLocaleTimeString();
+    var icon = errors > 0 ? 'text-accent-yellow' : 'text-accent-green';
+    var biIcon = errors > 0 ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill';
     log.insertAdjacentHTML('afterbegin',
         '<div class="d-flex align-items-center gap-2 py-2 border-bottom border-secondary">' +
-            '<i class="bi ' + biIcon + ' ' + icon + '"></i>' +
-            '<div class="flex-grow-1">' +
-                '<strong>' + filename + '</strong>' +
-                '<span class="text-muted ms-2">' + count + ' imported' + (errors ? ', ' + errors + ' errors' : '') + '</span>' +
-            '</div>' +
-            '<span class="text-muted small">' + time + '</span>' +
-        '</div>'
+        '<i class="bi ' + biIcon + ' ' + icon + '"></i>' +
+        '<div class="flex-grow-1"><strong>' + escapeHtml(filename) + '</strong>' +
+        '<span class="text-muted ms-2">' + count + ' imported' + (errors ? ', ' + errors + ' errors' : '') + '</span></div>' +
+        '<span class="text-muted small">' + time + '</span></div>'
     );
 }
 
-// ── Toast helper ─────────────────────────────────────────────
 function showToast(message, type) {
     type = type || 'info';
-    let container = document.querySelector('.toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.className = 'toast-container';
-        document.body.appendChild(container);
-    }
-    const icons = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-circle-fill', info: 'bi-info-circle-fill' };
-    const toast = document.createElement('div');
+    var container = document.querySelector('.toast-container');
+    if (!container) { container = document.createElement('div'); container.className = 'toast-container'; document.body.appendChild(container); }
+    var icons = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-circle-fill', info: 'bi-info-circle-fill' };
+    var toast = document.createElement('div');
     toast.className = 'toast-msg toast-' + (type === 'warning' ? 'info' : type);
     toast.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> ' + message;
     container.appendChild(toast);
-    setTimeout(function() {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(10px)';
-        toast.style.transition = 'all 0.3s ease';
-        setTimeout(function() { toast.remove(); }, 300);
-    }, 4000);
+    setTimeout(function() { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; toast.style.transition = 'all 0.3s ease'; setTimeout(function() { toast.remove(); }, 300); }, 4000);
 }
 </script>
 {% endblock %}

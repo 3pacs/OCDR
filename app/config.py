@@ -28,3 +28,6 @@ class Config:
     # LLM integration
     LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434")
     LLM_MODEL = os.environ.get("LLM_MODEL", "llama3")
+
+    # Anthropic API (for AI-assisted import — only structural metadata sent, never PHI)
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")

@@ -282,6 +282,10 @@ class ScheduleRecord(db.Model):
     status = db.Column(db.Text, default="SCHEDULED", index=True)
     notes = db.Column(db.Text)
     import_source = db.Column(db.Text)
+    source_file = db.Column(db.Text)
+    ocr_source = db.Column(db.Boolean, default=False)
+    matched_billing_id = db.Column(db.Integer, db.ForeignKey("billing_records.id"), nullable=True)
+    match_status = db.Column(db.Text, default="UNMATCHED")
     created_at = db.Column(db.DateTime, default=_utcnow)
 
     __table_args__ = (
@@ -302,6 +306,10 @@ class ScheduleRecord(db.Model):
             "status": self.status,
             "notes": self.notes,
             "import_source": self.import_source,
+            "source_file": self.source_file,
+            "ocr_source": self.ocr_source,
+            "matched_billing_id": self.matched_billing_id,
+            "match_status": self.match_status,
         }
 
 

@@ -21,7 +21,7 @@ from datetime import datetime, date, time as dtime
 
 from flask import request, jsonify
 from app.import_engine import import_bp
-from app.models import db, BillingRecord, ScheduleEntry
+from app.models import db, BillingRecord, ScheduleRecord
 
 import tempfile
 
@@ -306,23 +306,24 @@ def _store_schedule_entries(entries, filename, used_ocr=False):
             continue
 
         # Check for existing schedule entry (dedup)
-        existing = ScheduleEntry.query.filter_by(
+        existing = ScheduleRecord.query.filter_by(
             patient_name=patient_name,
-            schedule_date=sched_date,
+            scheduled_date=sched_date,
         ).first()
 
         if existing:
             skipped += 1
             continue
 
-        sched = ScheduleEntry(
+        sched = ScheduleRecord(
             patient_name=patient_name,
-            schedule_date=sched_date,
-            appointment_time=entry.get('appointment_time'),
-            modality=entry.get('modality'),
-            scan_type=entry.get('scan_type'),
+            scheduled_date=sched_date,
+            scheduled_time=entry.get('appointment_time'),
+            modality=entry.get('modality') or 'HMRI',
+            scan_type=entry.get('scan_type') or entry.get('modality') or 'UNKNOWN',
             source_file=filename,
             ocr_source=used_ocr,
+            import_source='SCHEDULE_PARSER',
         )
         db.session.add(sched)
         stored += 1
@@ -356,7 +357,7 @@ def import_schedule_pdf(filepath):
     """Import a schedule PDF file.
 
     Extracts text with pdfplumber (OCR fallback for scanned pages),
-    parses schedule entries, stores in ScheduleEntry table, and matches
+    parses schedule entries, stores in ScheduleRecord table, and matches
     to billing records.
     """
     filename = os.path.basename(filepath)
@@ -594,19 +595,19 @@ def list_schedule_entries():
     match_status = request.args.get('match_status')
     status = request.args.get('status')
 
-    query = ScheduleEntry.query
+    query = ScheduleRecord.query
     if date_from:
-        query = query.filter(ScheduleEntry.schedule_date >= date_from)
+        query = query.filter(ScheduleRecord.scheduled_date >= date_from)
     if date_to:
-        query = query.filter(ScheduleEntry.schedule_date <= date_to)
+        query = query.filter(ScheduleRecord.scheduled_date <= date_to)
     if modality:
-        query = query.filter(ScheduleEntry.modality == modality.upper())
+        query = query.filter(ScheduleRecord.modality == modality.upper())
     if match_status:
-        query = query.filter(ScheduleEntry.match_status == match_status.upper())
+        query = query.filter(ScheduleRecord.match_status == match_status.upper())
     if status:
-        query = query.filter(ScheduleEntry.status == status.upper())
+        query = query.filter(ScheduleRecord.status == status.upper())
 
-    query = query.order_by(ScheduleEntry.schedule_date.desc())
+    query = query.order_by(ScheduleRecord.scheduled_date.desc())
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
     return jsonify({
@@ -620,7 +621,7 @@ def list_schedule_entries():
 @import_bp.route('/schedule/entries/<int:entry_id>', methods=['GET'])
 def get_schedule_entry(entry_id):
     """GET /api/import/schedule/entries/<id> - Get a single schedule entry."""
-    entry = ScheduleEntry.query.get(entry_id)
+    entry = ScheduleRecord.query.get(entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
     return jsonify(entry.to_dict())
@@ -634,7 +635,7 @@ def update_schedule_entry(entry_id):
     patient_name, schedule_date, appointment_time, modality, scan_type,
     status, notes, referring_doctor, insurance_carrier
     """
-    entry = ScheduleEntry.query.get(entry_id)
+    entry = ScheduleRecord.query.get(entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
 
@@ -647,11 +648,11 @@ def update_schedule_entry(entry_id):
         entry.patient_name = data['patient_name'].strip().upper()
     if 'schedule_date' in data:
         if data['schedule_date']:
-            entry.schedule_date = datetime.strptime(data['schedule_date'], '%Y-%m-%d').date()
+            entry.scheduled_date = datetime.strptime(data['schedule_date'], '%Y-%m-%d').date()
         else:
-            entry.schedule_date = None
+            entry.scheduled_date = None
     if 'appointment_time' in data:
-        entry.appointment_time = data['appointment_time']
+        entry.scheduled_time = data['appointment_time']
     if 'modality' in data:
         entry.modality = data['modality'].upper() if data['modality'] else None
     if 'scan_type' in data:
@@ -681,7 +682,7 @@ def update_schedule_entry(entry_id):
 @import_bp.route('/schedule/entries/<int:entry_id>', methods=['DELETE'])
 def delete_schedule_entry(entry_id):
     """DELETE /api/import/schedule/entries/<id> - Delete a schedule entry."""
-    entry = ScheduleEntry.query.get(entry_id)
+    entry = ScheduleRecord.query.get(entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
 
@@ -702,24 +703,25 @@ def create_schedule_entry():
     if not data or 'patient_name' not in data:
         return jsonify({'error': 'patient_name is required'}), 400
 
-    sched_date = None
+    sched_date = date.today()
     if data.get('schedule_date'):
         try:
             sched_date = datetime.strptime(data['schedule_date'], '%Y-%m-%d').date()
         except ValueError:
             return jsonify({'error': 'Invalid date format, use YYYY-MM-DD'}), 400
 
-    entry = ScheduleEntry(
+    entry = ScheduleRecord(
         patient_name=data['patient_name'].strip().upper(),
-        schedule_date=sched_date,
-        appointment_time=data.get('appointment_time'),
-        modality=data.get('modality', '').upper() if data.get('modality') else None,
-        scan_type=data.get('scan_type', '').upper() if data.get('scan_type') else None,
+        scheduled_date=sched_date,
+        scheduled_time=data.get('appointment_time'),
+        modality=data.get('modality', '').upper() if data.get('modality') else 'HMRI',
+        scan_type=data.get('scan_type', '').upper() if data.get('scan_type') else 'UNKNOWN',
         status=data.get('status', 'SCHEDULED').upper(),
         notes=data.get('notes'),
         referring_doctor=data.get('referring_doctor'),
         insurance_carrier=data.get('insurance_carrier'),
         source_file='MANUAL',
+        import_source='MANUAL',
     )
     db.session.add(entry)
 
@@ -736,8 +738,8 @@ def _rematch_single(entry):
     billing_match = BillingRecord.query.filter_by(
         patient_name=entry.patient_name,
     )
-    if entry.schedule_date:
-        billing_match = billing_match.filter_by(service_date=entry.schedule_date)
+    if entry.scheduled_date:
+        billing_match = billing_match.filter_by(service_date=entry.scheduled_date)
     billing_record = billing_match.first()
 
     if billing_record:
@@ -781,11 +783,11 @@ def schedule_calendar_data():
         title = 'PET/CT Schedule'
 
     # Get scheduled appointments (exclude cancelled)
-    scheduled = ScheduleEntry.query.filter(
-        ScheduleEntry.schedule_date >= first_day,
-        ScheduleEntry.schedule_date <= last_day,
-        ScheduleEntry.modality.in_(modalities),
-        ScheduleEntry.status != 'CANCELLED',
+    scheduled = ScheduleRecord.query.filter(
+        ScheduleRecord.scheduled_date >= first_day,
+        ScheduleRecord.scheduled_date <= last_day,
+        ScheduleRecord.modality.in_(modalities),
+        ScheduleRecord.status != 'CANCELLED',
     ).all()
 
     # Get billing records (actual scans performed)
@@ -804,8 +806,8 @@ def schedule_calendar_data():
             'id': f'sched-{s.id}',
             'entry_id': s.id,
             'title': s.patient_name,
-            'date': s.schedule_date.isoformat() if s.schedule_date else None,
-            'time': s.appointment_time,
+            'date': s.scheduled_date.isoformat() if s.scheduled_date else None,
+            'time': s.scheduled_time,
             'type': 'scheduled',
             'modality': s.modality,
             'scan_type': s.scan_type,
@@ -867,15 +869,15 @@ def rematch_schedules():
 
     Useful after importing new billing records from Excel.
     """
-    unmatched = ScheduleEntry.query.filter_by(match_status='UNMATCHED').all()
+    unmatched = ScheduleRecord.query.filter_by(match_status='UNMATCHED').all()
     matched_count = 0
 
     for entry in unmatched:
         billing_match = BillingRecord.query.filter_by(
             patient_name=entry.patient_name,
         )
-        if entry.schedule_date:
-            billing_match = billing_match.filter_by(service_date=entry.schedule_date)
+        if entry.scheduled_date:
+            billing_match = billing_match.filter_by(service_date=entry.scheduled_date)
         billing_record = billing_match.first()
 
         if billing_record:

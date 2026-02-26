@@ -39,9 +39,11 @@ def create_app(config_class=Config, **config_overrides):
     # Register blueprints
     from app.ui.dashboard import ui_bp
     from app.ui.api import api_bp
+    from app.import_engine import import_bp
 
     app.register_blueprint(ui_bp)
     app.register_blueprint(api_bp, url_prefix="/api")
+    app.register_blueprint(import_bp, url_prefix="/api/import")
 
     # ── Error handlers ──────────────────────────────────────────
     @app.errorhandler(404)

@@ -1061,6 +1061,91 @@ def import_pdf_endpoint():
     return jsonify(result)
 
 
+@api_bp.route("/import/schedule/upload", methods=["POST"])
+def import_schedule_upload():
+    """Upload and import schedule data from any file type (CSV, Excel, PDF)."""
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+
+    if "file" not in request.files:
+        return jsonify({
+            "error": "No file provided. Use field name 'file'.",
+            "needs_input": True,
+            "prompt": "Please select a schedule file to upload (.xlsx, .csv, or .pdf).",
+        }), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    ext = os.path.splitext(filename)[1].lower()
+
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "schedule")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+
+    try:
+        if ext in (".csv",):
+            from app.import_engine.schedule_importer import import_csv
+            count, errors = import_csv(filepath)
+            result = {"imported": count, "errors": errors, "type": "schedule_csv"}
+            if count == 0 and errors:
+                result["needs_input"] = True
+                result["prompt"] = (
+                    "Could not import this CSV as a schedule. "
+                    "Make sure it has columns for patient_name and scheduled_date. "
+                    "Found errors: " + "; ".join(errors[:3])
+                )
+        elif ext in (".xlsx", ".xls"):
+            from app.import_engine.schedule_importer import import_excel
+            count, errors = import_excel(filepath)
+            result = {"imported": count, "errors": errors, "type": "schedule_excel"}
+            if count == 0 and errors:
+                result["needs_input"] = True
+                result["prompt"] = (
+                    "Could not import this Excel file as a schedule. "
+                    "Make sure it has columns for patient_name and scheduled_date. "
+                    "Found errors: " + "; ".join(errors[:3])
+                )
+        elif ext == ".pdf":
+            try:
+                from app.import_engine.schedule_parser import import_schedule_pdf
+                result = import_schedule_pdf(filepath)
+                result["type"] = "schedule_pdf"
+                if result.get("entries_found", 0) == 0:
+                    result["needs_input"] = True
+                    result["prompt"] = (
+                        "No schedule entries found in this PDF. "
+                        "The file may be scanned (needs OCR) or in an unexpected format. "
+                        "Try using the Smart Upload which can auto-detect formats."
+                    )
+            except ImportError:
+                result = {
+                    "imported": 0,
+                    "needs_input": True,
+                    "prompt": "PDF schedule parsing requires pdfplumber. Install it with: pip install pdfplumber",
+                    "type": "schedule_pdf",
+                }
+        else:
+            result = {
+                "imported": 0,
+                "needs_input": True,
+                "prompt": f"Unsupported file type '{ext}' for schedule import. Use .xlsx, .csv, or .pdf files.",
+            }
+    except Exception as e:
+        result = {
+            "imported": 0,
+            "error": str(e),
+            "needs_input": True,
+            "prompt": f"Import failed: {str(e)}. Check that the file has the right format.",
+        }
+
+    result["filename"] = f.filename
+    return jsonify(result)
+
+
 @api_bp.route("/import/status")
 def import_status():
     """Get import statistics and history."""
