@@ -35,9 +35,9 @@ OCMRI.xlsx
 # Backup files
 backup/
 
-# Import/Export directories
-import/
-export/
+# Import/Export data directories (not app/export/ or app/import_engine/)
+/import/
+/export/
 
 # IDE
 .vscode/

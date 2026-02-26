@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Appeal Priority Queue{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Appeal Priority Queue</h4>
+    <div>
+        <span class="badge bg-secondary" id="total-count">–</span> denied claims
+        <button class="btn btn-outline-danger btn-sm ms-2" id="btn-bulk-writeoff" disabled>
+            Write Off Selected
+        </button>
+    </div>
+</div>
+
+<!-- Filter bar -->
+<div class="filter-bar">
+    <form id="filter-form" class="row g-2 align-items-end">
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Status</label>
+            <select class="form-select form-select-sm" id="filter-status">
+                <option value="">All Statuses</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Carrier</label>
+            <select class="form-select form-select-sm" id="filter-carrier">
+                <option value="">All Carriers</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Modality</label>
+            <select class="form-select form-select-sm" id="filter-modality">
+                <option value="">All Modalities</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">From</label>
+            <input type="date" class="form-control form-control-sm" id="filter-date-from">
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">To</label>
+            <input type="date" class="form-control form-control-sm" id="filter-date-to">
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Search</label>
+            <input type="text" class="form-control form-control-sm" id="filter-search" placeholder="Patient or doctor…">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-clear-filters">Clear</button>
+        </div>
+    </form>
+</div>
+
+<!-- Queue table -->
+<div class="position-relative">
+    <div class="loading-overlay d-none" id="loading">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading…</span>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover table-dense sortable-table mb-0" id="queue-table">
+            <thead class="table-light">
+                <tr>
+                    <th><input type="checkbox" id="select-all" title="Select all"></th>
+                    <th data-sort="recoverability_score" class="sort-desc">Score</th>
+                    <th data-sort="patient_name">Patient</th>
+                    <th data-sort="insurance_carrier">Carrier</th>
+                    <th data-sort="modality">Modality</th>
+                    <th data-sort="scan_type">Scan</th>
+                    <th data-sort="service_date">Service Date</th>
+                    <th data-sort="billed_amount">Billed</th>
+                    <th data-sort="total_payment">Paid</th>
+                    <th data-sort="days_old">Age (days)</th>
+                    <th data-sort="denial_status">Status</th>
+                    <th data-sort="denial_reason_code">Reason</th>
+                    <th data-sort="appeal_deadline">Deadline</th>
+                    <th data-sort="referring_doctor">Ref. Doctor</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="queue-body">
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Pagination -->
+<nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center" id="pagination"></ul>
+</nav>
+
+<!-- Undo toast -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="undo-toast" class="toast" role="alert">
+        <div class="toast-body d-flex align-items-center gap-2">
+            <span id="undo-toast-msg">Claim written off.</span>
+            <button type="button" class="btn btn-sm btn-warning" id="btn-undo">Undo</button>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/sortable-table.js"></script>
+<script>
+(function () {
+    'use strict';
+
+    const esc = SortableTable.esc;
+    const fmt$ = SortableTable.fmt$;
+
+    const table = new SortableTable({
+        apiUrl:       '/api/denials',
+        filtersUrl:   '/api/denials/filters',
+        tableId:      'queue-table',
+        bodyId:       'queue-body',
+        paginationId: 'pagination',
+        totalId:      'total-count',
+        loadingId:    'loading',
+        filterFormId: 'filter-form',
+        clearBtnId:   'btn-clear-filters',
+        defaultSort:  'recoverability_score',
+        defaultOrder: 'desc',
+        perPage:      50,
+        columns: [
+            { key: 'id', render: (v) => `<input type="checkbox" class="row-select" value="${v}">` },
+            { key: 'recoverability_score', render: (v) => {
+                const cls = v >= 500 ? 'score-high' : v >= 200 ? 'score-medium' : 'score-low';
+                return `<span class="badge ${cls}">${fmt$(v)}</span>`;
+            }},
+            { key: 'patient_name', render: (v, r) => `<a href="/denials/${r.id}">${esc(v)}</a>` },
+            { key: 'insurance_carrier' },
+            { key: 'modality' },
+            { key: 'scan_type' },
+            { key: 'service_date' },
+            { key: 'billed_amount', className: 'text-end', render: (v) => fmt$(v) },
+            { key: 'total_payment', className: 'text-end', render: (v) => fmt$(v) },
+            { key: 'days_old', className: 'text-end' },
+            { key: 'denial_status', render: (v) => {
+                const st = v || 'UNPAID';
+                const cls = v ? 'status-' + v.toLowerCase() : 'bg-warning text-dark';
+                return `<span class="badge ${cls}">${st}</span>`;
+            }},
+            { key: 'denial_reason_code', render: (v) => esc(v || '–') },
+            { key: 'appeal_deadline', render: (v) => {
+                if (!v) return '–';
+                const dl = new Date(v);
+                const days = Math.ceil((dl - new Date()) / 86400000);
+                const cls = days < 0 ? 'deadline-past' : days <= 30 ? 'deadline-warning' : 'deadline-safe';
+                return `<span class="${cls}">${v}</span>`;
+            }},
+            { key: 'referring_doctor', render: (v) => esc(v || '–') },
+            { key: 'id', render: (v, r) => {
+                let btns = '';
+                if (r.denial_status === 'DENIED')
+                    btns += `<button class="btn btn-outline-primary btn-sm py-0 px-1" onclick="appealClaim(${v})">Appeal</button> `;
+                if (r.denial_status !== 'WRITTEN_OFF' && r.denial_status !== 'RESOLVED')
+                    btns += `<button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="writeOffClaim(${v})">Write Off</button>`;
+                return btns;
+            }},
+        ],
+        filterFields: [
+            { id: 'filter-status',    param: 'status' },
+            { id: 'filter-carrier',   param: 'carrier' },
+            { id: 'filter-modality',  param: 'modality' },
+            { id: 'filter-date-from', param: 'date_from' },
+            { id: 'filter-date-to',   param: 'date_to' },
+            { id: 'filter-search',    param: 'search' },
+        ],
+    });
+
+    // ── Select-all checkbox ──────────────────────────────────────
+    document.getElementById('select-all').addEventListener('change', function () {
+        document.querySelectorAll('.row-select').forEach(cb => cb.checked = this.checked);
+        updateBulkBtn();
+    });
+
+    document.getElementById('queue-body').addEventListener('change', function (e) {
+        if (e.target.classList.contains('row-select')) updateBulkBtn();
+    });
+
+    function updateBulkBtn() {
+        const checked = document.querySelectorAll('.row-select:checked').length;
+        document.getElementById('btn-bulk-writeoff').disabled = checked === 0;
+    }
+
+    // ── Write-off single ─────────────────────────────────────────
+    window.writeOffClaim = async function(id) {
+        try {
+            const resp = await fetch(`/api/denials/${id}/writeoff`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (resp.ok) {
+                showUndoToast(`Claim #${id} written off.`, [id]);
+                table.fetch();
+            } else alert('Failed to write off claim');
+        } catch (err) { alert('Error: ' + err.message); }
+    };
+
+    // ── Write-off bulk ───────────────────────────────────────────
+    document.getElementById('btn-bulk-writeoff').addEventListener('click', async () => {
+        const ids = [...document.querySelectorAll('.row-select:checked')].map(cb => parseInt(cb.value));
+        if (!ids.length) return;
+        if (!confirm(`Write off ${ids.length} claim(s)?`)) return;
+
+        try {
+            const resp = await fetch('/api/denials/bulk-writeoff', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids }),
+            });
+            if (resp.ok) {
+                showUndoToast(`${ids.length} claim(s) written off.`, ids);
+                table.fetch();
+            }
+        } catch (err) { alert('Error: ' + err.message); }
+    });
+
+    // ── Appeal ───────────────────────────────────────────────────
+    window.appealClaim = async function(id) {
+        if (!confirm('Mark this claim as APPEALED?')) return;
+        try {
+            const resp = await fetch(`/api/denials/${id}/appeal`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ appeal_date: new Date().toISOString().split('T')[0] }),
+            });
+            if (resp.ok) table.fetch();
+            else alert('Failed to appeal claim');
+        } catch (err) { alert('Error: ' + err.message); }
+    };
+
+    // ── Undo toast ───────────────────────────────────────────────
+    const undoToast = new bootstrap.Toast(document.getElementById('undo-toast'), { delay: 10000 });
+    let pendingUndoIds = null;
+
+    function showUndoToast(msg, ids) {
+        pendingUndoIds = ids;
+        document.getElementById('undo-toast-msg').textContent = msg;
+        undoToast.show();
+    }
+
+    document.getElementById('btn-undo').addEventListener('click', async () => {
+        if (!pendingUndoIds) return;
+        try {
+            if (pendingUndoIds.length === 1) {
+                await fetch(`/api/denials/${pendingUndoIds[0]}/undo-writeoff`, { method: 'POST' });
+            } else {
+                await fetch('/api/denials/bulk-undo-writeoff', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: pendingUndoIds }),
+                });
+            }
+            undoToast.hide();
+            table.fetch();
+        } catch (err) { alert('Undo failed: ' + err.message); }
+    });
+})();
+</script>
+{% endblock %}

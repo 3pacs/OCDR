@@ -137,10 +137,29 @@ def import_excel_file(filepath):
             patient_id = parse_int(row[12]) if len(row) > 12 else None
 
             # Birth date (col N = index 13)
-            # Skip for now - not stored directly in billing_records
+            birth_date = None
+            if len(row) > 13 and row[13]:
+                if isinstance(row[13], (datetime, date)):
+                    birth_date = row[13] if isinstance(row[13], date) else row[13].date()
+                else:
+                    birth_date = excel_serial_to_date(row[13])
+
+            # Schedule date (col P = index 15)
+            schedule_date = None
+            if len(row) > 15 and row[15]:
+                if isinstance(row[15], (datetime, date)):
+                    schedule_date = row[15] if isinstance(row[15], date) else row[15].date()
+                else:
+                    schedule_date = excel_serial_to_date(row[15])
+
+            # Modality code (col Q = index 16)
+            modality_code = str(row[16]).strip().upper() if len(row) > 16 and row[16] else None
 
             # Description (col R = index 17)
             description = str(row[17]).strip() if len(row) > 17 and row[17] else None
+
+            # Is new patient (col U = index 20)
+            is_new_patient = parse_bool(row[20]) if len(row) > 20 else False
 
             # BR-02: PSMA detection
             is_psma = detect_psma(description)
@@ -174,7 +193,11 @@ def import_excel_file(filepath):
                 extra_charges=extra_charges,
                 reading_physician=reading_physician,
                 patient_id=patient_id,
+                birth_date=birth_date,
+                schedule_date=schedule_date,
+                modality_code=modality_code,
                 description=description,
+                is_new_patient=is_new_patient,
                 is_psma=is_psma,
                 appeal_deadline=appeal_deadline,
                 import_source='EXCEL_IMPORT',

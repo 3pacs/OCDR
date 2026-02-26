@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Duplicate Claims{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Duplicate Claim Detector</h4>
+    <div>
+        <span class="badge bg-secondary" id="total-count">–</span> groups
+        <label class="form-check form-check-inline ms-2 mb-0">
+            <input type="checkbox" class="form-check-input" id="include-legitimate">
+            <span class="form-check-label small">Include legitimate</span>
+        </label>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <form id="filter-form" class="row g-2 align-items-end">
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Carrier</label>
+            <select class="form-select form-select-sm" id="filter-carrier"><option value="">All</option></select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Modality</label>
+            <select class="form-select form-select-sm" id="filter-modality"><option value="">All</option></select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label form-label-sm mb-0">Search</label>
+            <input type="text" class="form-control form-control-sm" id="filter-search" placeholder="Patient or doctor…">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-clear-filters">Clear</button>
+        </div>
+    </form>
+</div>
+
+<div class="position-relative">
+    <div class="loading-overlay d-none" id="loading">
+        <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover table-dense sortable-table mb-0" id="queue-table">
+            <thead class="table-light">
+                <tr>
+                    <th data-sort="patient_name">Patient</th>
+                    <th data-sort="service_date">Service Date</th>
+                    <th data-sort="scan_type">Scan</th>
+                    <th data-sort="modality">Modality</th>
+                    <th data-sort="insurance_carrier">Carrier</th>
+                    <th data-sort="dup_count" class="sort-desc">Count</th>
+                    <th data-sort="total_payment">Total Paid</th>
+                    <th data-sort="billed_amount">Total Billed</th>
+                    <th data-sort="referring_doctor">Ref. Doctor</th>
+                    <th>IDs</th>
+                </tr>
+            </thead>
+            <tbody id="queue-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<nav class="mt-3">
+    <ul class="pagination pagination-sm justify-content-center" id="pagination"></ul>
+</nav>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/sortable-table.js"></script>
+<script>
+(function () {
+    const esc = SortableTable.esc;
+    const fmt$ = SortableTable.fmt$;
+
+    const table = new SortableTable({
+        apiUrl:       '/api/duplicates',
+        filtersUrl:   '/api/duplicates/filters',
+        tableId:      'queue-table',
+        bodyId:       'queue-body',
+        paginationId: 'pagination',
+        totalId:      'total-count',
+        loadingId:    'loading',
+        filterFormId: 'filter-form',
+        clearBtnId:   'btn-clear-filters',
+        defaultSort:  'dup_count',
+        defaultOrder: 'desc',
+        columns: [
+            { key: 'patient_name' },
+            { key: 'service_date' },
+            { key: 'scan_type' },
+            { key: 'modality' },
+            { key: 'insurance_carrier' },
+            { key: 'dup_count', className: 'text-center', render: v => `<span class="badge bg-danger">${v}</span>` },
+            { key: 'total_payment', className: 'text-end', render: v => fmt$(v) },
+            { key: 'billed_amount', className: 'text-end', render: v => fmt$(v) },
+            { key: 'referring_doctor', render: v => esc(v || '–') },
+            { key: 'record_ids', render: v => `<code class="small">${esc(v)}</code>` },
+        ],
+        filterFields: [
+            { id: 'filter-carrier',  param: 'carrier' },
+            { id: 'filter-modality', param: 'modality' },
+            { id: 'filter-search',   param: 'search' },
+        ],
+    });
+
+    // Toggle legitimate duplicates
+    document.getElementById('include-legitimate').addEventListener('change', function () {
+        // Hack: append include_legitimate to the API URL
+        table.apiUrl = '/api/duplicates' + (this.checked ? '?include_legitimate=true' : '');
+        table.fetch();
+    });
+})();
+</script>
+{% endblock %}

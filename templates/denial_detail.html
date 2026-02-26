@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Claim #{{ claim.id }} – Detail{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/denials">Appeal Queue</a></li>
+        <li class="breadcrumb-item active">Claim #{{ claim.id }}</li>
+    </ol>
+</nav>
+
+<div class="row g-3">
+    <!-- Patient / Claim Info -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header fw-semibold">Claim Information</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr><th style="width:40%">Patient</th><td>{{ claim.patient_name }}</td></tr>
+                    <tr><th>Referring Doctor</th><td>{{ claim.referring_doctor }}</td></tr>
+                    <tr><th>Reading Physician</th><td>{{ claim.reading_physician or '–' }}</td></tr>
+                    <tr><th>Carrier</th><td>{{ claim.insurance_carrier }}</td></tr>
+                    <tr><th>Modality</th><td>{{ claim.modality }}</td></tr>
+                    <tr><th>Scan Type</th><td>{{ claim.scan_type }}</td></tr>
+                    <tr><th>Description</th><td>{{ claim.description or '–' }}</td></tr>
+                    <tr><th>Service Date</th><td>{{ claim.service_date }}</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Financial / Status -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header fw-semibold">Financial &amp; Status</div>
+            <div class="card-body">
+                <table class="table table-sm mb-0">
+                    <tr><th style="width:40%">Billed Amount</th><td>${{ "%.2f"|format(claim.billed_amount or 0) }}</td></tr>
+                    <tr><th>Total Payment</th><td>${{ "%.2f"|format(claim.total_payment or 0) }}</td></tr>
+                    <tr><th>Primary Payment</th><td>${{ "%.2f"|format(claim.primary_payment or 0) }}</td></tr>
+                    <tr><th>Secondary Payment</th><td>${{ "%.2f"|format(claim.secondary_payment or 0) }}</td></tr>
+                    <tr><th>Days Old</th><td>{{ claim.days_old }}</td></tr>
+                    <tr>
+                        <th>Recoverability Score</th>
+                        <td>
+                            {% set score = claim.recoverability_score or 0 %}
+                            <span class="badge {{ 'score-high' if score >= 500 else ('score-medium' if score >= 200 else 'score-low') }}">
+                                ${{ "%.2f"|format(score) }}
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Status</th>
+                        <td>
+                            {% set st = claim.denial_status or 'UNPAID' %}
+                            <span class="badge {{ 'status-' ~ st.lower() if claim.denial_status else 'bg-warning text-dark' }}">{{ st }}</span>
+                        </td>
+                    </tr>
+                    <tr><th>Denial Reason</th><td>{{ claim.denial_reason_code or '–' }}</td></tr>
+                    <tr><th>Appeal Deadline</th><td>{{ claim.appeal_deadline or '–' }}</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Actions -->
+{% if claim.denial_status == 'DENIED' %}
+<div class="mt-3 d-flex gap-2">
+    <form id="appeal-form">
+        <div class="input-group input-group-sm">
+            <input type="text" class="form-control" id="appeal-notes" placeholder="Appeal notes (optional)">
+            <button class="btn btn-primary" type="submit">Mark as Appealed</button>
+        </div>
+    </form>
+    <form id="writeoff-form">
+        <button class="btn btn-outline-secondary btn-sm" type="submit">Write Off</button>
+    </form>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.getElementById('appeal-form')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        const notes = document.getElementById('appeal-notes').value;
+        const resp = await fetch('/api/denials/{{ claim.id }}/appeal', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notes, appeal_date: new Date().toISOString().split('T')[0]}),
+        });
+        if (resp.ok) location.reload();
+        else alert('Failed to appeal');
+    });
+
+    document.getElementById('writeoff-form')?.addEventListener('submit', async e => {
+        e.preventDefault();
+        if (!confirm('Write off this claim?')) return;
+        const resp = await fetch('/api/denials/{{ claim.id }}/resolve', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({resolution: 'WRITTEN_OFF', amount: 0}),
+        });
+        if (resp.ok) location.reload();
+        else alert('Failed to write off');
+    });
+</script>
+{% endblock %}

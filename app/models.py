@@ -21,14 +21,20 @@ class BillingRecord(db.Model):
     extra_charges = db.Column(db.Float, default=0.0)
     reading_physician = db.Column(db.Text)
     patient_id = db.Column(db.Integer, index=True)
+    birth_date = db.Column(db.Date)
+    schedule_date = db.Column(db.Date)
+    modality_code = db.Column(db.Text)
     description = db.Column(db.Text)
+    is_new_patient = db.Column(db.Boolean, default=False)
     is_psma = db.Column(db.Boolean, default=False, index=True)
+    cap_exception = db.Column(db.Boolean, default=False)
     denial_status = db.Column(db.Text, index=True)
     denial_reason_code = db.Column(db.Text, index=True)
-    era_claim_id = db.Column(db.Text, index=True)
+    era_claim_id = db.Column(db.Integer, db.ForeignKey('era_claim_lines.id'), index=True)
     appeal_deadline = db.Column(db.Date, index=True)
     import_source = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
         return {
@@ -119,6 +125,23 @@ class EraClaimLine(db.Model):
             'cas_adjustment_amount': self.cas_adjustment_amount,
             'match_confidence': self.match_confidence,
             'matched_billing_id': self.matched_billing_id,
+        }
+
+
+class DenialReasonCode(db.Model):
+    __tablename__ = 'denial_reason_codes'
+
+    group_code = db.Column(db.Text, primary_key=True)
+    reason_code = db.Column(db.Text, primary_key=True)
+    description = db.Column(db.Text, nullable=False)
+    category = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'group_code': self.group_code,
+            'reason_code': self.reason_code,
+            'description': self.description,
+            'category': self.category,
         }
 
 
