@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Import Data{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Import Data</h1>
+
+<div class="row g-4">
+    <!-- Drag & Drop Upload -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Upload Files</h5></div>
+            <div class="card-body">
+                <div id="drop-zone" class="border border-2 border-dashed rounded p-5 text-center"
+                     style="cursor:pointer; background:#f8f9fa; transition: background 0.2s;">
+                    <h4>Drag &amp; Drop Files Here</h4>
+                    <p class="text-muted mb-3">or click to browse</p>
+                    <p class="small text-muted">
+                        Supported: <strong>.xlsx</strong> (Excel), <strong>.835 / .edi</strong> (ERA),
+                        <strong>.csv</strong>, <strong>.pdf</strong>
+                    </p>
+                    <input type="file" id="file-input" multiple accept=".xlsx,.xls,.835,.edi,.csv,.pdf,.txt" class="d-none">
+                </div>
+
+                <!-- Upload Queue -->
+                <div id="upload-queue" class="mt-3"></div>
+
+                <!-- Upload Results -->
+                <div id="upload-results" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions & Status -->
+    <div class="col-md-4">
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Import Status</h5></div>
+            <div class="card-body">
+                <div id="import-status">
+                    <p class="text-muted">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Folder Import</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">Point to a folder containing 835/EDI files:</p>
+                <div class="input-group mb-2">
+                    <input type="text" id="folder-path" class="form-control form-control-sm"
+                           placeholder="C:\OCDR\import\835">
+                    <button class="btn btn-sm btn-primary" onclick="importFolder()">Import</button>
+                </div>
+                <div id="folder-result"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Vendor Downloads</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">Download ERA files from vendor portals:</p>
+                <a href="/api/vendor/connectors" class="btn btn-sm btn-outline-secondary w-100 mb-2">
+                    View Available Connectors
+                </a>
+                <p class="small text-muted mt-2">
+                    Set up credentials via API, then trigger downloads.
+                    See <code>/api/vendor/</code> endpoints.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Analysis Section (appears after import) -->
+<div id="analysis-section" class="mt-4 d-none">
+    <div class="card">
+        <div class="card-header"><h5 class="mb-0">Post-Import Analysis</h5></div>
+        <div class="card-body" id="analysis-results"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const uploadQueue = document.getElementById('upload-queue');
+const uploadResults = document.getElementById('upload-results');
+
+// Load import status on page load
+fetch('/api/import/status')
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('import-status').innerHTML = `
+            <p><strong>Total Records:</strong> ${(data.total_records || 0).toLocaleString()}</p>
+            <p><strong>Last Import:</strong> ${data.last_import || 'Never'}</p>
+            <p><strong>Source:</strong> ${data.source || 'N/A'}</p>
+        `;
+    })
+    .catch(() => {
+        document.getElementById('import-status').innerHTML = '<p class="text-danger">Could not load status</p>';
+    });
+
+// Drag & drop handlers
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.style.background = '#e3f2fd';
+});
+dropZone.addEventListener('dragleave', () => {
+    dropZone.style.background = '#f8f9fa';
+});
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.background = '#f8f9fa';
+    handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+function handleFiles(files) {
+    for (const file of files) {
+        uploadFile(file);
+    }
+}
+
+function uploadFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    let endpoint;
+    if (['xlsx', 'xls'].includes(ext)) {
+        endpoint = '/api/import/excel';
+    } else if (['835', 'edi'].includes(ext)) {
+        endpoint = '/api/import/835';
+    } else {
+        showResult(file.name, 'error', `Unsupported file type: .${ext}`);
+        return;
+    }
+
+    // Show progress
+    const id = 'upload-' + Math.random().toString(36).substr(2, 9);
+    uploadQueue.innerHTML += `
+        <div id="${id}" class="alert alert-info py-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            Uploading <strong>${file.name}</strong>...
+        </div>
+    `;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch(endpoint, { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+
+            if (data.error) {
+                showResult(file.name, 'error', data.error);
+            } else if (data.imported !== undefined) {
+                showResult(file.name, 'success',
+                    `Imported: ${data.imported}, Skipped: ${data.skipped || 0}, ` +
+                    `Errors: ${(data.errors || []).length}, Duration: ${data.duration_ms || 0}ms`);
+            } else if (data.files_parsed !== undefined) {
+                showResult(file.name, 'success',
+                    `Files parsed: ${data.files_parsed}, Claims: ${data.claims_found}, ` +
+                    `Total payments: $${(data.payments_total || 0).toLocaleString()}`);
+            }
+
+            // Refresh status and trigger analysis
+            refreshStatus();
+            runAnalysis();
+        })
+        .catch(err => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            showResult(file.name, 'error', err.message);
+        });
+}
+
+function showResult(filename, type, message) {
+    const cls = type === 'error' ? 'alert-danger' : 'alert-success';
+    uploadResults.innerHTML += `
+        <div class="alert ${cls} py-2 alert-dismissible fade show">
+            <strong>${filename}:</strong> ${message}
+            <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+}
+
+function importFolder() {
+    const path = document.getElementById('folder-path').value.trim();
+    if (!path) return;
+    const resultDiv = document.getElementById('folder-result');
+    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importing...';
+
+    fetch('/api/import/835', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            resultDiv.innerHTML = `<p class="text-danger small">${data.error}</p>`;
+        } else {
+            resultDiv.innerHTML = `<p class="text-success small">
+                Parsed ${data.files_parsed} files, ${data.claims_found} claims,
+                $${(data.payments_total || 0).toLocaleString()} total
+            </p>`;
+            refreshStatus();
+            runAnalysis();
+        }
+    })
+    .catch(err => {
+        resultDiv.innerHTML = `<p class="text-danger small">${err.message}</p>`;
+    });
+}
+
+function refreshStatus() {
+    fetch('/api/import/status')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('import-status').innerHTML = `
+                <p><strong>Total Records:</strong> ${(data.total_records || 0).toLocaleString()}</p>
+                <p><strong>Last Import:</strong> ${data.last_import || 'Never'}</p>
+                <p><strong>Source:</strong> ${data.source || 'N/A'}</p>
+            `;
+        });
+}
+
+function runAnalysis() {
+    const section = document.getElementById('analysis-section');
+    const results = document.getElementById('analysis-results');
+    section.classList.remove('d-none');
+    results.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Analyzing imported data...';
+
+    fetch('/api/analysis/post-import')
+        .then(r => r.json())
+        .then(data => {
+            let html = '<div class="row g-3">';
+            // KPI cards
+            const kpis = [
+                { label: 'Total Records', value: (data.total_records || 0).toLocaleString(), color: 'primary' },
+                { label: 'Unpaid Claims', value: (data.unpaid_claims || 0).toLocaleString(), color: 'danger' },
+                { label: 'Underpaid Claims', value: (data.underpaid_claims || 0).toLocaleString(), color: 'warning' },
+                { label: 'Filing Alerts', value: (data.filing_alerts || 0).toLocaleString(), color: 'danger' },
+                { label: 'Total Revenue', value: '$' + (data.total_revenue || 0).toLocaleString(), color: 'success' },
+                { label: 'ERA Payments', value: (data.era_payments || 0).toLocaleString(), color: 'info' },
+            ];
+            for (const kpi of kpis) {
+                html += `<div class="col-md-2"><div class="card text-bg-${kpi.color}">
+                    <div class="card-body p-2 text-center">
+                        <small>${kpi.label}</small><h4 class="mb-0">${kpi.value}</h4>
+                    </div></div></div>`;
+            }
+            html += '</div>';
+
+            // Recommendations
+            if (data.recommendations && data.recommendations.length > 0) {
+                html += '<h6 class="mt-3">Recommended Next Steps:</h6><ul>';
+                for (const rec of data.recommendations) {
+                    html += `<li>${rec}</li>`;
+                }
+                html += '</ul>';
+            }
+
+            // Carrier breakdown
+            if (data.by_carrier && data.by_carrier.length > 0) {
+                html += '<h6 class="mt-3">Revenue by Carrier (Top 10):</h6>';
+                html += '<table class="table table-sm table-striped"><thead><tr>';
+                html += '<th>Carrier</th><th>Claims</th><th>Revenue</th><th>Avg Payment</th>';
+                html += '</tr></thead><tbody>';
+                for (const c of data.by_carrier.slice(0, 10)) {
+                    html += `<tr><td>${c.carrier}</td><td>${c.count}</td>
+                        <td>$${c.revenue.toLocaleString()}</td>
+                        <td>$${c.avg_payment.toFixed(2)}</td></tr>`;
+                }
+                html += '</tbody></table>';
+            }
+
+            results.innerHTML = html;
+        })
+        .catch(err => {
+            results.innerHTML = `<p class="text-danger">Analysis failed: ${err.message}</p>`;
+        });
+}
+</script>
+{% endblock %}

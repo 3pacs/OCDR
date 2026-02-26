@@ -15,8 +15,9 @@ venv/
 .venv/
 env/
 
-# Environment variables (may contain secrets)
+# Environment variables and credentials (may contain secrets)
 .env
+.credentials.enc
 
 # Database
 *.db

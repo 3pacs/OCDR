@@ -66,6 +66,14 @@ def create_app(config_class=Config):
     from app.revenue.duplicate_detector import duplicate_bp
     app.register_blueprint(duplicate_bp, url_prefix='/api')
 
+    # Register blueprints — Analytics
+    from app.analytics.post_import import analysis_bp
+    app.register_blueprint(analysis_bp, url_prefix='/api')
+
+    # Register blueprints — Vendor connectors
+    from app.vendor import vendor_bp
+    app.register_blueprint(vendor_bp, url_prefix='/api/vendor')
+
     @app.teardown_appcontext
     def close_raw_db(exception):
         raw_db = g.pop('raw_db', None)
