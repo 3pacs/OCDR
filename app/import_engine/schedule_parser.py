@@ -66,7 +66,7 @@ _SCAN_KEYWORDS = [
 _NAME_RE = re.compile(r'\b([A-Z][A-Z\'-]{1,}),\s+([A-Z][A-Z\'-]{1,})\b')
 
 # File extensions for schedule folder scanning
-_SCHEDULE_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp', '.txt'}
+_SCHEDULE_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp', '.txt', '.csv', '.xlsx', '.xls'}
 
 
 def _parse_date_flexible(date_str):
@@ -447,6 +447,28 @@ def import_schedule_file(filepath):
         return import_schedule_image(filepath)
     elif ext == '.txt':
         return import_schedule_text_file(filepath)
+    elif ext == '.csv':
+        from app.import_engine.schedule_importer import import_csv
+        count, errors = import_csv(filepath)
+        return {
+            'entries_found': count + len(errors),
+            'entries_stored': count,
+            'entries_matched': 0,
+            'entries_skipped': len(errors),
+            'source': 'SCHEDULE_CSV',
+            'errors': errors,
+        }
+    elif ext in ('.xlsx', '.xls'):
+        from app.import_engine.schedule_importer import import_excel
+        count, errors = import_excel(filepath)
+        return {
+            'entries_found': count + len(errors),
+            'entries_stored': count,
+            'entries_matched': 0,
+            'entries_skipped': len(errors),
+            'source': 'SCHEDULE_EXCEL',
+            'errors': errors,
+        }
     else:
         return {'status': 'error', 'reason': f'Unsupported file type: {ext}'}
 
