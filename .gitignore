@@ -5,6 +5,7 @@ __pycache__/
 *.so
 *.egg-info/
 *.egg
+.eggs/
 dist/
 build/
 *.whl
@@ -25,12 +26,18 @@ env/
 
 # PHI / Patient data — NEVER commit these
 OCMRI.xlsx
+*.xlsx
+*.xls
 *.835
 *.edi
 *.x12
 
 # Backup files
 backup/
+
+# Import/Export directories
+import/
+export/
 
 # IDE
 .vscode/
@@ -54,9 +61,6 @@ migrations/versions/__pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-
-# Export directory
-export/
 
 # Log files
 *.log
