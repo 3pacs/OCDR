@@ -118,7 +118,7 @@ def list_statements(physician=None, status=None, page=1, per_page=50):
 
 def record_payment(statement_id, amount):
     """Record a payment against a statement."""
-    stmt = PhysicianStatement.query.get(statement_id)
+    stmt = db.session.get(PhysicianStatement, statement_id)
     if not stmt:
         return {"error": "Statement not found"}
     stmt.total_paid = (stmt.total_paid or 0) + amount

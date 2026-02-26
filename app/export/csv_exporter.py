@@ -6,7 +6,7 @@ Supports scheduled export (every 15 min configurable).
 
 import csv
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models import db, BillingRecord
 
@@ -69,8 +69,9 @@ def export_billing_csv(output_path=None, app=None):
     # Ensure directory exists
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    records = BillingRecord.query.order_by(BillingRecord.service_date.desc()).all()
+    records = BillingRecord.query.order_by(BillingRecord.service_date.desc()).yield_per(1000)
 
+    record_count = 0
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         # Header row
@@ -78,14 +79,15 @@ def export_billing_csv(output_path=None, app=None):
         # Data rows
         for r in records:
             writer.writerow([col[1](r) for col in EXPORT_COLUMNS])
+            record_count += 1
 
     file_size = os.path.getsize(output_path)
 
     return {
         "filepath": output_path,
-        "record_count": len(records),
+        "record_count": record_count,
         "file_size": file_size,
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -103,8 +105,9 @@ def export_era_csv(output_path=None, app=None):
 
     os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
 
-    claims = EraClaimLine.query.order_by(EraClaimLine.id.desc()).all()
+    claims = EraClaimLine.query.order_by(EraClaimLine.id.desc()).yield_per(1000)
 
+    record_count = 0
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Claim ID", "Patient", "Service Date", "CPT", "Billed",
@@ -118,10 +121,11 @@ def export_era_csv(output_path=None, app=None):
                 c.cas_group_code, c.cas_reason_code, c.cas_adjustment_amount,
                 c.match_confidence, c.matched_billing_id,
             ])
+            record_count += 1
 
     return {
         "filepath": output_path,
-        "record_count": len(claims),
+        "record_count": record_count,
         "file_size": os.path.getsize(output_path),
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
     }

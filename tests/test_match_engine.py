@@ -174,7 +174,7 @@ class TestMatchEngine(unittest.TestCase):
         self.assertEqual(result["rejected"], 0)
 
         # Verify claim1 matched to billing1
-        claim1 = EraClaimLine.query.get(self.era_claim1.id)
+        claim1 = db.session.get(EraClaimLine,self.era_claim1.id)
         self.assertEqual(claim1.matched_billing_id, self.billing1.id)
         self.assertGreaterEqual(claim1.match_confidence, 0.95)
 
@@ -182,14 +182,14 @@ class TestMatchEngine(unittest.TestCase):
         run_matching()
         result = confirm_match(self.era_claim1.id)
         self.assertEqual(result["status"], "confirmed")
-        claim = EraClaimLine.query.get(self.era_claim1.id)
+        claim = db.session.get(EraClaimLine,self.era_claim1.id)
         self.assertEqual(claim.match_confidence, 1.0)
 
     def test_reject_match(self):
         run_matching()
         result = reject_match(self.era_claim1.id)
         self.assertEqual(result["status"], "rejected")
-        claim = EraClaimLine.query.get(self.era_claim1.id)
+        claim = db.session.get(EraClaimLine,self.era_claim1.id)
         self.assertIsNone(claim.matched_billing_id)
 
     def test_get_match_results(self):

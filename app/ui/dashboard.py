@@ -1,6 +1,6 @@
 """UI routes for OCDR dashboard pages."""
 
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, request, redirect, url_for, flash
 
 ui_bp = Blueprint("ui", __name__)
 
@@ -103,3 +103,44 @@ def admin_page():
 @ui_bp.route("/smart-matching")
 def smart_matching_page():
     return render_template("smart_matching.html")
+
+
+@ui_bp.route("/chat")
+def chat_page():
+    return render_template("chat.html")
+
+
+@ui_bp.route("/aging")
+def aging_page():
+    return render_template("aging.html")
+
+
+@ui_bp.route("/login", methods=["GET", "POST"])
+def login():
+    from flask_login import login_user, current_user
+    from app.models import User
+
+    if current_user.is_authenticated:
+        return redirect(url_for("ui.dashboard"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
+            from datetime import datetime, timezone
+            user.last_login = datetime.now(timezone.utc)
+            from app.models import db
+            db.session.commit()
+            login_user(user)
+            next_page = request.args.get("next")
+            return redirect(next_page or url_for("ui.dashboard"))
+        flash("Invalid username or password", "error")
+    return render_template("login.html")
+
+
+@ui_bp.route("/logout")
+def logout():
+    from flask_login import logout_user
+    logout_user()
+    return redirect(url_for("ui.login"))

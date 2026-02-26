@@ -1,10 +1,12 @@
 import os
+import secrets
 
 basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 
 
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "ocdr-dev-key-change-in-production")
+    # Generate a random key if not set; production SHOULD set SECRET_KEY in env
+    SECRET_KEY = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL", f"sqlite:///{os.path.join(basedir, 'ocdr.db')}"
     )
@@ -22,3 +24,7 @@ class Config:
         "SCHEDULE_FOLDER", os.path.join(basedir, "schedule_data")
     )
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max upload
+
+    # LLM integration
+    LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434")
+    LLM_MODEL = os.environ.get("LLM_MODEL", "llama3")

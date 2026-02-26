@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Chat with Your Data{% endblock %}
+{% block page_title %}Chat with Your Data{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="data-card padded h-100">
+            <div id="chat-messages" style="height: 500px; overflow-y: auto; margin-bottom: 16px;">
+                <div class="empty-state" id="chat-empty">
+                    <i class="bi bi-chat-dots"></i>
+                    <p>Ask questions about your billing data in natural language</p>
+                    <div class="text-muted small mt-2">
+                        Examples: "How much did Medicare pay us last month?"<br>
+                        "Which carriers are underpaying on MRI?"<br>
+                        "What's our top denial reason this quarter?"
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <input type="text" class="form-control" id="chat-input" placeholder="Ask a question about your billing data..." autocomplete="off">
+                <button class="btn btn-primary" id="chat-send" onclick="sendMessage()">
+                    <i class="bi bi-send"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="data-card padded">
+            <h6 class="fw-semibold mb-3">Quick Questions</h6>
+            <div class="d-grid gap-2">
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What is our total revenue this month?')">Total revenue this month</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which carrier pays the most?')">Top paying carrier</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('How many denials do we have?')">Denial count</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What are the top denial reason codes?')">Top denial codes</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show revenue by modality')">Revenue by modality</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which physicians refer the most?')">Top referring physicians</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Are there any upcoming filing deadlines?')">Filing deadlines</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show underpayment summary')">Underpayment check</button>
+            </div>
+        </div>
+        <div class="data-card padded mt-3">
+            <h6 class="fw-semibold mb-2">LLM Status</h6>
+            <div id="llm-status" class="text-muted small">Checking...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    checkLLMStatus();
+    document.getElementById('chat-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') sendMessage();
+    });
+});
+
+async function checkLLMStatus() {
+    try {
+        const data = await fetchJSON('/api/llm/status');
+        document.getElementById('llm-status').innerHTML = data.available
+            ? '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Local LLM connected</span>'
+            : '<span class="text-accent-yellow"><i class="bi bi-info-circle"></i> Using template matching (no local LLM)</span>';
+    } catch (e) {
+        document.getElementById('llm-status').innerHTML = '<span class="text-muted">Template matching mode</span>';
+    }
+}
+
+function askQuick(question) {
+    document.getElementById('chat-input').value = question;
+    sendMessage();
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+    input.value = '';
+
+    const container = document.getElementById('chat-messages');
+    const empty = document.getElementById('chat-empty');
+    if (empty) empty.style.display = 'none';
+
+    // Add user message
+    container.insertAdjacentHTML('beforeend',
+        '<div class="d-flex justify-content-end mb-3"><div class="bg-primary text-white rounded-3 px-3 py-2" style="max-width:70%">' + escapeHtml(message) + '</div></div>');
+    container.scrollTop = container.scrollHeight;
+
+    // Add loading indicator
+    const loadingId = 'loading-' + Date.now();
+    container.insertAdjacentHTML('beforeend',
+        '<div id="' + loadingId + '" class="d-flex mb-3"><div class="bg-dark rounded-3 px-3 py-2 text-muted"><i class="bi bi-three-dots"></i> Thinking...</div></div>');
+    container.scrollTop = container.scrollHeight;
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: message}),
+        });
+        const data = await resp.json();
+        document.getElementById(loadingId).remove();
+
+        const source = data.source ? ' <span class="badge bg-secondary">' + data.source + '</span>' : '';
+        container.insertAdjacentHTML('beforeend',
+            '<div class="d-flex mb-3"><div class="bg-dark rounded-3 px-3 py-2" style="max-width:80%">' +
+            (data.response || data.error || 'No response') + source + '</div></div>');
+    } catch (e) {
+        document.getElementById(loadingId).remove();
+        container.insertAdjacentHTML('beforeend',
+            '<div class="d-flex mb-3"><div class="bg-danger bg-opacity-25 rounded-3 px-3 py-2">Error: ' + e.message + '</div></div>');
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

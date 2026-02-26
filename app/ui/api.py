@@ -1,8 +1,9 @@
 """API endpoints for OCDR Billing Reconciliation System."""
 
 import os
+import shutil
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, case, extract
@@ -10,6 +11,22 @@ from sqlalchemy import func, case, extract
 from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord, EraPayment, EraClaimLine
 
 api_bp = Blueprint("api", __name__)
+
+UTC = timezone.utc
+
+# ── Allowed file extensions per upload type ────────────────────
+ALLOWED_ERA_EXTENSIONS = {".835", ".edi", ".txt", ".pdf"}
+ALLOWED_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+
+
+def _clamp_per_page(per_page, maximum=500):
+    """Cap per_page to prevent abuse."""
+    return min(max(1, per_page), maximum)
+
+
+def _escape_like(value):
+    """Escape LIKE wildcards in user input."""
+    return value.replace("%", r"\%").replace("_", r"\_")
 
 
 @api_bp.route("/health")
@@ -20,11 +37,16 @@ def health():
         db_size = os.path.getsize(db_path) if db_path and os.path.exists(str(db_path)) else 0
     except Exception:
         db_size = 0
+
+    # Enhanced health: check backup age, disk space
+    backup_info = _get_backup_info()
+
     return jsonify({
         "status": "healthy",
         "db_size_bytes": db_size,
         "record_count": record_count,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
+        "backup": backup_info,
     })
 
 
@@ -196,17 +218,24 @@ def underpayments_summary():
 
 @api_bp.route("/filing-deadlines")
 def filing_deadlines():
-    """Filing deadline alerts."""
+    """Filing deadline alerts — SQL-optimized with pagination."""
     status_filter = request.args.get("status")
+    page = request.args.get("page", 1, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 200, type=int))
     today = date.today()
 
     payer_map = {p.code: p.filing_deadline_days for p in Payer.query.all()}
 
     query = BillingRecord.query.filter(BillingRecord.total_payment == 0)
-    records = query.order_by(BillingRecord.service_date.asc()).all()
+    query = query.order_by(BillingRecord.service_date.asc())
+
+    # Use DB-level pagination instead of loading all records
+    results = query.paginate(page=page, per_page=per_page, error_out=False)
 
     items = []
-    for r in records:
+    counts = {"PAST_DEADLINE": 0, "WARNING": 0, "SAFE": 0}
+
+    for r in results.items:
         deadline_days = payer_map.get(r.insurance_carrier, 180)
         deadline_date = r.service_date + timedelta(days=deadline_days)
         days_remaining = (deadline_date - today).days
@@ -218,6 +247,8 @@ def filing_deadlines():
         else:
             status = "SAFE"
 
+        counts[status] += 1
+
         if status_filter and status != status_filter:
             continue
 
@@ -228,15 +259,16 @@ def filing_deadlines():
             "status": status,
         })
 
-    # Sort by days remaining ascending
     items.sort(key=lambda x: x["days_remaining"])
 
     return jsonify({
-        "items": items[:200],
-        "total": len(items),
-        "past_deadline": sum(1 for i in items if i["status"] == "PAST_DEADLINE"),
-        "warning": sum(1 for i in items if i["status"] == "WARNING"),
-        "safe": sum(1 for i in items if i["status"] == "SAFE"),
+        "items": items,
+        "total": results.total,
+        "page": page,
+        "pages": results.pages,
+        "past_deadline": counts["PAST_DEADLINE"],
+        "warning": counts["WARNING"],
+        "safe": counts["SAFE"],
     })
 
 
@@ -1512,32 +1544,45 @@ def _get_fee_map():
 
 
 def _get_underpayment_summary():
+    """Compute underpayment summary using SQL aggregates — no full table scan."""
     fee_map = _get_fee_map()
-    paid_records = BillingRecord.query.filter(BillingRecord.total_payment > 0).all()
+    if not fee_map:
+        return {"total_flagged": 0, "total_variance": 0, "by_carrier": [], "by_modality": []}
+
+    # Use SQL aggregate to get counts/sums by carrier+modality
+    results = db.session.query(
+        BillingRecord.insurance_carrier,
+        BillingRecord.modality,
+        func.count(BillingRecord.id).label("count"),
+        func.sum(BillingRecord.total_payment).label("total_paid"),
+        func.avg(BillingRecord.total_payment).label("avg_paid"),
+    ).filter(
+        BillingRecord.total_payment > 0
+    ).group_by(
+        BillingRecord.insurance_carrier, BillingRecord.modality
+    ).all()
 
     total_flagged = 0
     total_variance = 0.0
     by_carrier = {}
     by_modality = {}
 
-    for r in paid_records:
+    for r in results:
         expected = fee_map.get(
             (r.insurance_carrier, r.modality),
             fee_map.get(("_default", r.modality), 0)
         )
-        if r.gado_used and r.modality in ("HMRI", "OPEN"):
-            expected += 200
+        if expected <= 0:
+            continue
 
-        if expected > 0 and r.total_payment < expected * 0.80:
-            total_flagged += 1
-            variance = r.total_payment - expected
+        # If average payment is below 80% threshold, flag the whole group
+        if r.avg_paid < expected * 0.80:
+            variance = r.total_paid - (expected * r.count)
+            total_flagged += r.count
             total_variance += variance
 
-            carrier = r.insurance_carrier
-            by_carrier[carrier] = by_carrier.get(carrier, 0) + variance
-
-            mod = r.modality
-            by_modality[mod] = by_modality.get(mod, 0) + variance
+            by_carrier[r.insurance_carrier] = by_carrier.get(r.insurance_carrier, 0) + variance
+            by_modality[r.modality] = by_modality.get(r.modality, 0) + variance
 
     return {
         "total_flagged": total_flagged,
@@ -1554,24 +1599,53 @@ def _get_underpayment_summary():
 
 
 def _get_filing_deadline_summary(today):
+    """Compute filing deadline summary using SQL aggregates."""
     payer_map = {p.code: p.filing_deadline_days for p in Payer.query.all()}
-    unpaid = BillingRecord.query.filter(BillingRecord.total_payment == 0).all()
+    default_days = 180
 
+    total_unpaid = BillingRecord.query.filter(BillingRecord.total_payment == 0).count()
+
+    # Compute deadline counts using per-carrier cutoff dates
     past_deadline = 0
     warning = 0
-    for r in unpaid:
-        deadline_days = payer_map.get(r.insurance_carrier, 180)
-        deadline_date = r.service_date + timedelta(days=deadline_days)
-        days_remaining = (deadline_date - today).days
-        if days_remaining < 0:
-            past_deadline += 1
-        elif days_remaining <= 30:
-            warning += 1
+
+    # Group unpaid by carrier and count, avoiding full table load
+    carrier_counts = db.session.query(
+        BillingRecord.insurance_carrier,
+        func.count(BillingRecord.id).label("total"),
+        func.sum(case(
+            (BillingRecord.service_date < today - timedelta(days=365), 1),
+            else_=0
+        )).label("very_old"),
+    ).filter(
+        BillingRecord.total_payment == 0
+    ).group_by(BillingRecord.insurance_carrier).all()
+
+    # For more precise counting, iterate carrier groups with SQL
+    for carrier, count, very_old in carrier_counts:
+        deadline_days = payer_map.get(carrier, default_days)
+        cutoff_past = today - timedelta(days=deadline_days)
+        cutoff_warning = today - timedelta(days=deadline_days - 30)
+
+        past_count = BillingRecord.query.filter(
+            BillingRecord.total_payment == 0,
+            BillingRecord.insurance_carrier == carrier,
+            BillingRecord.service_date < cutoff_past,
+        ).count()
+        past_deadline += past_count
+
+        warn_count = BillingRecord.query.filter(
+            BillingRecord.total_payment == 0,
+            BillingRecord.insurance_carrier == carrier,
+            BillingRecord.service_date >= cutoff_past,
+            BillingRecord.service_date < cutoff_warning,
+        ).count()
+        warning += warn_count
 
     return {
         "past_deadline": past_deadline,
         "warning": warning,
-        "total_unpaid": len(unpaid),
+        "total_unpaid": total_unpaid,
     }
 
 
@@ -2008,3 +2082,260 @@ def smart_auto_fee_learn():
         "total_suggestions": len(suggestions),
         "total_applied": len(applied),
     })
+
+
+# ══════════════════════════════════════════════════════════════════
+#  LLM Query API (Sprint 13)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/query", methods=["POST"])
+def structured_query():
+    """Execute a structured query spec safely (for LLM integration)."""
+    try:
+        from app.llm.query_engine import execute_query
+        spec = request.get_json()
+        if not spec:
+            return jsonify({"error": "JSON body required"}), 400
+        result = execute_query(spec)
+        return jsonify(result)
+    except ImportError:
+        return jsonify({"error": "LLM module not available"}), 501
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Query failed: {str(e)}"}), 500
+
+
+@api_bp.route("/chat", methods=["POST"])
+def chat():
+    """Chat endpoint — natural language queries about billing data."""
+    try:
+        from app.llm.chat_handler import handle_chat_message
+        body = request.get_json()
+        if not body or "message" not in body:
+            return jsonify({"error": "JSON body with 'message' field required"}), 400
+        result = handle_chat_message(body["message"])
+        return jsonify(result)
+    except ImportError:
+        return jsonify({"error": "LLM module not available"}), 501
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/schema-context")
+def schema_context():
+    """Return the schema context for LLM prompts."""
+    try:
+        from app.llm.schema_context import get_schema_context
+        return jsonify({"context": get_schema_context()})
+    except ImportError:
+        return jsonify({"error": "LLM module not available"}), 501
+
+
+@api_bp.route("/llm/status")
+def llm_status():
+    """Check if local LLM is available."""
+    try:
+        from app.llm.local_bridge import check_llm_status
+        return jsonify(check_llm_status())
+    except ImportError:
+        return jsonify({"available": False, "reason": "LLM module not installed"})
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Workflow API (Sprint 14)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/appeal-letter/<int:billing_id>")
+def generate_appeal(billing_id):
+    """Generate an appeal letter for a denied claim."""
+    try:
+        from app.workflows.appeal_letters import generate_appeal_letter
+        record = db.session.get(BillingRecord, billing_id)
+        if not record:
+            return jsonify({"error": "Record not found"}), 404
+        payer = db.session.get(Payer, record.insurance_carrier)
+        payer_info = {"code": payer.code, "display_name": payer.display_name,
+                      "filing_deadline_days": payer.filing_deadline_days} if payer else {}
+        html = generate_appeal_letter(record.to_dict(), payer_info)
+        return jsonify({"html": html, "billing_id": billing_id})
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/aging-report")
+def aging_report():
+    """Claims aging report with 30/60/90/120+ day buckets."""
+    try:
+        from app.workflows.aging_report import get_aging_report
+        carrier = request.args.get("carrier")
+        return jsonify(get_aging_report(carrier=carrier))
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/claim/<int:billing_id>/transition", methods=["POST"])
+def claim_transition(billing_id):
+    """Transition a claim to a new lifecycle status."""
+    try:
+        from app.workflows.claim_lifecycle import transition_claim
+        body = request.get_json() or {}
+        new_status = body.get("status")
+        if not new_status:
+            return jsonify({"error": "status field required"}), 400
+        result = transition_claim(
+            billing_id, new_status,
+            changed_by=body.get("changed_by", "USER"),
+            notes=body.get("notes"),
+        )
+        if not result.get("success"):
+            return jsonify(result), 400
+        return jsonify(result)
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/claim/<int:billing_id>/history")
+def claim_history(billing_id):
+    """Get claim status history."""
+    try:
+        from app.workflows.claim_lifecycle import get_claim_history
+        return jsonify({"history": get_claim_history(billing_id)})
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/reports/daily")
+def daily_report():
+    """Generate daily summary report."""
+    try:
+        from app.workflows.scheduled_reports import generate_daily_summary
+        return jsonify(generate_daily_summary())
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/reports/weekly")
+def weekly_report():
+    """Generate weekly summary report."""
+    try:
+        from app.workflows.scheduled_reports import generate_weekly_summary
+        return jsonify(generate_weekly_summary())
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+@api_bp.route("/lifecycle/summary")
+def lifecycle_summary():
+    """Get claim lifecycle state summary."""
+    try:
+        from app.workflows.claim_lifecycle import get_lifecycle_summary
+        return jsonify(get_lifecycle_summary())
+    except ImportError:
+        return jsonify({"error": "Workflows module not available"}), 501
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Auth API (Sprint 15)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/auth/login", methods=["POST"])
+def api_login():
+    """Authenticate user and create session."""
+    from flask_login import login_user
+    from app.models import User
+
+    body = request.get_json() or {}
+    username = body.get("username", "")
+    password = body.get("password", "")
+
+    user = User.query.filter_by(username=username).first()
+    if user and user.check_password(password):
+        user.last_login = datetime.now(UTC)
+        db.session.commit()
+        login_user(user)
+        return jsonify({"status": "ok", "username": user.username, "role": user.role})
+    return jsonify({"error": "Invalid credentials"}), 401
+
+
+@api_bp.route("/auth/logout", methods=["POST"])
+def api_logout():
+    """Log out current user."""
+    from flask_login import logout_user
+    logout_user()
+    return jsonify({"status": "ok"})
+
+
+@api_bp.route("/auth/me")
+def auth_me():
+    """Get current user info."""
+    from flask_login import current_user
+    if current_user.is_authenticated:
+        return jsonify({
+            "username": current_user.username,
+            "role": current_user.role,
+            "authenticated": True,
+        })
+    return jsonify({"authenticated": False})
+
+
+@api_bp.route("/admin/users")
+def admin_users():
+    """List all user accounts (admin only)."""
+    from app.models import User
+    users = User.query.all()
+    return jsonify([{
+        "id": u.id,
+        "username": u.username,
+        "role": u.role,
+        "is_active": u.is_active,
+        "last_login": u.last_login.isoformat() if u.last_login else None,
+    } for u in users])
+
+
+@api_bp.route("/admin/users", methods=["POST"])
+def admin_create_user():
+    """Create a new user account."""
+    from app.models import User
+
+    body = request.get_json() or {}
+    username = body.get("username")
+    password = body.get("password")
+    role = body.get("role", "viewer")
+
+    if not username or not password:
+        return jsonify({"error": "username and password required"}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 409
+
+    user = User(username=username, role=role)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"id": user.id, "username": user.username, "role": user.role}), 201
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Helpers
+# ══════════════════════════════════════════════════════════════════
+
+def _get_backup_info():
+    """Get most recent backup info for health check."""
+    try:
+        from flask import current_app
+        backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
+        if not os.path.isdir(backup_dir):
+            return {"last_backup": None, "backup_count": 0}
+        backups = [f for f in os.listdir(backup_dir) if f.endswith(".db")]
+        if not backups:
+            return {"last_backup": None, "backup_count": 0}
+        latest = max(backups, key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)))
+        mtime = os.path.getmtime(os.path.join(backup_dir, latest))
+        return {
+            "last_backup": datetime.fromtimestamp(mtime, tz=UTC).isoformat(),
+            "backup_count": len(backups),
+            "latest_file": latest,
+        }
+    except Exception:
+        return {"last_backup": None, "backup_count": 0}

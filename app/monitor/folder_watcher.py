@@ -9,12 +9,14 @@ import os
 import time
 import shutil
 import threading
-from datetime import datetime
+import collections
+from datetime import datetime, timezone
 
 
+_lock = threading.Lock()
 _monitor_thread = None
 _monitor_running = False
-_monitor_status = {"state": "stopped", "last_scan": None, "files_processed": 0, "errors": []}
+_monitor_status = {"state": "stopped", "last_scan": None, "files_processed": 0, "errors": collections.deque(maxlen=100)}
 
 
 def _get_folders(base_path):
@@ -116,9 +118,18 @@ def _process_excel(filepath, filename):
     return {"status": "success", "type": "excel", **result}
 
 
+def _safe_move(src, dest_dir, filename):
+    """Move file to dest_dir, adding a timestamp suffix if a file with the same name already exists."""
+    dest = os.path.join(dest_dir, filename)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(filename)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        dest = os.path.join(dest_dir, f"{base}_{ts}{ext}")
+    shutil.move(src, dest)
+
+
 def _scan_folder(base_path, app):
     """Scan the import folder for new files and process them."""
-    global _monitor_status
     folders = _get_folders(base_path)
 
     # List files in import folder (not in subfolders)
@@ -135,50 +146,57 @@ def _scan_folder(base_path, app):
         try:
             result = _route_file(filepath, app)
             if result.get("status") == "success":
-                dest = os.path.join(folders["processed"], entry)
-                shutil.move(filepath, dest)
-                _monitor_status["files_processed"] += 1
+                _safe_move(filepath, folders["processed"], entry)
+                with _lock:
+                    _monitor_status["files_processed"] += 1
             elif result.get("status") == "error":
-                dest = os.path.join(folders["errors"], entry)
-                shutil.move(filepath, dest)
-                _monitor_status["errors"].append(f"{entry}: {result.get('errors', [])}")
+                _safe_move(filepath, folders["errors"], entry)
+                with _lock:
+                    _monitor_status["errors"].append(f"{entry}: {result.get('errors', [])}")
             # 'skipped' files remain in place
         except Exception as e:
-            _monitor_status["errors"].append(f"{entry}: {str(e)}")
+            with _lock:
+                _monitor_status["errors"].append(f"{entry}: {str(e)}")
             try:
-                dest = os.path.join(folders["errors"], entry)
-                shutil.move(filepath, dest)
+                _safe_move(filepath, folders["errors"], entry)
             except OSError:
                 pass
 
-    _monitor_status["last_scan"] = datetime.utcnow().isoformat()
+    with _lock:
+        _monitor_status["last_scan"] = datetime.now(timezone.utc).isoformat()
 
 
 def _monitor_loop(base_path, app, interval=30):
     """Main monitor loop that polls the folder at regular intervals."""
-    global _monitor_running, _monitor_status
-    _monitor_status["state"] = "running"
+    global _monitor_running
+    with _lock:
+        _monitor_status["state"] = "running"
 
-    while _monitor_running:
+    while True:
+        with _lock:
+            if not _monitor_running:
+                break
         _scan_folder(base_path, app)
         time.sleep(interval)
 
-    _monitor_status["state"] = "stopped"
+    with _lock:
+        _monitor_status["state"] = "stopped"
 
 
 def start_monitor(app, folder_path=None, interval=30):
     """Start the folder monitor in a background thread."""
     global _monitor_thread, _monitor_running
 
-    if _monitor_running:
-        return {"status": "already_running"}
+    with _lock:
+        if _monitor_running:
+            return {"status": "already_running"}
+        _monitor_running = True
 
     if not folder_path:
         folder_path = app.config.get("UPLOAD_FOLDER", "uploads")
     import_path = os.path.join(folder_path, "import")
     os.makedirs(import_path, exist_ok=True)
 
-    _monitor_running = True
     _monitor_thread = threading.Thread(
         target=_monitor_loop, args=(import_path, app, interval), daemon=True
     )
@@ -189,13 +207,17 @@ def start_monitor(app, folder_path=None, interval=30):
 def stop_monitor():
     """Stop the folder monitor."""
     global _monitor_running
-    _monitor_running = False
+    with _lock:
+        _monitor_running = False
     return {"status": "stopped"}
 
 
 def get_monitor_status():
     """Get current monitor status."""
-    return dict(_monitor_status)
+    with _lock:
+        status = dict(_monitor_status)
+        status["errors"] = list(status["errors"])
+    return status
 
 
 def scan_once(app, folder_path=None):

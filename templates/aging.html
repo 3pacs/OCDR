@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Claims Aging Report{% endblock %}
+{% block page_title %}Claims Aging Report{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-red">
+            <div class="kpi-label">120+ Days</div>
+            <div class="kpi-value" id="kpi-120">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-amber">
+            <div class="kpi-label">91-120 Days</div>
+            <div class="kpi-value" id="kpi-90">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">31-60 Days</div>
+            <div class="kpi-value" id="kpi-30">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">0-30 Days</div>
+            <div class="kpi-value" id="kpi-0">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="fw-semibold mb-0">Aging Distribution</h6></div>
+            <div class="chart-body"><canvas id="agingChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="data-card padded">
+            <h6 class="fw-semibold mb-3">Aging by Carrier</h6>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <table class="table table-sm" id="carrier-aging-table">
+                    <thead><tr><th>Carrier</th><th>0-30</th><th>31-60</th><th>61-90</th><th>91-120</th><th>120+</th></tr></thead>
+                    <tbody id="carrier-aging-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', loadAging);
+
+async function loadAging() {
+    try {
+        const data = await fetchJSON('/api/aging-report');
+        if (data.error) { console.error(data.error); return; }
+        const buckets = data.buckets || [];
+        for (const b of buckets) {
+            if (b.range === '0-30') document.getElementById('kpi-0').textContent = formatNumber(b.count);
+            if (b.range === '31-60') document.getElementById('kpi-30').textContent = formatNumber(b.count);
+            if (b.range === '91-120') document.getElementById('kpi-90').textContent = formatNumber(b.count);
+            if (b.range === '120+') document.getElementById('kpi-120').textContent = formatNumber(b.count);
+        }
+        if (buckets.length > 0) {
+            new Chart(document.getElementById('agingChart'), {
+                type: 'bar',
+                data: {
+                    labels: buckets.map(b => b.range),
+                    datasets: [{
+                        label: 'Claims',
+                        data: buckets.map(b => b.count),
+                        backgroundColor: ['#34d399', '#63b3ed', '#fbbf24', '#fb923c', '#f87171'],
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+        }
+        // By carrier table
+        const byCarrier = data.by_carrier || {};
+        const tbody = document.getElementById('carrier-aging-body');
+        for (const [carrier, cBuckets] of Object.entries(byCarrier)) {
+            const bMap = {};
+            for (const b of cBuckets) bMap[b.range] = b.count;
+            tbody.insertAdjacentHTML('beforeend',
+                '<tr><td><strong>' + carrier + '</strong></td>' +
+                '<td>' + (bMap['0-30'] || 0) + '</td>' +
+                '<td>' + (bMap['31-60'] || 0) + '</td>' +
+                '<td>' + (bMap['61-90'] || 0) + '</td>' +
+                '<td>' + (bMap['91-120'] || 0) + '</td>' +
+                '<td class="text-accent-red">' + (bMap['120+'] || 0) + '</td></tr>');
+        }
+    } catch (e) { console.error('Failed to load aging report', e); }
+}
+</script>
+{% endblock %}
