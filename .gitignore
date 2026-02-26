@@ -6,6 +6,8 @@ __pycache__/
 uploads/
 export/
 backup/
+logs/
+schedule_data/
 *.egg-info/
 dist/
 build/
