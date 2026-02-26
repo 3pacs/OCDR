@@ -639,6 +639,11 @@ def schedule_import_config():
     """Return current schedule import folder path."""
     from flask import current_app
     folder = current_app.config.get("SCHEDULE_FOLDER", "")
+    if folder and not os.path.isdir(folder):
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            pass
     exists = os.path.isdir(folder)
     file_count = 0
     if exists:
