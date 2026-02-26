@@ -236,6 +236,109 @@ class TestAPI835:
         assert response.status_code == 400
 
 
+class TestEobDirectoryScan:
+    """Test EOB directory scanning with recursive traversal and dedup."""
+
+    @pytest.fixture
+    def app(self):
+        app = create_app(TestConfig)
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
+
+    @pytest.fixture
+    def client(self, app):
+        return app.test_client()
+
+    def _write_file(self, path, content):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(content)
+
+    def test_recursive_scan_finds_subfolders(self, client):
+        """Files in nested subfolders should be found and imported."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_file(os.path.join(tmpdir, 'root.835'), SAMPLE_835)
+            # Exact same content = content duplicate
+            self._write_file(os.path.join(tmpdir, 'sub1', 'copy.835'), SAMPLE_835)
+            # Different content
+            alt_835 = SAMPLE_835.replace('EFT12345', 'EFT99999').replace('CLM001', 'CLM801')
+            self._write_file(os.path.join(tmpdir, 'sub1', 'sub2', 'deep.edi'), alt_835)
+
+            resp = client.post('/api/import/eob-scan', json={'folder_path': tmpdir})
+            data = resp.get_json()
+
+            assert resp.status_code == 200
+            assert data['total_files_found'] == 3
+            # root.835 imported, copy.835 is byte-identical = dup, deep.edi is different = imported
+            assert data['files_imported'] == 2
+            assert data['skip_reasons']['duplicate_content'] == 1
+
+    def test_duplicate_content_skipped(self, client):
+        """Byte-identical files in different folders should be deduplicated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_file(os.path.join(tmpdir, 'a', 'file1.835'), SAMPLE_835)
+            self._write_file(os.path.join(tmpdir, 'b', 'file2.835'), SAMPLE_835)
+            self._write_file(os.path.join(tmpdir, 'c', 'file3.835'), SAMPLE_835)
+
+            resp = client.post('/api/import/eob-scan', json={'folder_path': tmpdir})
+            data = resp.get_json()
+
+            assert data['files_imported'] == 1
+            assert data['skip_reasons']['duplicate_content'] == 2
+
+    def test_already_imported_skipped(self, client):
+        """Files with filenames matching previously imported ERA payments are skipped."""
+        import io
+        # Pre-import a file via the standard upload
+        upload_data = {'file': (io.BytesIO(SAMPLE_835.encode()), 'existing.835')}
+        client.post('/api/import/835', data=upload_data, content_type='multipart/form-data')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Same filename as what's already in the DB
+            self._write_file(os.path.join(tmpdir, 'existing.835'), SAMPLE_835)
+
+            resp = client.post('/api/import/eob-scan', json={'folder_path': tmpdir})
+            data = resp.get_json()
+
+            assert data['files_imported'] == 0
+            assert data['skip_reasons']['already_imported'] == 1
+
+    def test_txt_files_validated_as_835(self, client):
+        """Text files that don't contain 835 content should be skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._write_file(os.path.join(tmpdir, 'valid.txt'), SAMPLE_835)
+            self._write_file(os.path.join(tmpdir, 'readme.txt'), 'This is just a readme file.')
+            self._write_file(os.path.join(tmpdir, 'notes.txt'), 'Patient notes from 2024.')
+
+            resp = client.post('/api/import/eob-scan', json={'folder_path': tmpdir})
+            data = resp.get_json()
+
+            assert data['files_imported'] == 1
+            assert data['skip_reasons']['not_835_content'] == 2
+
+    def test_eob_scan_missing_folder(self, client):
+        """Nonexistent folder returns 400."""
+        resp = client.post('/api/import/eob-scan', json={'folder_path': '/no/such/path'})
+        assert resp.status_code == 400
+        assert 'error' in resp.get_json()
+
+    def test_eob_scan_no_body(self, client):
+        """Missing JSON body returns 400."""
+        resp = client.post('/api/import/eob-scan')
+        assert resp.status_code == 400
+
+    def test_is_835_content_heuristic(self):
+        """Test the is_835_content helper directly."""
+        from app.parser.era_835_parser import is_835_content
+        assert is_835_content(SAMPLE_835) is True
+        assert is_835_content('ISA*00*stuff') is True
+        assert is_835_content('Just a text file with notes') is False
+        assert is_835_content('') is False
+
+
 class TestAPIHealth:
     """Test health endpoint (F-00)."""
 

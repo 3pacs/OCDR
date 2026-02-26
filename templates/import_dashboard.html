@@ -42,15 +42,21 @@
         </div>
 
         <div class="card mb-3">
-            <div class="card-header"><h5 class="mb-0">Folder Import</h5></div>
+            <div class="card-header"><h5 class="mb-0">EOB Directory Scan</h5></div>
             <div class="card-body">
-                <p class="small text-muted">Point to a folder containing 835/EDI files:</p>
+                <p class="small text-muted">
+                    Point to your EOB directory. Recursively scans all subfolders for
+                    <strong>.835</strong>, <strong>.edi</strong>, and <strong>.txt</strong> files.
+                    Duplicates are automatically skipped.
+                </p>
                 <div class="input-group mb-2">
-                    <input type="text" id="folder-path" class="form-control form-control-sm"
-                           placeholder="C:\OCDR\import\835">
-                    <button class="btn btn-sm btn-primary" onclick="importFolder()">Import</button>
+                    <input type="text" id="eob-folder-path" class="form-control form-control-sm"
+                           placeholder="X:\EOBS">
+                    <button class="btn btn-sm btn-primary" id="eob-scan-btn" onclick="scanEobDirectory()">
+                        Scan &amp; Import
+                    </button>
                 </div>
-                <div id="folder-result"></div>
+                <div id="eob-scan-result"></div>
             </div>
         </div>
 
@@ -185,32 +191,78 @@ function showResult(filename, type, message) {
     `;
 }
 
-function importFolder() {
-    const path = document.getElementById('folder-path').value.trim();
+function scanEobDirectory() {
+    const path = document.getElementById('eob-folder-path').value.trim();
     if (!path) return;
-    const resultDiv = document.getElementById('folder-result');
-    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Importing...';
+    const resultDiv = document.getElementById('eob-scan-result');
+    const btn = document.getElementById('eob-scan-btn');
+    btn.disabled = true;
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center mt-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Scanning directory and subfolders...</span>
+        </div>`;
 
-    fetch('/api/import/835', {
+    fetch('/api/import/eob-scan', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ folder_path: path })
     })
     .then(r => r.json())
     .then(data => {
+        btn.disabled = false;
         if (data.error) {
-            resultDiv.innerHTML = `<p class="text-danger small">${data.error}</p>`;
-        } else {
-            resultDiv.innerHTML = `<p class="text-success small">
-                Parsed ${data.files_parsed} files, ${data.claims_found} claims,
-                $${(data.payments_total || 0).toLocaleString()} total
-            </p>`;
+            resultDiv.innerHTML = `<p class="text-danger small mt-2">${data.error}</p>`;
+            return;
+        }
+
+        let html = '<div class="mt-2">';
+        html += `<p class="small mb-1"><strong>Scan Complete</strong></p>`;
+        html += '<table class="table table-sm table-bordered small mb-2">';
+        html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
+        html += `<tr class="table-success"><td>Imported</td><td class="text-end fw-bold">${data.files_imported}</td></tr>`;
+        html += `<tr><td>Skipped (total)</td><td class="text-end">${data.files_skipped}</td></tr>`;
+
+        if (data.skip_reasons) {
+            const sr = data.skip_reasons;
+            if (sr.duplicate_content > 0)
+                html += `<tr><td class="ps-3 text-muted">Duplicate content</td><td class="text-end text-muted">${sr.duplicate_content}</td></tr>`;
+            if (sr.already_imported > 0)
+                html += `<tr><td class="ps-3 text-muted">Already imported</td><td class="text-end text-muted">${sr.already_imported}</td></tr>`;
+            if (sr.not_835_content > 0)
+                html += `<tr><td class="ps-3 text-muted">Not 835 content (.txt)</td><td class="text-end text-muted">${sr.not_835_content}</td></tr>`;
+        }
+
+        if (data.files_errored > 0)
+            html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
+
+        html += `<tr><td>Claims found</td><td class="text-end">${data.claims_found}</td></tr>`;
+        html += `<tr><td>Total payments</td><td class="text-end">$${(data.payments_total || 0).toLocaleString()}</td></tr>`;
+        html += '</table>';
+
+        // Show error/skip details if any
+        if (data.details) {
+            const errored = data.details.filter(d => d.status === 'error');
+            if (errored.length > 0) {
+                html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
+                for (const e of errored) {
+                    html += `<li>${e.filename}: ${e.reason}</li>`;
+                }
+                html += '</ul></details>';
+            }
+        }
+
+        html += '</div>';
+        resultDiv.innerHTML = html;
+
+        if (data.files_imported > 0) {
             refreshStatus();
             runAnalysis();
         }
     })
     .catch(err => {
-        resultDiv.innerHTML = `<p class="text-danger small">${err.message}</p>`;
+        btn.disabled = false;
+        resultDiv.innerHTML = `<p class="text-danger small mt-2">${err.message}</p>`;
     });
 }
 

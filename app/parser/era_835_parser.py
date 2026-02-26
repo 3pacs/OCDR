@@ -17,11 +17,36 @@ Segment reference:
   GE  - Functional group trailer
   IEA - Interchange control trailer
 """
+import hashlib
 import os
 from datetime import datetime, date
 from flask import request, jsonify
 from app.parser import parser_bp
 from app.models import db, EraPayment, EraClaimLine
+
+# File extensions recognized as potential EOB/ERA files
+EOB_EXTENSIONS = {'.835', '.edi', '.txt'}
+
+
+def file_content_hash(filepath):
+    """Compute SHA-256 hash of file contents for duplicate detection."""
+    h = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def is_835_content(content):
+    """Heuristic check: does this text look like an X12 835 file?
+
+    Checks for key segment identifiers that appear in valid 835 files.
+    This prevents importing random .txt files that aren't EOBs.
+    """
+    # Look for at least one of the mandatory 835 segments
+    indicators = ('ISA*', 'BPR*', 'CLP*', 'ST*835')
+    upper = content[:4000].upper()
+    return any(ind in upper for ind in indicators)
 
 
 def parse_date(date_str):
@@ -214,17 +239,101 @@ def parse_835_file(filepath):
     }
 
 
-def parse_835_folder(folder_path):
-    """Parse all 835/EDI files in a folder."""
+def scan_eob_directory(folder_path):
+    """Recursively find all potential EOB files in a directory tree.
+
+    Returns a list of absolute file paths for files with recognized extensions.
+    """
+    found = []
+    for dirpath, _dirnames, filenames in os.walk(folder_path):
+        for fname in filenames:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in EOB_EXTENSIONS:
+                found.append(os.path.join(dirpath, fname))
+    return sorted(found)
+
+
+def parse_835_folder(folder_path, recursive=True):
+    """Parse all 835/EDI/text EOB files in a folder (optionally recursive).
+
+    Deduplicates by:
+      1. File content hash — if two files are byte-identical, only the first is imported.
+      2. Database filename check — if the filename was already imported, skip it.
+      3. 835 content heuristic — .txt files are only imported if they look like 835 data.
+    """
+    if recursive:
+        file_paths = scan_eob_directory(folder_path)
+    else:
+        file_paths = []
+        for fname in os.listdir(folder_path):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in EOB_EXTENSIONS:
+                file_paths.append(os.path.join(folder_path, fname))
+        file_paths.sort()
+
     results = []
-    for fname in os.listdir(folder_path):
-        if fname.lower().endswith(('.835', '.edi', '.txt')):
-            fpath = os.path.join(folder_path, fname)
+    seen_hashes = set()
+    # Pre-load already-imported filenames from DB to avoid re-importing
+    already_imported = {
+        ep.filename for ep in db.session.query(EraPayment.filename).all()
+    }
+
+    for fpath in file_paths:
+        fname = os.path.basename(fpath)
+        rel_path = os.path.relpath(fpath, folder_path)
+
+        # Skip files already in the database (by filename)
+        if fname in already_imported:
+            results.append({
+                'filename': rel_path,
+                'status': 'skipped',
+                'reason': 'already imported',
+            })
+            continue
+
+        # Compute content hash for duplicate detection among files in this batch
+        try:
+            content_hash = file_content_hash(fpath)
+        except OSError as e:
+            results.append({'filename': rel_path, 'status': 'error', 'reason': str(e)})
+            continue
+
+        if content_hash in seen_hashes:
+            results.append({
+                'filename': rel_path,
+                'status': 'skipped',
+                'reason': 'duplicate content',
+            })
+            continue
+        seen_hashes.add(content_hash)
+
+        # For .txt files, verify content looks like 835 data before importing
+        ext = os.path.splitext(fname)[1].lower()
+        if ext == '.txt':
             try:
-                result = parse_835_file(fpath)
-                results.append(result)
-            except Exception as e:
-                results.append({'filename': fname, 'error': str(e)})
+                with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                    preview = f.read(4000)
+                if not is_835_content(preview):
+                    results.append({
+                        'filename': rel_path,
+                        'status': 'skipped',
+                        'reason': 'not 835 content',
+                    })
+                    continue
+            except OSError as e:
+                results.append({'filename': rel_path, 'status': 'error', 'reason': str(e)})
+                continue
+
+        # Parse the file
+        try:
+            result = parse_835_file(fpath)
+            result['status'] = 'imported'
+            result['filename'] = rel_path
+            already_imported.add(fname)  # track for this batch
+            results.append(result)
+        except Exception as e:
+            results.append({'filename': rel_path, 'status': 'error', 'reason': str(e)})
+
     return results
 
 
@@ -252,17 +361,72 @@ def import_835():
         folder_path = data['folder_path']
         if not os.path.isdir(folder_path):
             return jsonify({'error': f'Folder not found: {folder_path}'}), 400
-        results = parse_835_folder(folder_path)
-        total_claims = sum(r.get('claims_found', 0) for r in results)
-        total_payments = sum(r.get('payment_amount', 0) for r in results)
+        recursive = data.get('recursive', True)
+        results = parse_835_folder(folder_path, recursive=recursive)
+        imported = [r for r in results if r.get('status') == 'imported']
+        skipped = [r for r in results if r.get('status') == 'skipped']
+        errors = [r for r in results if r.get('status') == 'error']
+        total_claims = sum(r.get('claims_found', 0) for r in imported)
+        total_payments = sum(r.get('payment_amount', 0) for r in imported)
         return jsonify({
-            'files_parsed': len(results),
+            'files_parsed': len(imported),
+            'files_skipped': len(skipped),
+            'files_errored': len(errors),
             'claims_found': total_claims,
             'payments_total': total_payments,
             'details': results,
         })
 
     return jsonify({'error': 'Provide a file upload or folder_path in JSON body'}), 400
+
+
+@parser_bp.route('/import/eob-scan', methods=['POST'])
+def eob_scan():
+    """POST /api/import/eob-scan - Scan an EOB directory recursively.
+
+    JSON body: { "folder_path": "X:\\EOBS" }
+
+    Recursively walks the directory tree, finds all .835/.edi/.txt files,
+    skips duplicates (by content hash and already-imported filenames),
+    validates that .txt files contain 835 data, and imports the rest.
+
+    Returns a summary plus per-file details.
+    """
+    data = request.get_json(silent=True)
+    if not data or 'folder_path' not in data:
+        return jsonify({'error': 'Provide folder_path in JSON body'}), 400
+
+    folder_path = data['folder_path']
+    if not os.path.isdir(folder_path):
+        return jsonify({'error': f'Folder not found: {folder_path}'}), 400
+
+    results = parse_835_folder(folder_path, recursive=True)
+
+    imported = [r for r in results if r.get('status') == 'imported']
+    skipped = [r for r in results if r.get('status') == 'skipped']
+    errors = [r for r in results if r.get('status') == 'error']
+    dup_content = [r for r in skipped if r.get('reason') == 'duplicate content']
+    dup_db = [r for r in skipped if r.get('reason') == 'already imported']
+    not_835 = [r for r in skipped if r.get('reason') == 'not 835 content']
+
+    total_claims = sum(r.get('claims_found', 0) for r in imported)
+    total_payments = sum(r.get('payment_amount', 0) for r in imported)
+
+    return jsonify({
+        'folder': folder_path,
+        'total_files_found': len(results),
+        'files_imported': len(imported),
+        'files_skipped': len(skipped),
+        'files_errored': len(errors),
+        'skip_reasons': {
+            'duplicate_content': len(dup_content),
+            'already_imported': len(dup_db),
+            'not_835_content': len(not_835),
+        },
+        'claims_found': total_claims,
+        'payments_total': total_payments,
+        'details': results,
+    })
 
 
 @parser_bp.route('/era/payments', methods=['GET'])
