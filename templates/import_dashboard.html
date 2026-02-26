@@ -124,6 +124,67 @@
     </div>
 </div>
 
+<!-- AI Assistant Section -->
+<div class="row g-4 mt-2">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">AI Assistant
+                    <span class="badge bg-info ms-2">PHI-Safe</span>
+                </h5>
+                <span id="ai-status-badge" class="badge bg-secondary">Checking...</span>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">
+                    AI analysis sends <strong>only structural metadata</strong> (column headers, data type patterns,
+                    aggregate counts). Patient names, dates, IDs, and all other PHI are stripped before transmission.
+                </p>
+
+                <!-- API Key Configuration -->
+                <div id="ai-config-section" class="mb-3 d-none">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">API Key</span>
+                        <input type="password" class="form-control" id="ai-api-key-input"
+                               placeholder="sk-ant-...">
+                        <button class="btn btn-outline-primary" onclick="configureAiKey()">Save (Encrypted)</button>
+                    </div>
+                    <small class="text-muted">Key is encrypted with AES-256 and stored locally. Never sent anywhere except Anthropic API.</small>
+                </div>
+
+                <!-- AI Actions -->
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <div class="d-grid">
+                            <button class="btn btn-sm btn-outline-primary" onclick="aiAnalyzeDb()">
+                                Analyze Database Health
+                            </button>
+                        </div>
+                        <small class="text-muted d-block mt-1">Sends aggregate stats only</small>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <input type="file" class="form-control" id="ai-analyze-file-input">
+                            <button class="btn btn-outline-primary" onclick="aiAnalyzeFile()">Analyze</button>
+                        </div>
+                        <small class="text-muted d-block mt-1">AI file structure analysis</small>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <input type="file" class="form-control" id="ai-mapping-file-input"
+                                   accept=".csv,.xlsx,.xls,.txt">
+                            <button class="btn btn-outline-primary" onclick="aiSuggestMapping()">Map Columns</button>
+                        </div>
+                        <small class="text-muted d-block mt-1">AI column mapping suggestion</small>
+                    </div>
+                </div>
+
+                <!-- AI Results -->
+                <div id="ai-results" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Analysis Section (appears after import) -->
 <div id="analysis-section" class="mt-4 d-none">
     <div class="card">
@@ -553,6 +614,131 @@ function refreshStatus() {
                 <p><strong>Source:</strong> ${data.source || 'N/A'}</p>
             `;
         });
+}
+
+// ---- AI Assistant ----
+function checkAiStatus() {
+    fetch('/api/import/ai/status')
+        .then(r => r.json())
+        .then(data => {
+            const badge = document.getElementById('ai-status-badge');
+            const configSection = document.getElementById('ai-config-section');
+            if (data.configured) {
+                badge.className = 'badge bg-success';
+                badge.textContent = 'Connected (' + data.key_source + ')';
+                configSection.classList.add('d-none');
+            } else {
+                badge.className = 'badge bg-warning text-dark';
+                badge.textContent = 'Not configured';
+                configSection.classList.remove('d-none');
+            }
+        })
+        .catch(() => {
+            const badge = document.getElementById('ai-status-badge');
+            badge.className = 'badge bg-danger';
+            badge.textContent = 'Error';
+        });
+}
+checkAiStatus();
+
+function configureAiKey() {
+    const key = document.getElementById('ai-api-key-input').value.trim();
+    if (!key) return;
+
+    fetch('/api/import/ai/configure', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ api_key: key })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            showAiResult('error', data.error);
+        } else {
+            showAiResult('success', 'API key encrypted and stored locally.');
+            document.getElementById('ai-api-key-input').value = '';
+            checkAiStatus();
+        }
+    })
+    .catch(err => showAiResult('error', err.message));
+}
+
+function aiAnalyzeDb() {
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing database (sending aggregate stats only)...');
+    fetch('/api/import/ai/analyze-db')
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            const response = data.response || 'No response';
+            showAiResult('success', '<strong>Database Analysis:</strong><br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(response) + '</pre>');
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function aiAnalyzeFile() {
+    const input = document.getElementById('ai-analyze-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing <strong>' + escapeHtml(file.name) + '</strong> (structural metadata only)...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/ai/analyze-file', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            const response = data.response || 'No response';
+            showAiResult('success', '<strong>File Analysis — ' + escapeHtml(file.name) + ':</strong><br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(response) + '</pre>');
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function aiSuggestMapping() {
+    const input = document.getElementById('ai-mapping-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Suggesting column mappings for <strong>' + escapeHtml(file.name) + '</strong>...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/ai/suggest-mapping', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            let html = '<strong>Column Mapping — ' + escapeHtml(file.name) + ':</strong>';
+            if (data.detected_headers) {
+                html += '<br><small class="text-muted">Headers: ' + escapeHtml(data.detected_headers.join(', ')) + '</small>';
+            }
+            html += '<br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(data.response || 'No response') + '</pre>';
+            showAiResult('success', html);
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function showAiResult(type, message) {
+    const clsMap = { error: 'alert-danger', warning: 'alert-warning', success: 'alert-success', info: 'alert-info' };
+    document.getElementById('ai-results').innerHTML = `
+        <div class="alert ${clsMap[type] || 'alert-info'} py-2 small">${message}</div>
+    `;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function runAnalysis() {

@@ -8,3 +8,4 @@ from app.import_engine import csv_importer  # noqa: E402, F401 (module only, no 
 from app.import_engine import pdf_parser  # noqa: E402, F401 (module only, no routes)
 from app.import_engine import ocr_engine  # noqa: E402, F401 (module only, no routes)
 from app.import_engine import schedule_parser  # noqa: E402, F401
+from app.import_engine import ai_assistant  # noqa: E402, F401

@@ -15,3 +15,5 @@ class Config:
     CSV_EXPORT_INTERVAL = int(os.getenv('CSV_EXPORT_INTERVAL', 900))
     GADO_COST_PER_DOSE = float(os.getenv('GADO_COST_PER_DOSE', 50.00))
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB upload limit
+    # AI Assistant (optional — only structural metadata sent, never PHI)
+    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '')
