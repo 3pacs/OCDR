@@ -101,7 +101,7 @@
             <h6 class="fw-semibold mb-2">
                 <i class="bi bi-calendar-week me-2 text-accent-green"></i>Schedule Import
             </h6>
-            <p class="text-muted small mb-3">Upload your appointment schedules (Excel, CSV, or PDF). Matches patients to billing records automatically.</p>
+            <p class="text-muted small mb-3">Upload a single file or scan an entire folder of schedule PDFs. OCR handles scanned documents automatically.</p>
             <div class="upload-zone" id="schedule-zone">
                 <i class="bi bi-calendar-week upload-icon text-accent-green"></i>
                 <div class="upload-title">Drop your schedule here</div>
@@ -118,6 +118,23 @@
                 <div class="progress-text">Importing schedule...</div>
             </div>
             <div class="upload-result" id="schedule-result"></div>
+
+            <!-- Folder Scan -->
+            <hr class="my-3 border-secondary">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-folder2-open me-2 text-accent-green"></i>Scan Schedule Folder</h6>
+            <p class="text-muted small mb-2">Point to a folder and we'll recursively find all PDFs, images, and text files, OCR scanned pages, and import all schedule entries.</p>
+            <div class="input-group mb-2">
+                <input type="text" class="form-control form-control-sm" id="schedule-folder-path"
+                       value="{{ config.get('SCHEDULE_FOLDER', '') }}" placeholder="R:\Schedule or /path/to/schedules">
+                <button class="btn btn-sm btn-primary" id="btn-scan-folder" onclick="scanScheduleFolder()">
+                    <i class="bi bi-search me-1"></i>Scan Folder
+                </button>
+            </div>
+            <div class="upload-progress" id="folder-scan-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Scanning folder...</div>
+            </div>
+            <div class="upload-result" id="folder-scan-result"></div>
         </div>
     </div>
 </div>
@@ -579,6 +596,119 @@ function addImportLog(filename, count, errors) {
         '<span class="text-muted ms-2">' + count + ' imported' + (errors ? ', ' + errors + ' errors' : '') + '</span></div>' +
         '<span class="text-muted small">' + time + '</span></div>'
     );
+}
+
+// ── Schedule Folder Scan ──────────────────────────────────────
+async function scanScheduleFolder() {
+    var folderPath = document.getElementById('schedule-folder-path').value.trim();
+    if (!folderPath) {
+        showPrompt('Folder path required', 'Enter the full path to your schedule folder (e.g., R:\\Schedule or /path/to/schedules).', [
+            { label: 'OK', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }}
+        ]);
+        return;
+    }
+
+    var btn = document.getElementById('btn-scan-folder');
+    var progress = document.getElementById('folder-scan-progress');
+    var resultDiv = document.getElementById('folder-scan-result');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+    progress.classList.add('active');
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/import/schedule/scan-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: folderPath }),
+        });
+        var data = await resp.json();
+
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Scan Folder';
+
+        if (resp.ok) {
+            var found = data.total_files_found || 0;
+            var imported = data.files_with_new_entries || 0;
+            var entries = data.total_entries_found || 0;
+            var matched = data.total_entries_matched || 0;
+            var errored = data.files_errored || 0;
+            var ocr = data.files_using_ocr || 0;
+
+            var msg = '<strong>' + found + ' files found</strong>';
+            if (entries > 0) msg += ' &mdash; ' + entries + ' schedule entries extracted';
+            if (matched > 0) msg += ', ' + matched + ' matched to billing';
+            if (ocr > 0) msg += ' <span class="badge bg-info-subtle text-info-emphasis ms-1">' + ocr + ' OCR\'d</span>';
+            if (errored > 0) msg += ' <span class="text-accent-yellow">(' + errored + ' errors)</span>';
+
+            if (found === 0) {
+                resultDiv.className = 'upload-result show result-warning';
+                msg = '<strong>No schedule files found</strong> in <code>' + escapeHtml(folderPath) + '</code>.'
+                    + '<br><span class="text-muted small">Make sure the folder exists and contains .pdf, .csv, .xlsx, .png, .jpg, or .txt files.</span>';
+                showPrompt(
+                    'No files found in folder',
+                    'The folder "' + folderPath + '" either does not exist or contains no recognizable schedule files. Check the path and try again.',
+                    [
+                        { label: 'Edit path', icon: 'bi-pencil', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }},
+                        { label: 'Upload file instead', icon: 'bi-upload', handler: function() { document.getElementById('schedule-input').click(); dismissPrompt(); }},
+                    ]
+                );
+            } else if (entries === 0) {
+                resultDiv.className = 'upload-result show result-warning';
+                msg += '<br><span class="text-muted small">Files were found but no schedule entries could be extracted. The files may need OCR or be in an unrecognized format.</span>';
+            } else {
+                resultDiv.className = 'upload-result show result-success';
+            }
+            resultDiv.innerHTML = msg;
+
+            // Show detail breakdown if there are files
+            if (data.details && data.details.length > 0 && data.details.length <= 20) {
+                var detailHtml = '<div class="mt-2 small" style="max-height:200px;overflow-y:auto;">';
+                for (var i = 0; i < data.details.length; i++) {
+                    var d = data.details[i];
+                    var icon = d.status === 'imported' ? 'bi-check-circle text-accent-green' : d.status === 'error' ? 'bi-x-circle text-accent-red' : 'bi-dash-circle text-muted';
+                    detailHtml += '<div class="d-flex gap-2 align-items-center py-1">'
+                        + '<i class="bi ' + icon + '"></i>'
+                        + '<span>' + escapeHtml(d.filename) + '</span>'
+                        + '<span class="text-muted ms-auto">' + (d.entries_found || 0) + ' entries</span>';
+                    if (d.used_ocr) detailHtml += '<span class="badge bg-info-subtle text-info-emphasis">OCR</span>';
+                    detailHtml += '</div>';
+                }
+                detailHtml += '</div>';
+                resultDiv.innerHTML += detailHtml;
+            } else if (data.details && data.details.length > 20) {
+                resultDiv.innerHTML += '<div class="text-muted small mt-1">(' + data.details.length + ' files processed — showing summary only)</div>';
+            }
+
+            if (entries > 0) {
+                addImportLog('Folder: ' + folderPath, entries, errored);
+                loadImportStatus();
+                showToast(entries + ' schedule entries imported from ' + found + ' files', 'success');
+            }
+        } else {
+            resultDiv.className = 'upload-result show result-error';
+            resultDiv.innerHTML = '<span class="text-accent-red">' + escapeHtml(data.error || 'Scan failed') + '</span>';
+
+            if (data.error && data.error.includes('not found')) {
+                showPrompt(
+                    'Folder not found',
+                    'The path "' + folderPath + '" does not exist on this machine. If this is a network drive (like R:\\), make sure it\'s mapped and accessible.',
+                    [
+                        { label: 'Edit path', icon: 'bi-pencil', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }},
+                        { label: 'Upload files instead', icon: 'bi-upload', handler: function() { document.getElementById('schedule-input').click(); dismissPrompt(); }},
+                    ]
+                );
+            }
+        }
+    } catch (e) {
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Scan Folder';
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Network error: ' + escapeHtml(e.message) + '</span>';
+    }
 }
 
 function showToast(message, type) {
