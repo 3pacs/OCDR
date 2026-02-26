@@ -52,6 +52,9 @@
                 <div class="input-group mb-2">
                     <input type="text" id="eob-folder-path" class="form-control form-control-sm"
                            placeholder="X:\EOBS">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="openFolderBrowser()">
+                        Browse
+                    </button>
                     <button class="btn btn-sm btn-primary" id="eob-scan-btn" onclick="scanEobDirectory()">
                         Scan &amp; Import
                     </button>
@@ -81,6 +84,35 @@
     <div class="card">
         <div class="card-header"><h5 class="mb-0">Post-Import Analysis</h5></div>
         <div class="card-body" id="analysis-results"></div>
+    </div>
+</div>
+
+<!-- Folder Browser Modal -->
+<div class="modal fade" id="folderBrowserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title">Select EOB Folder</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-2">
+                <div class="d-flex align-items-center mb-2 px-1">
+                    <small class="text-muted text-truncate flex-grow-1" id="browser-current-path">/</small>
+                    <button class="btn btn-sm btn-outline-secondary ms-2" id="browser-up-btn" onclick="browserGoUp()">
+                        Up
+                    </button>
+                </div>
+                <div id="browser-folder-list" style="max-height:300px; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px;">
+                    <p class="text-muted small p-2">Loading...</p>
+                </div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">
+                    Select This Folder
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -191,6 +223,79 @@ function showResult(filename, type, message) {
     `;
 }
 
+// ---- Folder Browser ----
+let browserModal = null;
+let browserCurrentPath = '';
+let browserParentPath = null;
+
+function openFolderBrowser() {
+    if (!browserModal) {
+        browserModal = new bootstrap.Modal(document.getElementById('folderBrowserModal'));
+    }
+    // Start from whatever is currently typed, or from root
+    const typed = document.getElementById('eob-folder-path').value.trim();
+    browserModal.show();
+    loadFolderList(typed || '');
+}
+
+function loadFolderList(path) {
+    const listDiv = document.getElementById('browser-folder-list');
+    listDiv.innerHTML = '<p class="text-muted small p-2">Loading...</p>';
+
+    const url = path ? `/api/import/browse?path=${encodeURIComponent(path)}` : '/api/import/browse';
+
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error && !data.folders) {
+                listDiv.innerHTML = `<p class="text-danger small p-2">${data.error}</p>`;
+                return;
+            }
+
+            browserCurrentPath = data.current || '';
+            browserParentPath = data.parent;
+
+            document.getElementById('browser-current-path').textContent = browserCurrentPath || 'Computer';
+            document.getElementById('browser-up-btn').disabled = (browserParentPath === null && !browserCurrentPath);
+
+            if (data.folders.length === 0) {
+                let msg = 'No subfolders found.';
+                if (data.error) msg += ` (${data.error})`;
+                listDiv.innerHTML = `<p class="text-muted small p-2">${msg}</p>`;
+                return;
+            }
+
+            let html = '<div class="list-group list-group-flush">';
+            for (const f of data.folders) {
+                html += `<a href="#" class="list-group-item list-group-item-action py-1 px-2 small"
+                             onclick="event.preventDefault(); loadFolderList('${f.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">
+                    <span class="me-1">&#128193;</span> ${f.name}
+                </a>`;
+            }
+            html += '</div>';
+            listDiv.innerHTML = html;
+        })
+        .catch(err => {
+            listDiv.innerHTML = `<p class="text-danger small p-2">${err.message}</p>`;
+        });
+}
+
+function browserGoUp() {
+    if (browserParentPath !== null) {
+        loadFolderList(browserParentPath);
+    } else {
+        loadFolderList('');
+    }
+}
+
+function selectCurrentFolder() {
+    if (browserCurrentPath) {
+        document.getElementById('eob-folder-path').value = browserCurrentPath;
+    }
+    if (browserModal) browserModal.hide();
+}
+
+// ---- EOB Scan ----
 function scanEobDirectory() {
     const path = document.getElementById('eob-folder-path').value.trim();
     if (!path) return;

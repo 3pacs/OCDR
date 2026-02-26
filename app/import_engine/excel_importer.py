@@ -266,3 +266,64 @@ def import_status():
         'last_import': last.created_at.isoformat() if last and last.created_at else None,
         'source': last.import_source if last else None,
     })
+
+
+@import_bp.route('/browse', methods=['GET'])
+def browse_folders():
+    """GET /api/import/browse?path=C:\\  -  List folders for the folder picker.
+
+    Returns the subfolders (directories only) of the given path so the UI
+    can render a folder-tree browser.  If no path is provided, returns the
+    filesystem roots (drive letters on Windows, / on Linux/Mac).
+    """
+    import os
+    import platform
+
+    requested = request.args.get('path', '').strip()
+
+    # No path → return filesystem roots
+    if not requested:
+        if platform.system() == 'Windows':
+            # List available drive letters
+            import string
+            drives = []
+            for letter in string.ascii_uppercase:
+                drive = f'{letter}:\\'
+                if os.path.isdir(drive):
+                    drives.append({'name': drive, 'path': drive})
+            return jsonify({'current': '', 'parent': None, 'folders': drives})
+        else:
+            requested = '/'
+
+    # Normalize and resolve the path
+    requested = os.path.normpath(requested)
+    if not os.path.isdir(requested):
+        return jsonify({'error': f'Not a directory: {requested}'}), 400
+
+    # List subdirectories (skip hidden dirs starting with .)
+    folders = []
+    try:
+        for entry in sorted(os.scandir(requested), key=lambda e: e.name.lower()):
+            if entry.is_dir():
+                if not entry.name.startswith('.'):
+                    folders.append({
+                        'name': entry.name,
+                        'path': entry.path,
+                    })
+    except PermissionError:
+        return jsonify({
+            'current': requested,
+            'parent': os.path.dirname(requested),
+            'folders': [],
+            'error': 'Permission denied',
+        })
+
+    parent = os.path.dirname(requested)
+    if parent == requested:
+        parent = None  # at root
+
+    return jsonify({
+        'current': requested,
+        'parent': parent,
+        'folders': folders,
+    })
