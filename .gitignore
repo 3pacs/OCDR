@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables (may contain secrets)
+.env
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# PHI / Patient data — NEVER commit these
+OCMRI.xlsx
+*.835
+*.edi
+*.x12
+
+# Backup files
+backup/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Flask instance folder
+instance/
+
+# Alembic
+migrations/versions/__pycache__/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Export directory
+export/
+
+# Log files
+*.log

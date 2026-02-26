@@ -1,6 +1,6 @@
 # OCDR Billing Reconciliation System – Complete Build Specification
 
-**Version:** 5.0 | **Updated:** 2026-02-24 | **Stack:** Python Flask + SQLite + Bootstrap 5  
+**Version:** 6.0 | **Updated:** 2026-02-26 | **Stack:** Python Flask + SQLite + Bootstrap 5
 **Constraint:** 100% LOCAL – zero cloud, zero internet, zero external APIs
 
 ---
@@ -83,14 +83,20 @@
 | extra_charges | DECIMAL(10,2) | DEFAULT 0 | | Additional charges | NO |
 | reading_physician | TEXT | | | Radiologist who read the study | NO |
 | patient_id | INTEGER | | | Internal patient ID | YES |
+| birth_date | DATE | | | Patient DOB (from Excel col N, serial date) | NO |
+| schedule_date | DATE | | | Schedule date (from Excel col P, usually matches service_date) | NO |
+| modality_code | TEXT | | | DICOM modality code: MR, CT, SR/CT, NM, DX (from Excel col Q) | NO |
 | description | TEXT | | | Scan description (C.A.P, CSP, etc.) | NO |
+| is_new_patient | BOOLEAN | DEFAULT FALSE | | New patient flag (from Excel col U, rarely populated) | NO |
 | is_psma | BOOLEAN | DEFAULT FALSE | | PSMA PET flag. Derive from description LIKE '%PSMA%' | YES |
+| cap_exception | BOOLEAN | DEFAULT FALSE | | TRUE if this record is part of a C.A.P multi-scan visit (not a duplicate) | NO |
 | denial_status | TEXT | DEFAULT NULL | | NULL=not denied, DENIED, APPEALED, RESOLVED, WRITTEN_OFF | YES |
 | denial_reason_code | TEXT | | | ANSI X12 CAS code: CO-4, CO-45, PR-1, etc. | YES |
-| era_claim_id | TEXT | | era_payments.claim_id | Link to 835 ERA parsed data | YES |
+| era_claim_id | INTEGER | | era_claim_lines.id | FK to matched ERA claim line (NULL if unmatched) | YES |
 | appeal_deadline | DATE | | | Computed: service_date + payer filing limit | YES |
 | import_source | TEXT | | | EXCEL_IMPORT, 835_PARSE, MANUAL, CSV_UPLOAD | NO |
 | created_at | DATETIME | DEFAULT CURRENT_TIMESTAMP | | Record creation timestamp | NO |
+| updated_at | DATETIME | DEFAULT CURRENT_TIMESTAMP | | Last modification timestamp (trigger ON UPDATE) | NO |
 
 ### Table: era_payments
 | Column | Type | Constraints | References | Description | Indexed |
@@ -121,6 +127,16 @@
 | cas_adjustment_amount | DECIMAL(10,2) | | | Dollar amount of adjustment | NO |
 | match_confidence | DECIMAL(3,2) | | | 0.00-1.00 confidence score for auto-match to billing_records | NO |
 | matched_billing_id | INTEGER | | billing_records.id | FK to matched billing record (NULL if unmatched) | YES |
+
+### Table: denial_reason_codes (Reference Table)
+| Column | Type | Constraints | References | Description | Indexed |
+|--------|------|-----------|-----------|-------------|---------|
+| group_code | TEXT | PK component | | CAS group: CO, PR, OA, PI | YES |
+| reason_code | TEXT | PK component | | ANSI X12 reason code number | YES |
+| description | TEXT | NOT NULL | | Human-readable description | NO |
+| category | TEXT | | | Operational category: AUTH_ISSUE, FRONT_DESK, CODING, PATIENT_RESP, CONTRACT | NO |
+
+Seed with: CO-4 (Not covered/auth required), CO-16 (Missing info/front-desk), CO-45 (Excess charges), PR-1 (Deductible), PR-2 (Coinsurance), PR-3 (Copay), OA-23 (Impact of prior payer adjudication).
 
 ### Table: payers
 | Column | Type | Constraints | References | Description | Indexed |
@@ -199,6 +215,8 @@ Each row = 1 GitHub Issue. Use feature_id as issue label.
 | POST | /api/import/excel | F-01 | multipart/form-data (file) | JSON {imported, skipped, errors, duration_ms} | Import OCMRI.xlsx |
 | GET | /api/import/status | F-01 | none | JSON {last_import, total_records, source} | Import status |
 | POST | /api/import/835 | F-02 | multipart/form-data OR {folder_path} | JSON {files_parsed, claims_found, payments_total} | Parse 835 file(s) |
+| POST | /api/import/csv | F-12 | multipart/form-data (file) | JSON {imported, skipped, errors, column_mapping} | Import CSV file |
+| POST | /api/import/pdf | F-12 | multipart/form-data (file) | JSON {imported, skipped, errors, ocr_used} | Import PDF file |
 | GET | /api/era/payments | F-02 | ?page=&per_page=&payer=&date_from=&date_to= | JSON paginated list | List ERA payments |
 | GET | /api/era/claims/<id> | F-02 | none | JSON claim detail | Single claim detail |
 | POST | /api/match/run | F-03 | {confidence_threshold: 0.85} | JSON {matched, review_needed, unmatched, duration_ms} | Run auto-match |
@@ -213,19 +231,32 @@ Each row = 1 GitHub Issue. Use feature_id as issue label.
 | GET | /api/filing-deadlines | F-06 | ?status=PAST\|WARNING\|SAFE | JSON paginated list | Filing deadline status |
 | GET | /api/filing-deadlines/alerts | F-06 | none | JSON {past_deadline, warning, details[]} | Active alerts only |
 | GET | /api/secondary-followup | F-07 | ?carrier=&page= | JSON paginated queue | Missing secondary queue |
+| POST | /api/secondary-followup/<id>/mark | F-07 | {status: billed\|resolved\|waived} | JSON {updated: true} | Mark secondary follow-up action |
 | GET | /api/duplicates | F-08 | ?include_legitimate=false | JSON grouped pairs | Duplicate claims |
+| POST | /api/duplicates/<id>/legitimate | F-08 | {reason} | JSON {marked: true} | Mark duplicate as legitimate |
 | GET | /api/payer-alerts | F-09 | none | JSON {alerts: [...]} | Active payer alerts |
+| GET | /api/payer-monitor | F-09 | ?year= | JSON {carriers[], monthly_data[]} | All carriers overview |
 | GET | /api/payer-monitor/<carrier> | F-09 | ?year= | JSON {monthly_data[], yoy_comparison} | Carrier detail |
 | GET | /api/physicians | F-15 | ?sort_by=revenue&limit=30 | JSON ranked list | Physician rankings |
 | GET | /api/physicians/<name> | F-15 | none | JSON {revenue, claims, by_modality, ...} | Physician detail |
-| GET | /api/psma | F-13 | ?year= | JSON {psma_count, psma_revenue, ...} | PSMA dashboard |
+| GET | /api/physicians/alerts | F-15 | none | JSON {alerts: [...]} | Physician volume drop alerts |
+| GET | /api/psma | F-13 | ?year= | JSON {psma_count, psma_revenue, ...} | PSMA dashboard data |
+| GET | /api/psma/summary | F-13 | none | JSON {total_scans, total_revenue, avg_reimbursement, yoy_trend[]} | PSMA summary |
 | GET | /api/gado | F-14 | none | JSON {total_claims, total_revenue, ...} | Gado analytics |
+| GET | /api/gado/margin | F-14 | none | JSON {cost_per_dose, total_cost, total_revenue, margin_pct, by_physician[]} | Gado margin analysis |
+| GET | /api/statements | F-10 | ?physician=&period=&status= | JSON paginated list | List all statements |
 | POST | /api/statements/generate | F-10 | {physician, period: YYYY-MM} | JSON {statement_id, total_owed, ...} | Generate statement |
 | GET | /api/statements/<id>/pdf | F-10 | none | application/pdf | Download statement PDF |
 | POST | /api/monitor/start | F-11 | {folder_path} | JSON {monitoring: true} | Start folder watch |
+| POST | /api/monitor/stop | F-11 | none | JSON {monitoring: false} | Stop folder watch |
+| GET | /api/monitor/status | F-11 | none | JSON {running, folder_path, files_processed, last_activity} | Monitor status |
+| GET | /api/export/csv | F-18 | none | text/csv attachment | Download current CSV export |
 | POST | /api/export/trigger | F-18 | none | JSON {rows_exported, path, timestamp} | Force CSV export |
 | POST | /api/backup/run | F-20 | none | JSON {backup_path, size_bytes, sha256} | Run backup now |
-| GET | /api/denial-analytics | F-16 | ?carrier=&top_n=10 | JSON {by_reason[], ...} | Denial analytics |
+| GET | /api/backup/status | F-20 | none | JSON {last_backup, next_scheduled, db_size_bytes} | Backup status |
+| GET | /api/backup/history | F-20 | ?limit=20 | JSON [{backup_path, timestamp, size_bytes, sha256}] | Backup history |
+| GET | /api/denial-analytics | F-16 | ?carrier=&top_n=10 | JSON {by_reason[], by_carrier[], by_modality[]} | Denial analytics |
+| GET | /api/denial-analytics/pareto | F-16 | ?carrier= | JSON {reason_codes[], cumulative_pct[], pareto_cutoff} | Pareto (80/20) chart data |
 | GET | /api/payments | F-17 | ?check_number=&date_from= | JSON paginated list | Check/EFT listing |
 | POST | /api/payments/reconcile | F-17 | multipart/form-data (bank CSV) | JSON {matched, unmatched_deposits, unmatched_checks} | Bank reconciliation |
 
@@ -252,6 +283,7 @@ ocdr/
 │   │   ├── __init__.py                (F-03: Blueprint)
 │   │   └── match_engine.py            (F-03: Fuzzy matching)
 │   ├── revenue/
+│   │   ├── __init__.py                (Blueprint registration)
 │   │   ├── denial_tracker.py          (F-04: Denial queue)
 │   │   ├── underpayment_detector.py   (F-05: Fee comparison)
 │   │   ├── filing_deadlines.py        (F-06: Timely filing)
@@ -259,19 +291,23 @@ ocdr/
 │   │   ├── duplicate_detector.py      (F-08: Duplicate detection)
 │   │   └── physician_statements.py    (F-10: Physician reports)
 │   ├── analytics/
+│   │   ├── __init__.py                (Blueprint registration)
 │   │   ├── payer_monitor.py           (F-09: Payer alerts)
 │   │   ├── physician_analytics.py     (F-15: Physician revenue)
 │   │   ├── psma_tracker.py            (F-13: PSMA tracking)
 │   │   ├── gado_tracker.py            (F-14: Gado analytics)
 │   │   └── denial_analytics.py        (F-16: Denial reasons)
 │   ├── core/
+│   │   ├── __init__.py                (Blueprint registration)
 │   │   └── payment_matching.py        (F-17: Check matching)
 │   ├── monitor/
 │   │   ├── __init__.py                (F-11: Blueprint)
 │   │   └── folder_watcher.py          (F-11: Watchdog monitor)
 │   ├── export/
+│   │   ├── __init__.py                (Blueprint registration)
 │   │   └── csv_exporter.py            (F-18: CSV export)
 │   ├── infra/
+│   │   ├── __init__.py                (Blueprint registration)
 │   │   └── backup_manager.py          (F-20: Backup + retention)
 │   └── ui/
 │       └── dashboard.py               (F-19: Dashboard routes)
@@ -292,14 +328,22 @@ ocdr/
 │   ├── psma_dashboard.html            (F-13: PSMA dashboard)
 │   ├── gado_dashboard.html            (F-14: Gado dashboard)
 │   ├── physician_dashboard.html       (F-15: Physician rankings)
-│   └── physician_detail.html          (F-15: Physician detail)
+│   ├── physician_detail.html          (F-15: Physician detail)
+│   ├── denial_analytics.html          (F-16: Denial reason analytics)
+│   └── payment_reconciliation.html    (F-17: Check/EFT reconciliation)
 ├── static/
 │   ├── css/
 │   │   └── style.css                  (F-19: Bootstrap 5 + custom)
 │   └── js/
 │       └── dashboard.js               (F-19: Auto-refresh + charts)
 ├── tests/
-│   └── test_835_parser.py             (F-02: Parser tests)
+│   ├── __init__.py
+│   ├── conftest.py                    (Shared fixtures: test DB, sample data, Flask test client)
+│   ├── test_835_parser.py             (F-02: Parser tests)
+│   ├── test_excel_importer.py         (F-01: Import tests)
+│   ├── test_match_engine.py           (F-03: Fuzzy matching tests)
+│   ├── test_business_rules.py         (BR-01 through BR-11 validation)
+│   └── test_api_routes.py             (API endpoint integration tests)
 ├── migrations/                        (F-00: Alembic migrations)
 ├── scripts/
 │   ├── install_service.bat            (Windows Service installer)
@@ -343,6 +387,7 @@ ocdr/
 | STATE | State Programs | 365 | FALSE | 0.25 | Small volume. |
 | COMP | Complimentary / Charity | 9999 | FALSE | 0.5 | Typically $0 or near-$0 payments. |
 | X | Unknown / Unclassified | 180 | FALSE | 0.5 | Investigate these records. May need reclassification. |
+| JHANGIANI | Jhangiani Physician Group | 180 | FALSE | 0.25 | Internal physician billing. Owes $30,880. Has custom HMRI rate ($950 with gado). |
 | GH | Group Health | 180 | FALSE | 0.25 | Minimal volume. Single record seen. |
 
 ---
@@ -373,7 +418,7 @@ ocdr/
 | BR-05 | Timely Filing Alert | IF total_payment = 0 AND TODAY() > (service_date + filing_deadline_days - 30) THEN alert | WARNING if within 30 days. PAST_DEADLINE if expired. Sorted by days_remaining ASC. | CRITICAL |
 | BR-06 | Payer Drop Alert | IF current_month_revenue < (avg_prior_3_months * (1 - alert_threshold_pct)) THEN alert | RED if drop >50%. YELLOW if >25%. Check both revenue AND volume. | HIGH |
 | BR-07 | Physician Volume Alert | IF current_month_claims < (avg_prior_3_months * (1 - volume_alert_threshold)) THEN alert | Alert on referring physician volume drop. Losing a top referrer = major revenue risk. | MEDIUM |
-| BR-08 | Denial Recoverability Score | recoverability_score = billed_amount * (1 - (days_since_service / 365)). Range 0-1. | Sort denial queue by score DESC. Highest-value, most-recent claims first. | HIGH |
+| BR-08 | Denial Recoverability Score | recoverability_score = billed_amount * max(0, 1 - (days_since_service / filing_deadline_days)). Score is in dollars; higher = more recoverable. Clamps to 0 when past filing deadline. | Sort denial queue by score DESC. Highest-value, most-recent claims first. | HIGH |
 | BR-09 | Auto-Match Confidence | score = (0.50 * name_similarity) + (0.30 * date_match) + (0.20 * modality_match). name_similarity via rapidfuzz ratio. date_match: exact=1.0, ±1day=0.8, ±2days=0.5. modality_match: exact=1.0, else 0.0. | Auto-accept if score >= 0.95. Manual review if 0.80-0.95. Reject if < 0.80. | CRITICAL |
 | BR-10 | SELFPAY Normalization | IF insurance_carrier IN ('SELFPAY','SELF-PAY','SELF PAY','CASH') THEN normalize to 'SELF PAY' | Normalize on import. Prevents fragmented payer reporting. | MEDIUM |
 | BR-11 | Underpayment Detection | IF total_payment > 0 AND total_payment < (expected_rate * underpayment_threshold) THEN flag as underpaid | Add to underpayment report. Calculate variance = total_payment - expected_rate. | HIGH |
