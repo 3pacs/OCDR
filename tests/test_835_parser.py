@@ -163,7 +163,7 @@ class TestStore835:
         from app.parser.era_835_parser import store_parsed_835
         with app.app_context():
             parsed = parse_835_content(SAMPLE_835, 'test.835')
-            era_payment = store_parsed_835(parsed)
+            era_payment, claims_new, claims_dup = store_parsed_835(parsed)
             assert era_payment.id is not None
             assert era_payment.filename == 'test.835'
             assert era_payment.payment_amount == 1500.00
@@ -173,7 +173,7 @@ class TestStore835:
         from app.parser.era_835_parser import store_parsed_835
         with app.app_context():
             parsed = parse_835_content(SAMPLE_835, 'test.835')
-            era_payment = store_parsed_835(parsed)
+            era_payment, claims_new, claims_dup = store_parsed_835(parsed)
             claims = EraClaimLine.query.filter_by(era_payment_id=era_payment.id).all()
             assert len(claims) == 3
 
@@ -337,6 +337,141 @@ class TestEobDirectoryScan:
         assert is_835_content('ISA*00*stuff') is True
         assert is_835_content('Just a text file with notes') is False
         assert is_835_content('') is False
+
+
+class TestClaimLevelDedup:
+    """Test claim-level deduplication across files (e.g. .835 vs .txt same claims)."""
+
+    @pytest.fixture
+    def app(self):
+        app = create_app(TestConfig)
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
+
+    @pytest.fixture
+    def client(self, app):
+        return app.test_client()
+
+    def _write_file(self, path, content):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(content)
+
+    def test_store_returns_new_and_dup_counts(self, app):
+        """store_parsed_835 returns (era_payment, claims_new, claims_duplicate)."""
+        from app.parser.era_835_parser import store_parsed_835
+        with app.app_context():
+            parsed = parse_835_content(SAMPLE_835, 'first.835')
+            era_payment, claims_new, claims_dup = store_parsed_835(parsed)
+            assert era_payment is not None
+            assert claims_new == 3
+            assert claims_dup == 0
+
+    def test_duplicate_claims_detected_on_reimport(self, app):
+        """Importing the same claims a second time flags them as duplicates."""
+        from app.parser.era_835_parser import store_parsed_835
+        with app.app_context():
+            parsed = parse_835_content(SAMPLE_835, 'first.835')
+            store_parsed_835(parsed)
+
+            # Import again with a different filename but same claim data
+            parsed2 = parse_835_content(SAMPLE_835, 'second.txt')
+            era_payment2, claims_new, claims_dup = store_parsed_835(parsed2)
+            # All 3 claims are duplicates; payment header should be removed
+            assert era_payment2 is None
+            assert claims_new == 0
+            assert claims_dup == 3
+
+    def test_partial_duplicate_keeps_new_claims(self, app):
+        """File with mix of new and duplicate claims: new ones are stored, dups skipped."""
+        from app.parser.era_835_parser import store_parsed_835
+        with app.app_context():
+            parsed = parse_835_content(SAMPLE_835, 'first.835')
+            store_parsed_835(parsed)
+
+            # Build a variant with 2 existing claims + 1 new claim
+            variant = SAMPLE_835.replace('CLM003', 'CLM999')
+            parsed2 = parse_835_content(variant, 'partial.txt')
+            era_payment2, claims_new, claims_dup = store_parsed_835(parsed2)
+            assert era_payment2 is not None
+            assert claims_new == 1  # CLM999 is new
+            assert claims_dup == 2  # CLM001 and CLM002 already existed
+
+    def test_txt_duplicate_claims_skipped_in_folder_scan(self, client):
+        """Folder scan: a .txt file with all-duplicate claims is skipped."""
+        import io
+        # First import the claims via direct upload
+        upload_data = {'file': (io.BytesIO(SAMPLE_835.encode()), 'original.835')}
+        client.post('/api/import/835', data=upload_data, content_type='multipart/form-data')
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write same claims as a .txt file (different filename, same claim content)
+            txt_path = os.path.join(tmpdir, 'vendor_copy.txt')
+            os.makedirs(os.path.dirname(txt_path), exist_ok=True)
+            with open(txt_path, 'w') as f:
+                f.write(SAMPLE_835)
+
+            resp = client.post('/api/import/eob-scan', json={'folder_path': tmpdir})
+            data = resp.get_json()
+
+            assert resp.status_code == 200
+            assert data['files_imported'] == 0
+            assert data['skip_reasons']['duplicate_claims'] == 1
+            assert data['claims_duplicate'] >= 3
+
+    def test_upload_reports_claim_dedup_counts(self, client):
+        """Single file upload API now reports claims_new and claims_duplicate."""
+        import io
+        # First upload
+        data1 = {'file': (io.BytesIO(SAMPLE_835.encode()), 'first.835')}
+        resp1 = client.post('/api/import/835', data=data1, content_type='multipart/form-data')
+        json1 = resp1.get_json()
+        assert json1['claims_new'] == 3
+        assert json1['claims_duplicate'] == 0
+
+        # Second upload of same claims with different filename
+        data2 = {'file': (io.BytesIO(SAMPLE_835.encode()), 'second.txt')}
+        resp2 = client.post('/api/import/835', data=data2, content_type='multipart/form-data')
+        json2 = resp2.get_json()
+        assert json2['claims_new'] == 0
+        assert json2['claims_duplicate'] == 3
+
+    def test_different_paid_amount_is_not_duplicate(self, app):
+        """Same claim_id but different paid_amount should be treated as unique."""
+        from app.parser.era_835_parser import store_parsed_835
+        with app.app_context():
+            parsed = parse_835_content(SAMPLE_835, 'first.835')
+            store_parsed_835(parsed)
+
+            # Change the paid amount for CLM001 (simulates a corrected payment)
+            variant = SAMPLE_835.replace(
+                'CLP*CLM001*1*500.00*450.00',
+                'CLP*CLM001*1*500.00*475.00'
+            )
+            parsed2 = parse_835_content(variant, 'corrected.txt')
+            era_payment2, claims_new, claims_dup = store_parsed_835(parsed2)
+            # CLM001 with different paid_amount is new; CLM002 and CLM003 are dups
+            assert claims_new == 1
+            assert claims_dup == 2
+
+    def test_no_claims_in_db_after_full_dedup(self, app):
+        """When all claims are duplicates, no orphan EraPayment remains in DB."""
+        from app.parser.era_835_parser import store_parsed_835
+        with app.app_context():
+            parsed = parse_835_content(SAMPLE_835, 'first.835')
+            store_parsed_835(parsed)
+
+            parsed2 = parse_835_content(SAMPLE_835, 'duplicate.txt')
+            era_payment2, _, _ = store_parsed_835(parsed2)
+            assert era_payment2 is None
+
+            # Only 1 EraPayment should exist (the first one)
+            assert EraPayment.query.count() == 1
+            # Only 3 claim lines (no duplicates stored)
+            assert EraClaimLine.query.count() == 3
 
 
 class TestAPIHealth:

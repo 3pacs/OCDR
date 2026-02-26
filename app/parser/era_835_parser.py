@@ -189,9 +189,32 @@ def parse_835_content(content, filename='unknown'):
     }
 
 
+def _claim_exists(claim):
+    """Check if a claim already exists in era_claim_lines.
+
+    Matches on claim_id + patient_name + service_date + paid_amount.
+    This catches duplicate claims across files (e.g. same EOB delivered
+    as both .835 and .txt by different vendors).
+    """
+    q = EraClaimLine.query.filter_by(claim_id=claim['claim_id'])
+    if claim['patient_name_835']:
+        q = q.filter_by(patient_name_835=claim['patient_name_835'])
+    if claim['service_date_835']:
+        q = q.filter_by(service_date_835=claim['service_date_835'])
+    q = q.filter_by(paid_amount=claim['paid_amount'])
+    return q.first() is not None
+
+
 def store_parsed_835(parsed_data):
-    """Store parsed 835 data into the database."""
+    """Store parsed 835 data into the database.
+
+    Performs claim-level deduplication: each claim line is checked against
+    existing era_claim_lines before insertion.  Returns a tuple of
+    (era_payment, claims_new, claims_duplicate).
+    """
     payment_info = parsed_data['payment']
+    claims_new = 0
+    claims_duplicate = 0
 
     era_payment = EraPayment(
         filename=payment_info['filename'],
@@ -205,6 +228,10 @@ def store_parsed_835(parsed_data):
     db.session.flush()  # Get the ID
 
     for claim in parsed_data['claims']:
+        if _claim_exists(claim):
+            claims_duplicate += 1
+            continue
+
         claim_line = EraClaimLine(
             era_payment_id=era_payment.id,
             claim_id=claim['claim_id'],
@@ -219,24 +246,38 @@ def store_parsed_835(parsed_data):
             cas_adjustment_amount=claim['cas_adjustment_amount'],
         )
         db.session.add(claim_line)
+        claims_new += 1
+
+    # If every claim was a duplicate, remove the empty payment header
+    if claims_new == 0 and claims_duplicate > 0:
+        db.session.delete(era_payment)
+        db.session.commit()
+        return None, claims_new, claims_duplicate
 
     db.session.commit()
-    return era_payment
+    return era_payment, claims_new, claims_duplicate
 
 
 def parse_835_file(filepath):
-    """Parse a single 835 file from disk."""
+    """Parse a single 835 file from disk.
+
+    Returns a dict with import stats including claim-level dedup counts.
+    """
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         content = f.read()
     filename = os.path.basename(filepath)
     parsed = parse_835_content(content, filename)
-    era_payment = store_parsed_835(parsed)
-    return {
+    era_payment, claims_new, claims_duplicate = store_parsed_835(parsed)
+    result = {
         'filename': filename,
         'claims_found': len(parsed['claims']),
+        'claims_new': claims_new,
+        'claims_duplicate': claims_duplicate,
         'payment_amount': parsed['payment']['payment_amount'],
-        'era_payment_id': era_payment.id,
     }
+    if era_payment is not None:
+        result['era_payment_id'] = era_payment.id
+    return result
 
 
 def scan_eob_directory(folder_path):
@@ -324,12 +365,17 @@ def parse_835_folder(folder_path, recursive=True):
                 results.append({'filename': rel_path, 'status': 'error', 'reason': str(e)})
                 continue
 
-        # Parse the file
+        # Parse the file and perform claim-level deduplication
         try:
             result = parse_835_file(fpath)
-            result['status'] = 'imported'
             result['filename'] = rel_path
-            already_imported.add(fname)  # track for this batch
+            # If every claim in the file was a duplicate, mark the file as skipped
+            if result['claims_new'] == 0 and result['claims_duplicate'] > 0:
+                result['status'] = 'skipped'
+                result['reason'] = 'duplicate claims'
+            else:
+                result['status'] = 'imported'
+                already_imported.add(fname)  # track for this batch
             results.append(result)
         except Exception as e:
             results.append({'filename': rel_path, 'status': 'error', 'reason': str(e)})
@@ -348,10 +394,12 @@ def import_835():
 
         content = file.read().decode('utf-8', errors='replace')
         parsed = parse_835_content(content, file.filename)
-        era_payment = store_parsed_835(parsed)
+        era_payment, claims_new, claims_duplicate = store_parsed_835(parsed)
         return jsonify({
             'files_parsed': 1,
             'claims_found': len(parsed['claims']),
+            'claims_new': claims_new,
+            'claims_duplicate': claims_duplicate,
             'payments_total': parsed['payment']['payment_amount'],
         })
 
@@ -407,9 +455,14 @@ def eob_scan():
     errors = [r for r in results if r.get('status') == 'error']
     dup_content = [r for r in skipped if r.get('reason') == 'duplicate content']
     dup_db = [r for r in skipped if r.get('reason') == 'already imported']
+    dup_claims = [r for r in skipped if r.get('reason') == 'duplicate claims']
     not_835 = [r for r in skipped if r.get('reason') == 'not 835 content']
 
     total_claims = sum(r.get('claims_found', 0) for r in imported)
+    total_claims_new = sum(r.get('claims_new', 0) for r in imported)
+    total_claims_dup = sum(r.get('claims_duplicate', 0) for r in imported)
+    # Also count duplicate claims from files that were fully skipped
+    total_claims_dup += sum(r.get('claims_duplicate', 0) for r in dup_claims)
     total_payments = sum(r.get('payment_amount', 0) for r in imported)
 
     return jsonify({
@@ -421,9 +474,12 @@ def eob_scan():
         'skip_reasons': {
             'duplicate_content': len(dup_content),
             'already_imported': len(dup_db),
+            'duplicate_claims': len(dup_claims),
             'not_835_content': len(not_835),
         },
         'claims_found': total_claims,
+        'claims_new': total_claims_new,
+        'claims_duplicate': total_claims_dup,
         'payments_total': total_payments,
         'details': results,
     })
