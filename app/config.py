@@ -11,6 +11,11 @@ class Config:
         "DATABASE_URL", f"sqlite:///{os.path.join(basedir, 'ocdr.db')}"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # SQLite concurrency: WAL mode + 30s busy timeout prevents "database is locked"
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "connect_args": {"timeout": 30},
+        "pool_pre_ping": True,
+    }
     UPLOAD_FOLDER = os.environ.get(
         "UPLOAD_FOLDER", os.path.join(basedir, "uploads")
     )

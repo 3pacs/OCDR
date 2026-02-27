@@ -176,13 +176,12 @@ def discover_files(root_path, app=None):
 
             if len(batch) >= 500:
                 db.session.bulk_save_objects(batch)
-                db.session.flush()
+                db.session.commit()  # commit per batch to release write lock
                 batch = []
 
     if batch:
         db.session.bulk_save_objects(batch)
-
-    db.session.commit()
+        db.session.commit()
 
     if app:
         app.logger.info(f"Records server discovery: {new_files} new, {updated_files} updated, {unchanged_files} unchanged")

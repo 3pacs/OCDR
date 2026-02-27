@@ -64,9 +64,13 @@ def create_app(config_class=Config, **config_overrides):
             return jsonify({"error": "Internal server error"}), 500
         return (jsonify({"error": "Internal server error"}), 500)
 
+    # ── SQLite WAL mode for concurrent reads during writes ──
+    _enable_wal_mode(app)
+
     # ── Ensure required directories ────────────────────────────
     with app.app_context():
         _ensure_directories(app)
+        _apply_sqlite_wal(app)
         db.create_all()
         _auto_migrate_missing_columns(app)
         _seed_lookup_tables()
@@ -74,6 +78,36 @@ def create_app(config_class=Config, **config_overrides):
         _init_ai_logs(app)
 
     return app
+
+
+def _enable_wal_mode(app):
+    """Register SQLite PRAGMA event listener for every new connection.
+
+    WAL (Write-Ahead Logging) allows concurrent reads while a write
+    transaction is in progress, preventing 'database is locked' errors
+    when long-running imports overlap with dashboard/status queries.
+    """
+    from sqlalchemy import event as sa_event
+
+    with app.app_context():
+        @sa_event.listens_for(db.engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")  # 30 seconds
+            cursor.execute("PRAGMA synchronous=NORMAL")  # safe with WAL
+            cursor.close()
+
+
+def _apply_sqlite_wal(app):
+    """Apply WAL mode to existing database (runs once at startup)."""
+    from sqlalchemy import text
+    try:
+        result = db.session.execute(text("PRAGMA journal_mode=WAL"))
+        mode = result.scalar()
+        app.logger.info(f"SQLite journal mode: {mode}")
+    except Exception as e:
+        app.logger.debug(f"WAL mode setup skipped: {e}")
 
 
 def _setup_logging(app):
