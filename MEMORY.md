@@ -20,6 +20,7 @@
 - **What:** Bespoke DOS-era software from the 1980s, name "Topaz"
 - **Storage:** Flat text files, NOT a real database
 - **Location:** X:\tpzservr\ (giant files, mostly raw data)
+- **File extensions:** NONE — files have no .txt/.dat/.csv extension, just bare names
 - **Format:** Unknown — needs reverse-engineering. Likely fixed-width or custom delimiters
 - **Encoding:** Probably CP437 or ASCII (DOS era)
 - **Goal:** Extract ALL data to phase out Topaz entirely

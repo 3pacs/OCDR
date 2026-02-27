@@ -4,8 +4,9 @@ Imports data from the Topaz system (bespoke 1980s DOS software).
 Topaz stores data as flat text files in X:\\tpzservr\\.
 
 The file format is unknown and must be reverse-engineered from sample data.
-Expected characteristics (1980s DOS era):
-  - Encoding: CP437 or ASCII
+Known characteristics:
+  - Files have NO file extensions (just bare names, no .txt/.dat/.csv)
+  - Encoding: likely CP437 or ASCII (DOS era)
   - Structure: likely fixed-width fields or custom delimiters
   - Dates: probably MM/DD/YY or MMDDYY (2-digit years)
   - No headers: raw data, positional fields
