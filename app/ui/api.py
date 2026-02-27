@@ -911,6 +911,19 @@ def era_payments():
 
     payments = query.paginate(page=page, per_page=per_page, error_out=False)
 
+    # Batch-load claim counts to avoid N+1 queries in to_dict()
+    if payments.items:
+        payment_ids = [p.id for p in payments.items]
+        counts = dict(
+            db.session.query(
+                EraClaimLine.era_payment_id,
+                func.count(EraClaimLine.id),
+            ).filter(EraClaimLine.era_payment_id.in_(payment_ids))
+            .group_by(EraClaimLine.era_payment_id).all()
+        )
+        for p in payments.items:
+            p._claim_count = counts.get(p.id, 0)
+
     return jsonify({
         "items": [p.to_dict() for p in payments.items],
         "total": payments.total,
@@ -1998,52 +2011,47 @@ def _get_underpayment_summary():
 
 
 def _get_filing_deadline_summary(today):
-    """Compute filing deadline summary using SQL aggregates."""
+    """Compute filing deadline summary in a single SQL pass.
+
+    Builds a CASE expression mapping each carrier to its filing deadline,
+    then counts past-deadline and warning records in one aggregate query.
+    """
     payer_map = {p.code: p.filing_deadline_days for p in Payer.query.all()}
     default_days = 180
 
     total_unpaid = BillingRecord.query.filter(BillingRecord.total_payment == 0).count()
 
-    # Compute deadline counts using per-carrier cutoff dates
-    past_deadline = 0
-    warning = 0
+    # Build a single CASE expression for each carrier's deadline days
+    # This avoids the per-carrier query loop
+    deadline_cases = []
+    for carrier, days in payer_map.items():
+        deadline_cases.append((BillingRecord.insurance_carrier == carrier, days))
 
-    # Group unpaid by carrier and count, avoiding full table load
-    carrier_counts = db.session.query(
-        BillingRecord.insurance_carrier,
-        func.count(BillingRecord.id).label("total"),
+    # Fallback for carriers not in payer table
+    deadline_days_expr = case(*deadline_cases, else_=default_days)
+
+    # Compute age in days: today - service_date
+    age_days = func.julianday(today.isoformat()) - func.julianday(BillingRecord.service_date)
+
+    # Single query: count past-deadline and warning records
+    result = db.session.query(
         func.sum(case(
-            (BillingRecord.service_date < today - timedelta(days=365), 1),
+            (age_days > deadline_days_expr, 1),
             else_=0
-        )).label("very_old"),
+        )).label("past_deadline"),
+        func.sum(case(
+            (age_days <= deadline_days_expr,
+             case((age_days > deadline_days_expr - 30, 1), else_=0)),
+            else_=0
+        )).label("warning"),
     ).filter(
-        BillingRecord.total_payment == 0
-    ).group_by(BillingRecord.insurance_carrier).all()
-
-    # For more precise counting, iterate carrier groups with SQL
-    for carrier, count, very_old in carrier_counts:
-        deadline_days = payer_map.get(carrier, default_days)
-        cutoff_past = today - timedelta(days=deadline_days)
-        cutoff_warning = today - timedelta(days=deadline_days - 30)
-
-        past_count = BillingRecord.query.filter(
-            BillingRecord.total_payment == 0,
-            BillingRecord.insurance_carrier == carrier,
-            BillingRecord.service_date < cutoff_past,
-        ).count()
-        past_deadline += past_count
-
-        warn_count = BillingRecord.query.filter(
-            BillingRecord.total_payment == 0,
-            BillingRecord.insurance_carrier == carrier,
-            BillingRecord.service_date >= cutoff_past,
-            BillingRecord.service_date < cutoff_warning,
-        ).count()
-        warning += warn_count
+        BillingRecord.total_payment == 0,
+        BillingRecord.service_date.isnot(None),
+    ).first()
 
     return {
-        "past_deadline": past_deadline,
-        "warning": warning,
+        "past_deadline": int(result.past_deadline or 0),
+        "warning": int(result.warning or 0),
         "total_unpaid": total_unpaid,
     }
 

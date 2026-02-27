@@ -134,18 +134,24 @@ class EraPayment(db.Model):
 
     claim_lines = db.relationship("EraClaimLine", backref="era_payment", lazy=True)
 
+    # Pre-populated by batch queries to avoid N+1
+    _claim_count = None
+
     def to_dict(self):
-        # Use a lightweight COUNT query instead of loading all claim_lines (N+1 fix)
-        from sqlalchemy import text
-        from sqlalchemy.orm import object_session
-        session = object_session(self)
-        if session and self.id:
-            claim_count = session.execute(
-                text("SELECT COUNT(*) FROM era_claim_lines WHERE era_payment_id = :pid"),
-                {"pid": self.id}
-            ).scalar() or 0
+        # Use pre-populated count if available, else fallback to single query
+        if self._claim_count is not None:
+            claim_count = self._claim_count
         else:
-            claim_count = 0
+            from sqlalchemy import text
+            from sqlalchemy.orm import object_session
+            session = object_session(self)
+            if session and self.id:
+                claim_count = session.execute(
+                    text("SELECT COUNT(*) FROM era_claim_lines WHERE era_payment_id = :pid"),
+                    {"pid": self.id}
+                ).scalar() or 0
+            else:
+                claim_count = 0
 
         return {
             "id": self.id,

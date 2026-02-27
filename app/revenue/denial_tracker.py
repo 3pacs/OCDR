@@ -123,18 +123,19 @@ def resolve_denial(billing_id, resolution="RESOLVED", payment_amount=None):
 
     record.denial_status = resolution
     if payment_amount is not None:
-        record.total_payment = payment_amount
         record.primary_payment = payment_amount
         record.secondary_payment = 0.0
+        record.total_payment = payment_amount  # primary + secondary(0)
 
     # Record denial outcome for learning (SM-03)
     try:
         from app.revenue.denial_memory import record_denial_outcome
-        outcome_type = "WRITTEN_OFF" if resolution == "WRITTEN_OFF" else (
-            "RECOVERED" if payment_amount and payment_amount > 0 else "WRITTEN_OFF"
-        )
-        if payment_amount and payment_amount > 0:
+        if resolution == "WRITTEN_OFF":
+            outcome_type = "WRITTEN_OFF"
+        elif payment_amount and payment_amount > 0:
             outcome_type = "RECOVERED"
+        else:
+            outcome_type = "WRITTEN_OFF"
         record_denial_outcome(billing_id, outcome_type, payment_amount or 0.0)
     except Exception:
         pass  # Don't break resolve if learning fails
