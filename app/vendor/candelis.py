@@ -53,7 +53,9 @@ class CandelisConnector(BaseConnector):
             headless=self.headless,
             downloads_path=self.download_dir,
         )
-        self._page = self._browser.new_page()
+        # Local RIS servers often have self-signed or outdated TLS certs
+        context = self._browser.new_context(ignore_https_errors=True)
+        self._page = context.new_page()
 
         logger.info(f'Navigating to Candelis login at {portal_url}...')
         self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
@@ -110,7 +112,8 @@ class CandelisConnector(BaseConnector):
                     continue
 
             if not filled_user:
-                logger.error('Could not find username field on Candelis login page')
+                self._last_login_error = 'Candelis login: could not find username field'
+                logger.error(self._last_login_error)
                 return False
 
             # Find and fill password
@@ -127,7 +130,8 @@ class CandelisConnector(BaseConnector):
                     continue
 
             if not filled_pass:
-                logger.error('Could not find password field on Candelis login page')
+                self._last_login_error = 'Candelis login: could not find password field'
+                logger.error(self._last_login_error)
                 return False
 
             # Click submit
@@ -150,18 +154,20 @@ class CandelisConnector(BaseConnector):
             self._page.wait_for_load_state('networkidle', timeout=15000)
 
         except Exception as e:
-            logger.error(f'Candelis login form interaction failed: {e}')
+            self._last_login_error = f'Candelis login form error: {e}'
+            logger.error(self._last_login_error)
             return False
 
         # Check login success — if still on login page, it failed
         current_url = self._page.url.lower()
         if 'login' in current_url or 'signin' in current_url or 'logon' in current_url:
             # Also check for error messages on the page
-            error_text = self._page.query_selector('.error, .alert-danger, .login-error, #errorMsg')
-            if error_text:
-                logger.error(f'Candelis login failed: {error_text.inner_text()}')
+            error_el = self._page.query_selector('.error, .alert-danger, .login-error, #errorMsg')
+            if error_el:
+                self._last_login_error = f'Candelis login rejected: {error_el.inner_text().strip()}'
             else:
-                logger.error('Candelis login failed — still on login page.')
+                self._last_login_error = 'Candelis login failed — wrong credentials or account locked'
+            logger.error(self._last_login_error)
             return False
 
         self._authenticated = True

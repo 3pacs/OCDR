@@ -31,6 +31,7 @@ class BaseConnector(ABC):
         self.download_dir = download_dir
         os.makedirs(self.download_dir, exist_ok=True)
         self._authenticated = False
+        self._last_login_error = None
 
     @abstractmethod
     def login(self, username, password, **kwargs):
@@ -69,10 +70,11 @@ class BaseConnector(ABC):
         try:
             logger.info(f'[{self.VENDOR_NAME}] Logging in as {username}...')
             if not self.login(username, password, **kwargs):
+                detail = self._last_login_error or 'Login failed'
                 return {
                     'vendor': self.VENDOR_NAME,
                     'files': [],
-                    'errors': ['Login failed'],
+                    'errors': [detail],
                 }
 
             logger.info(f'[{self.VENDOR_NAME}] Downloading files...')

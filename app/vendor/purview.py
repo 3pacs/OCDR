@@ -54,7 +54,8 @@ class PurviewConnector(BaseConnector):
             headless=self.headless,
             downloads_path=self.download_dir,
         )
-        self._page = self._browser.new_page()
+        context = self._browser.new_context(ignore_https_errors=True)
+        self._page = context.new_page()
 
         logger.info(f'Navigating to Purview login at {portal_url}...')
         self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
@@ -99,7 +100,8 @@ class PurviewConnector(BaseConnector):
                     continue
 
             if not filled_user:
-                logger.error('Could not find username field on Purview login')
+                self._last_login_error = 'Purview login: could not find username field'
+                logger.error(self._last_login_error)
                 return False
 
             # Fill password
@@ -115,7 +117,8 @@ class PurviewConnector(BaseConnector):
                     continue
 
             if not filled_pass:
-                logger.error('Could not find password field on Purview login')
+                self._last_login_error = 'Purview login: could not find password field'
+                logger.error(self._last_login_error)
                 return False
 
             # Submit
@@ -136,13 +139,31 @@ class PurviewConnector(BaseConnector):
             self._page.wait_for_load_state('networkidle', timeout=15000)
 
         except Exception as e:
-            logger.error(f'Purview login form interaction failed: {e}')
+            self._last_login_error = f'Purview login form error: {e}'
+            logger.error(self._last_login_error)
             return False
 
         # Check login success
         current_url = self._page.url.lower()
         if 'login' in current_url or 'signin' in current_url:
-            logger.error('Purview login failed — still on login page.')
+            # Grab page text for diagnostics (error banners, etc.)
+            error_text = ''
+            for sel in ['.error', '.alert-danger', '.login-error', '[role="alert"]',
+                        '.error-message', '.form-error', '.text-danger']:
+                try:
+                    el = self._page.query_selector(sel)
+                    if el:
+                        error_text = el.inner_text().strip()
+                        break
+                except Exception:
+                    continue
+            if error_text:
+                self._last_login_error = f'Purview login rejected: {error_text}'
+            else:
+                self._last_login_error = (
+                    'Purview login failed — wrong credentials, MFA required, or IP restriction'
+                )
+            logger.error(self._last_login_error)
             return False
 
         self._authenticated = True
