@@ -148,6 +148,12 @@
 
             <li class="nav-section-label">Data Management</li>
             <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.vendor_connections_page' %}active{% endif %}" href="/vendor-connections">
+                    <i class="bi bi-plug-fill"></i>
+                    <span>Vendor Connections</span>
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'ui.import_page' %}active{% endif %}" href="/import">
                     <i class="bi bi-cloud-upload-fill"></i>
                     <span>Import Data</span>

@@ -1,11 +1,11 @@
-"""Purview (Ambra Health / Intelerad) PACS connector.
+"""Candelis RadSuite RIS connector.
 
-Downloads study data, reports, and patient metadata from Purview's web portal.
-OUTBOUND-ONLY — only your login credentials are sent to Purview.
+Downloads billing records and schedule data from the Candelis web portal.
+OUTBOUND-ONLY — only your login credentials are sent to Candelis.
 No OCDR data is ever transmitted.
 
-Purview is a cloud-based medical image management platform.
-The user's portal is at https://image-us-east1.purview.net/login
+Candelis RadSuite is a Radiology Information System accessed via web browser
+on the local network (e.g., http://10.254.111.108).
 
 Requires: pip install playwright && playwright install chromium
 """
@@ -13,19 +13,18 @@ import os
 import csv
 import json
 import logging
+import tempfile
 from datetime import datetime, timedelta
 
 from app.vendor.base_connector import BaseConnector
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PURVIEW_URL = 'https://image-us-east1.purview.net/login'
 
+class CandelisConnector(BaseConnector):
+    """Download billing and schedule data from Candelis RadSuite portal."""
 
-class PurviewConnector(BaseConnector):
-    """Download study data and reports from Purview PACS portal."""
-
-    VENDOR_NAME = 'purview'
+    VENDOR_NAME = 'candelis'
     DOWNLOAD_EXTENSIONS = ('.csv', '.xlsx', '.xls', '.pdf', '.txt')
 
     def __init__(self, download_dir=None, headless=True, portal_url=None):
@@ -34,10 +33,10 @@ class PurviewConnector(BaseConnector):
         self._page = None
         self._playwright = None
         self.headless = headless
-        self.portal_url = portal_url or DEFAULT_PURVIEW_URL
+        self.portal_url = portal_url or 'http://10.254.111.108'
 
     def login(self, username, password, **kwargs):
-        """Log into Purview portal."""
+        """Log into Candelis RadSuite portal."""
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -56,37 +55,48 @@ class PurviewConnector(BaseConnector):
         )
         self._page = self._browser.new_page()
 
-        logger.info(f'Navigating to Purview login at {portal_url}...')
+        logger.info(f'Navigating to Candelis login at {portal_url}...')
         self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
 
-        # Purview uses various form layouts depending on version
+        # Candelis RadSuite uses various login form layouts
+        # Try common selectors for username/password fields
         username_selectors = [
             'input[name="username"]',
-            'input[name="email"]',
+            'input[name="userName"]',
+            'input[name="user"]',
+            'input[name="login"]',
+            'input[type="text"][id*="user" i]',
+            'input[type="text"][id*="login" i]',
             'input[type="email"]',
             '#username',
-            '#email',
-            'input[placeholder*="username" i]',
-            'input[placeholder*="email" i]',
+            '#txtUsername',
+            '#txtUser',
+            '#UserName',
         ]
 
         password_selectors = [
             'input[name="password"]',
+            'input[name="passwd"]',
             'input[type="password"]',
             '#password',
+            '#txtPassword',
+            '#Password',
         ]
 
         submit_selectors = [
             'button[type="submit"]',
             'input[type="submit"]',
-            '#loginButton',
+            '#btnLogin',
+            '#btnSubmit',
             'button:has-text("Log In")',
             'button:has-text("Login")',
             'button:has-text("Sign In")',
+            'input[value="Login"]',
+            'input[value="Log In"]',
         ]
 
         try:
-            # Fill username
+            # Find and fill username
             filled_user = False
             for sel in username_selectors:
                 try:
@@ -94,15 +104,16 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.fill(username)
                         filled_user = True
+                        logger.info(f'Filled username via {sel}')
                         break
                 except Exception:
                     continue
 
             if not filled_user:
-                logger.error('Could not find username field on Purview login')
+                logger.error('Could not find username field on Candelis login page')
                 return False
 
-            # Fill password
+            # Find and fill password
             filled_pass = False
             for sel in password_selectors:
                 try:
@@ -110,15 +121,16 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.fill(password)
                         filled_pass = True
+                        logger.info(f'Filled password via {sel}')
                         break
                 except Exception:
                     continue
 
             if not filled_pass:
-                logger.error('Could not find password field on Purview login')
+                logger.error('Could not find password field on Candelis login page')
                 return False
 
-            # Submit
+            # Click submit
             submitted = False
             for sel in submit_selectors:
                 try:
@@ -126,36 +138,41 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.click()
                         submitted = True
+                        logger.info(f'Clicked submit via {sel}')
                         break
                 except Exception:
                     continue
 
             if not submitted:
+                # Try pressing Enter as fallback
                 self._page.keyboard.press('Enter')
 
             self._page.wait_for_load_state('networkidle', timeout=15000)
 
         except Exception as e:
-            logger.error(f'Purview login form interaction failed: {e}')
+            logger.error(f'Candelis login form interaction failed: {e}')
             return False
 
-        # Check login success
+        # Check login success — if still on login page, it failed
         current_url = self._page.url.lower()
-        if 'login' in current_url or 'signin' in current_url:
-            logger.error('Purview login failed — still on login page.')
+        if 'login' in current_url or 'signin' in current_url or 'logon' in current_url:
+            # Also check for error messages on the page
+            error_text = self._page.query_selector('.error, .alert-danger, .login-error, #errorMsg')
+            if error_text:
+                logger.error(f'Candelis login failed: {error_text.inner_text()}')
+            else:
+                logger.error('Candelis login failed — still on login page.')
             return False
 
         self._authenticated = True
-        logger.info('Purview login successful.')
+        logger.info('Candelis login successful.')
         return True
 
     def download_files(self, date_from=None, date_to=None):
-        """Download available reports and study data from Purview.
+        """Download billing and schedule data from Candelis.
 
-        Tries multiple strategies:
-        1. Use built-in export/download buttons
-        2. Scrape the study list table
-        3. Navigate to reports section
+        Navigates to reports/export sections and downloads available data.
+        Returns list of downloaded file info dicts.
         """
         if not self._authenticated:
             raise RuntimeError('Not logged in. Call login() first.')
@@ -167,29 +184,76 @@ class PurviewConnector(BaseConnector):
 
         downloaded = []
 
-        # Strategy 1: Look for export/download links on current page
-        downloaded.extend(self._try_page_exports())
+        # Try multiple approaches to find and download data
+        # 1. Look for report/export sections in the navigation
+        downloaded.extend(self._try_export_reports(date_from, date_to))
 
-        # Strategy 2: Scrape study list
-        downloaded.extend(self._try_scrape_study_list(date_from, date_to))
+        # 2. Try to scrape billing data directly from tables
+        downloaded.extend(self._try_scrape_billing(date_from, date_to))
 
-        # Strategy 3: Navigate to reports section
-        downloaded.extend(self._try_reports_section(date_from, date_to))
+        # 3. Try to scrape schedule data
+        downloaded.extend(self._try_scrape_schedule(date_from, date_to))
 
         return downloaded
 
-    def _try_page_exports(self):
-        """Look for export/download buttons on current page."""
+    def _try_export_reports(self, date_from, date_to):
+        """Look for built-in export/report functionality."""
+        downloaded = []
+
+        # Common navigation patterns in Candelis RadSuite
+        nav_patterns = [
+            # Billing reports
+            ('a[href*="report" i]', 'billing'),
+            ('a[href*="billing" i]', 'billing'),
+            ('a[href*="charge" i]', 'billing'),
+            ('a[href*="claim" i]', 'billing'),
+            ('a:has-text("Reports")', 'billing'),
+            ('a:has-text("Billing")', 'billing'),
+            # Schedule
+            ('a[href*="schedule" i]', 'schedule'),
+            ('a[href*="worklist" i]', 'schedule'),
+            ('a:has-text("Schedule")', 'schedule'),
+            # Export
+            ('a[href*="export" i]', 'export'),
+            ('button:has-text("Export")', 'export'),
+        ]
+
+        for selector, data_type in nav_patterns:
+            try:
+                link = self._page.query_selector(selector)
+                if link and link.is_visible():
+                    logger.info(f'Found {data_type} link: {selector}')
+                    link.click()
+                    self._page.wait_for_load_state('networkidle', timeout=10000)
+
+                    # Look for export/download buttons on the resulting page
+                    files = self._find_and_click_downloads(data_type)
+                    downloaded.extend(files)
+
+                    # Go back for next attempt
+                    self._page.go_back()
+                    self._page.wait_for_load_state('networkidle', timeout=5000)
+            except Exception as e:
+                logger.debug(f'Nav pattern {selector} failed: {e}')
+                continue
+
+        return downloaded
+
+    def _find_and_click_downloads(self, data_type):
+        """Find and click download/export buttons on current page."""
         downloaded = []
 
         export_selectors = [
             'a[href*="export" i]',
             'a[href*="download" i]',
+            'a[href*=".csv" i]',
+            'a[href*=".xlsx" i]',
             'button:has-text("Export")',
             'button:has-text("Download")',
             'button:has-text("CSV")',
-            'a:has-text("Export")',
-            'a:has-text("Download")',
+            'button:has-text("Excel")',
+            'input[value*="Export" i]',
+            'input[value*="Download" i]',
         ]
 
         for sel in export_selectors:
@@ -217,8 +281,9 @@ class PurviewConnector(BaseConnector):
                             'filename': download.suggested_filename,
                             'filepath': filepath,
                             'file_type': file_type_map.get(ext, 'unknown'),
+                            'data_type': data_type,
                             'size': os.path.getsize(filepath),
-                            'source': 'purview_export',
+                            'source': 'candelis_export',
                         })
                         logger.info(f'Downloaded: {download.suggested_filename}')
                     except Exception as e:
@@ -228,101 +293,110 @@ class PurviewConnector(BaseConnector):
 
         return downloaded
 
-    def _try_scrape_study_list(self, date_from, date_to):
-        """Scrape the study list table from Purview."""
+    def _try_scrape_billing(self, date_from, date_to):
+        """Try to scrape billing data directly from page tables."""
         downloaded = []
 
-        # Purview typically shows a study list with patient info
-        study_nav = [
-            'a:has-text("Studies")',
-            'a:has-text("Study List")',
-            'a:has-text("Worklist")',
-            'a[href*="study" i]',
-            'a[href*="worklist" i]',
+        # Try navigating to billing/charges section
+        billing_urls = [
+            '/billing', '/charges', '/claims',
+            '/reports/billing', '/reports/charges',
+            '/Billing', '/Charges', '/Claims',
         ]
 
-        for sel in study_nav:
+        for path in billing_urls:
             try:
-                el = self._page.query_selector(sel)
-                if el and el.is_visible():
-                    el.click()
-                    self._page.wait_for_load_state('networkidle', timeout=10000)
-                    break
-            except Exception:
+                url = self.portal_url.rstrip('/') + path
+                self._page.goto(url, wait_until='networkidle', timeout=10000)
+
+                # Check if page loaded (not 404 or redirect to login)
+                if 'login' in self._page.url.lower():
+                    continue
+
+                # Try to set date range if date fields exist
+                self._try_set_date_range(date_from, date_to)
+
+                # Look for data tables
+                rows = self._scrape_table_data()
+                if rows:
+                    filepath = self._save_scraped_csv(
+                        rows, f'candelis_billing_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                    )
+                    downloaded.append({
+                        'filename': os.path.basename(filepath),
+                        'filepath': filepath,
+                        'file_type': 'csv',
+                        'data_type': 'billing',
+                        'size': os.path.getsize(filepath),
+                        'source': 'candelis_scrape',
+                        'rows': len(rows),
+                    })
+                    logger.info(f'Scraped {len(rows)} billing rows from {path}')
+            except Exception as e:
+                logger.debug(f'Billing scrape from {path} failed: {e}')
                 continue
-
-        # Try to set date filters
-        self._try_set_date_range(date_from, date_to)
-
-        # Scrape the table
-        rows = self._scrape_table_data()
-        if rows:
-            filename = f'purview_studies_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-            filepath = self._save_scraped_csv(rows, filename)
-            if filepath:
-                downloaded.append({
-                    'filename': filename,
-                    'filepath': filepath,
-                    'file_type': 'csv',
-                    'data_type': 'studies',
-                    'size': os.path.getsize(filepath),
-                    'source': 'purview_scrape',
-                    'rows': len(rows),
-                })
-                logger.info(f'Scraped {len(rows)} study rows from Purview')
 
         return downloaded
 
-    def _try_reports_section(self, date_from, date_to):
-        """Navigate to reports section and download available reports."""
+    def _try_scrape_schedule(self, date_from, date_to):
+        """Try to scrape schedule data directly from page tables."""
         downloaded = []
 
-        report_nav = [
-            'a:has-text("Reports")',
-            'a:has-text("Analytics")',
-            'a[href*="report" i]',
-            'a[href*="analytics" i]',
+        schedule_urls = [
+            '/schedule', '/worklist', '/appointments',
+            '/Schedule', '/Worklist', '/Appointments',
+            '/reports/schedule',
         ]
 
-        for sel in report_nav:
+        for path in schedule_urls:
             try:
-                el = self._page.query_selector(sel)
-                if el and el.is_visible():
-                    el.click()
-                    self._page.wait_for_load_state('networkidle', timeout=10000)
+                url = self.portal_url.rstrip('/') + path
+                self._page.goto(url, wait_until='networkidle', timeout=10000)
 
-                    # Look for downloadable reports
-                    files = self._try_page_exports()
-                    downloaded.extend(files)
+                if 'login' in self._page.url.lower():
+                    continue
 
-                    self._page.go_back()
-                    self._page.wait_for_load_state('networkidle', timeout=5000)
-                    break
-            except Exception:
+                self._try_set_date_range(date_from, date_to)
+
+                rows = self._scrape_table_data()
+                if rows:
+                    filepath = self._save_scraped_csv(
+                        rows, f'candelis_schedule_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+                    )
+                    downloaded.append({
+                        'filename': os.path.basename(filepath),
+                        'filepath': filepath,
+                        'file_type': 'csv',
+                        'data_type': 'schedule',
+                        'size': os.path.getsize(filepath),
+                        'source': 'candelis_scrape',
+                        'rows': len(rows),
+                    })
+                    logger.info(f'Scraped {len(rows)} schedule rows from {path}')
+            except Exception as e:
+                logger.debug(f'Schedule scrape from {path} failed: {e}')
                 continue
 
         return downloaded
 
     def _try_set_date_range(self, date_from, date_to):
-        """Try to set date filter fields on current page."""
+        """Try to set date range fields if they exist on the page."""
         date_from_selectors = [
             'input[name*="from" i]', 'input[name*="start" i]',
             'input[id*="from" i]', 'input[id*="start" i]',
+            'input[name*="dateFrom" i]', '#txtDateFrom',
             'input[type="date"]:first-of-type',
-            'input[placeholder*="from" i]',
-            'input[placeholder*="start" i]',
         ]
         date_to_selectors = [
             'input[name*="to" i]', 'input[name*="end" i]',
             'input[id*="to" i]', 'input[id*="end" i]',
+            'input[name*="dateTo" i]', '#txtDateTo',
             'input[type="date"]:last-of-type',
-            'input[placeholder*="to" i]',
-            'input[placeholder*="end" i]',
         ]
         search_selectors = [
             'button:has-text("Search")', 'button:has-text("Go")',
-            'button:has-text("Filter")', 'button:has-text("Apply")',
-            'button[type="submit"]', 'input[type="submit"]',
+            'button:has-text("Filter")', 'input[type="submit"]',
+            'button[type="submit"]', '#btnSearch',
         ]
 
         for sel in date_from_selectors:
@@ -354,14 +428,19 @@ class PurviewConnector(BaseConnector):
                 continue
 
     def _scrape_table_data(self):
-        """Scrape data from HTML tables on current page with pagination."""
+        """Scrape data from HTML tables on the current page.
+
+        Handles pagination by looking for 'Next' buttons.
+        Returns list of dicts (column_name -> value).
+        """
         all_rows = []
-        max_pages = 200
+        max_pages = 200  # Safety limit
 
         for _ in range(max_pages):
             tables = self._page.query_selector_all('table')
             for table in tables:
                 try:
+                    # Get headers
                     headers = []
                     th_elements = table.query_selector_all('thead th, tr:first-child th')
                     if not th_elements:
@@ -371,9 +450,10 @@ class PurviewConnector(BaseConnector):
                     if not headers or len(headers) < 2:
                         continue
 
+                    # Get data rows
                     body_rows = table.query_selector_all('tbody tr')
                     if not body_rows:
-                        body_rows = table.query_selector_all('tr')[1:]
+                        body_rows = table.query_selector_all('tr')[1:]  # Skip header row
 
                     for tr in body_rows:
                         cells = tr.query_selector_all('td')
@@ -384,14 +464,16 @@ class PurviewConnector(BaseConnector):
                             row[headers[i]] = cell.inner_text().strip()
                         if any(v for v in row.values()):
                             all_rows.append(row)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f'Table scrape error: {e}')
                     continue
 
-            # Pagination
+            # Try pagination
             next_btn = None
             for sel in [
                 'a:has-text("Next")', 'button:has-text("Next")',
-                '.pagination .next a', 'a.next',
+                'a:has-text(">")', '.pagination .next a',
+                'a.next', '#btnNext',
             ]:
                 try:
                     el = self._page.query_selector(sel)
@@ -413,7 +495,7 @@ class PurviewConnector(BaseConnector):
         return all_rows
 
     def _save_scraped_csv(self, rows, filename):
-        """Save scraped table data as CSV."""
+        """Save scraped table data as a CSV file."""
         if not rows:
             return None
 

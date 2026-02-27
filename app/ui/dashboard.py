@@ -100,6 +100,11 @@ def import_page():
     return render_template("import_data.html")
 
 
+@ui_bp.route("/vendor-connections")
+def vendor_connections_page():
+    return render_template("vendor_connections.html")
+
+
 @ui_bp.route("/admin")
 def admin_page():
     return render_template("admin.html")
