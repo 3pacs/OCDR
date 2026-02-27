@@ -303,6 +303,16 @@ def smart_import():
     try:
         file.save(tmp_path)
         result = route_file(tmp_path, file.filename)
+        # Log import event to AI communication log
+        try:
+            from app.llm.ai_log import log_system_event
+            log_system_event("file_import", {
+                "source_file": file.filename,
+                "import_source": result.get("format", "unknown"),
+                "status": "success" if not result.get("error") else "error",
+            })
+        except Exception:
+            pass
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500

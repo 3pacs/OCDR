@@ -71,6 +71,7 @@ def create_app(config_class=Config, **config_overrides):
         _auto_migrate_missing_columns(app)
         _seed_lookup_tables()
         _ensure_default_admin()
+        _init_ai_logs(app)
 
     return app
 
@@ -166,7 +167,8 @@ def _auto_migrate_missing_columns(app):
 
 def _ensure_directories(app):
     """Create all required directories on startup."""
-    for folder_key in ("UPLOAD_FOLDER", "EXPORT_FOLDER", "BACKUP_FOLDER", "SCHEDULE_FOLDER"):
+    for folder_key in ("UPLOAD_FOLDER", "EXPORT_FOLDER", "BACKUP_FOLDER",
+                        "SCHEDULE_FOLDER", "AI_LOG_FOLDER"):
         folder = app.config.get(folder_key)
         if folder:
             os.makedirs(folder, exist_ok=True)
@@ -217,6 +219,20 @@ def _seed_lookup_tables():
         db.session.add(CasReasonCode(code=code, group_code=group, description=desc, category=cat))
 
     db.session.commit()
+
+
+def _init_ai_logs(app):
+    """Initialize AI communication log directory and instruction files."""
+    try:
+        from app.llm.ai_log import write_ai_instructions, log_system_event
+        write_ai_instructions()
+        log_system_event("app_startup", {
+            "status": "initialized",
+            "ai_log_folder": app.config.get("AI_LOG_FOLDER", "ai_logs"),
+        })
+        app.logger.info("AI communication logs initialized")
+    except Exception as e:
+        app.logger.debug(f"AI log init skipped: {e}")
 
 
 def _ensure_default_admin():

@@ -34,3 +34,13 @@ class Config:
 
     # Anthropic API (for AI-assisted import — only structural metadata sent, never PHI)
     ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    # AI communication logs
+    AI_LOG_FOLDER = os.environ.get(
+        "AI_LOG_FOLDER", os.path.join(basedir, "ai_logs")
+    )
+
+    # PHI encryption key (Fernet, base64-encoded 32-byte key)
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # If not set, auto-generated per session (logs won't survive restarts without a stable key)
+    PHI_ENCRYPTION_KEY = os.environ.get("PHI_ENCRYPTION_KEY", "")

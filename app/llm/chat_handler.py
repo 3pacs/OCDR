@@ -25,6 +25,7 @@ from app.llm.prompt_templates import (
 )
 from app.llm.local_bridge import query_local_llm, is_llm_available
 from app.llm.anthropic_bridge import query_anthropic, is_anthropic_available
+from app.llm.ai_log import log_chat, log_system_event
 
 logger = logging.getLogger(__name__)
 
@@ -61,20 +62,25 @@ def handle_chat_message(message: str) -> dict:
     # Strategy 1: Try local LLM (Ollama)
     result = _try_llm(message)
     if result is not None:
+        _log_interaction(message, result)
         return result
 
     # Strategy 2: Try Anthropic API (Claude)
     result = _try_anthropic(message)
     if result is not None:
+        _log_interaction(message, result)
         return result
 
     # Strategy 3: Try template matching
     result = _try_template(message)
     if result is not None:
+        _log_interaction(message, result)
         return result
 
     # Strategy 4: Fallback
-    return _fallback_response(message)
+    result = _fallback_response(message)
+    _log_interaction(message, result)
+    return result
 
 
 # ── Strategy 1: Local LLM ──────────────────────────────────────────
@@ -352,3 +358,17 @@ def _fallback_response(message: str) -> dict:
         "query_used": None,
         "source": "fallback",
     }
+
+
+def _log_interaction(message: str, result: dict):
+    """Log a chat interaction to the AI communication log (best-effort)."""
+    try:
+        log_chat(
+            question=message,
+            response=result.get("response", ""),
+            source=result.get("source", "unknown"),
+            query_used=result.get("query_used"),
+        )
+    except Exception:
+        # Logging failures must never break chat
+        pass

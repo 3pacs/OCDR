@@ -3093,6 +3093,115 @@ def set_patient_topaz_id(patient_name):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  AI Log Communication Endpoints
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/ai-log/chat")
+def ai_log_chat():
+    """Read recent chat history from AI logs (PHI redacted)."""
+    try:
+        from app.llm.ai_log import get_chat_history
+        tail = request.args.get("tail", 50, type=int)
+        tail = min(max(1, tail), 200)
+        return jsonify({"entries": get_chat_history(tail=tail)})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/insights")
+def ai_log_insights():
+    """Read recent AI-generated insights."""
+    try:
+        from app.llm.ai_log import get_insights
+        tail = request.args.get("tail", 50, type=int)
+        tail = min(max(1, tail), 200)
+        return jsonify({"entries": get_insights(tail=tail)})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/insight", methods=["POST"])
+def ai_log_post_insight():
+    """Post a new insight (for external AI tools like Claude Code)."""
+    try:
+        from app.llm.ai_log import log_insight
+        body = request.get_json()
+        if not body or "title" not in body or "message" not in body:
+            return jsonify({"error": "'title' and 'message' required"}), 400
+        log_insight(
+            title=body["title"],
+            message=body["message"],
+            severity=body.get("severity", "info"),
+            category=body.get("category", "general"),
+            data=body.get("data"),
+        )
+        return jsonify({"status": "logged"})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/actions")
+def ai_log_actions():
+    """Read recent action recommendations."""
+    try:
+        from app.llm.ai_log import get_actions
+        tail = request.args.get("tail", 50, type=int)
+        tail = min(max(1, tail), 200)
+        status = request.args.get("status")
+        return jsonify({"entries": get_actions(tail=tail, status=status)})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/action", methods=["POST"])
+def ai_log_post_action():
+    """Post a recommended action (for external AI tools)."""
+    try:
+        from app.llm.ai_log import log_action
+        body = request.get_json()
+        if not body or "action" not in body or "reason" not in body:
+            return jsonify({"error": "'action' and 'reason' required"}), 400
+        log_action(
+            action=body["action"],
+            reason=body["reason"],
+            priority=body.get("priority", "normal"),
+            target=body.get("target"),
+        )
+        return jsonify({"status": "logged"})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/system")
+def ai_log_system():
+    """Read recent system events from AI logs."""
+    try:
+        from app.llm.ai_log import get_system_events
+        tail = request.args.get("tail", 50, type=int)
+        tail = min(max(1, tail), 200)
+        return jsonify({"entries": get_system_events(tail=tail)})
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+@api_bp.route("/ai-log/context")
+def ai_log_context():
+    """Read or refresh the current context snapshot."""
+    try:
+        from app.llm.ai_log import read_context_snapshot, write_context_snapshot
+        refresh = request.args.get("refresh", "false").lower() == "true"
+        if refresh:
+            snapshot = write_context_snapshot()
+        else:
+            snapshot = read_context_snapshot()
+            if not snapshot:
+                snapshot = write_context_snapshot()
+        return jsonify(snapshot)
+    except ImportError:
+        return jsonify({"error": "AI log module not available"}), 501
+
+
+# ══════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════
 
