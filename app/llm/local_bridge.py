@@ -22,7 +22,7 @@ def query_local_llm(prompt: str, system_prompt: str | None = None,
                      model: str | None = None) -> str:
     """Send a prompt to the local LLM and return the response text.
 
-    Uses the Ollama ``/api/generate`` endpoint with streaming disabled.
+    Uses the Ollama ``/api/chat`` endpoint with streaming disabled.
 
     Args:
         prompt: The user prompt to send.
@@ -36,15 +36,18 @@ def query_local_llm(prompt: str, system_prompt: str | None = None,
     """
     endpoint = endpoint or _DEFAULT_ENDPOINT
     model = model or _DEFAULT_MODEL
-    url = f"{endpoint}/api/generate"
+    url = f"{endpoint}/api/chat"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
 
     body: dict = {
         "model": model,
-        "prompt": prompt,
+        "messages": messages,
         "stream": False,
     }
-    if system_prompt:
-        body["system"] = system_prompt
 
     try:
         data = json.dumps(body).encode("utf-8")
@@ -56,7 +59,8 @@ def query_local_llm(prompt: str, system_prompt: str | None = None,
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:
             resp_data = json.loads(resp.read().decode("utf-8"))
-            return resp_data.get("response", "")
+            message = resp_data.get("message", {})
+            return message.get("content", "")
     except (urllib.error.URLError, urllib.error.HTTPError,
             OSError, json.JSONDecodeError, KeyError, TypeError):
         return ""

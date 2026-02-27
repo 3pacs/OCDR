@@ -2930,6 +2930,169 @@ def records_server_reset():
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Patient Profiles (linked to Topaz patient IDs)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/patients")
+def list_patients():
+    """GET /api/patients - List unique patients with summary stats.
+
+    Query params: search, carrier, modality, page, per_page
+    Returns aggregated patient data (total scans, total payments, etc.)
+    """
+    search = request.args.get("search", "").strip()
+    carrier = request.args.get("carrier", "").strip()
+    modality = request.args.get("modality", "").strip()
+    page = request.args.get("page", 1, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
+
+    # Subquery to aggregate billing data per patient_name
+    query = db.session.query(
+        BillingRecord.patient_name,
+        func.count(BillingRecord.id).label("total_scans"),
+        func.sum(BillingRecord.total_payment).label("total_payments"),
+        func.min(BillingRecord.service_date).label("first_visit"),
+        func.max(BillingRecord.service_date).label("last_visit"),
+        func.max(BillingRecord.topaz_patient_id).label("topaz_patient_id"),
+        func.group_concat(func.distinct(BillingRecord.modality)).label("modalities"),
+        func.group_concat(func.distinct(BillingRecord.insurance_carrier)).label("carriers"),
+    ).group_by(BillingRecord.patient_name)
+
+    if search:
+        escaped = _escape_like(search)
+        query = query.filter(BillingRecord.patient_name.ilike(f"%{escaped}%"))
+    if carrier:
+        query = query.filter(BillingRecord.insurance_carrier == carrier.upper())
+    if modality:
+        query = query.filter(BillingRecord.modality == modality.upper())
+
+    query = query.order_by(BillingRecord.patient_name)
+
+    # Manual pagination on grouped query
+    total = query.count()
+    rows = query.offset((page - 1) * per_page).limit(per_page).all()
+
+    items = []
+    for row in rows:
+        items.append({
+            "patient_name": row.patient_name,
+            "topaz_patient_id": row.topaz_patient_id,
+            "total_scans": row.total_scans,
+            "total_payments": round(row.total_payments or 0, 2),
+            "first_visit": row.first_visit.isoformat() if row.first_visit else None,
+            "last_visit": row.last_visit.isoformat() if row.last_visit else None,
+            "modalities": row.modalities.split(",") if row.modalities else [],
+            "carriers": row.carriers.split(",") if row.carriers else [],
+        })
+
+    return jsonify({
+        "items": items,
+        "total": total,
+        "page": page,
+        "pages": (total + per_page - 1) // per_page,
+    })
+
+
+@api_bp.route("/patients/<path:patient_name>")
+def get_patient_profile(patient_name):
+    """GET /api/patients/<name> - Full patient profile.
+
+    Returns all billing records, schedule entries, and ERA claim matches
+    for a specific patient. Links to Topaz patient ID if available.
+    """
+    patient_name = patient_name.strip().upper()
+
+    # Billing records
+    billing = BillingRecord.query.filter_by(
+        patient_name=patient_name
+    ).order_by(BillingRecord.service_date.desc()).all()
+
+    if not billing:
+        return jsonify({"error": "Patient not found"}), 404
+
+    # Schedule records
+    schedules = ScheduleRecord.query.filter_by(
+        patient_name=patient_name
+    ).order_by(ScheduleRecord.scheduled_date.desc()).all()
+
+    # ERA claim line matches
+    billing_ids = [b.id for b in billing]
+    era_claims = []
+    if billing_ids:
+        era_claims = EraClaimLine.query.filter(
+            EraClaimLine.matched_billing_id.in_(billing_ids)
+        ).all()
+
+    # Also find ERA claims by patient name (835 name)
+    era_by_name = EraClaimLine.query.filter(
+        EraClaimLine.patient_name_835.ilike(f"%{_escape_like(patient_name)}%")
+    ).all()
+    era_claim_ids = {ec.id for ec in era_claims}
+    for ec in era_by_name:
+        if ec.id not in era_claim_ids:
+            era_claims.append(ec)
+
+    # Topaz patient ID (from any billing record that has one)
+    topaz_id = None
+    for b in billing:
+        if b.topaz_patient_id:
+            topaz_id = b.topaz_patient_id
+            break
+
+    # Summary stats
+    total_billed = sum(b.total_payment or 0 for b in billing)
+    denied = [b for b in billing if b.total_payment == 0 or b.denial_status]
+    modalities = list(set(b.modality for b in billing if b.modality))
+    carriers = list(set(b.insurance_carrier for b in billing if b.insurance_carrier))
+
+    return jsonify({
+        "patient_name": patient_name,
+        "topaz_patient_id": topaz_id,
+        "summary": {
+            "total_scans": len(billing),
+            "total_payments": round(total_billed, 2),
+            "total_denied": len(denied),
+            "total_scheduled": len(schedules),
+            "total_era_claims": len(era_claims),
+            "modalities": modalities,
+            "carriers": carriers,
+            "first_visit": billing[-1].service_date.isoformat() if billing else None,
+            "last_visit": billing[0].service_date.isoformat() if billing else None,
+        },
+        "billing_records": [b.to_dict() for b in billing],
+        "schedule_records": [s.to_dict() for s in schedules],
+        "era_claims": [ec.to_dict() for ec in era_claims],
+    })
+
+
+@api_bp.route("/patients/<path:patient_name>/topaz-id", methods=["PUT"])
+def set_patient_topaz_id(patient_name):
+    """PUT /api/patients/<name>/topaz-id - Set the Topaz patient ID for a patient.
+
+    JSON body: {"topaz_patient_id": "12345"}
+    Updates all billing records for this patient.
+    """
+    data = request.get_json(silent=True)
+    if not data or "topaz_patient_id" not in data:
+        return jsonify({"error": "Provide topaz_patient_id"}), 400
+
+    patient_name = patient_name.strip().upper()
+    topaz_id = str(data["topaz_patient_id"]).strip()
+
+    updated = BillingRecord.query.filter_by(
+        patient_name=patient_name
+    ).update({"topaz_patient_id": topaz_id}, synchronize_session=False)
+
+    db.session.commit()
+
+    return jsonify({
+        "patient_name": patient_name,
+        "topaz_patient_id": topaz_id,
+        "records_updated": updated,
+    })
+
+
+# ══════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════
 

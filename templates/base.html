@@ -99,6 +99,14 @@
                 </a>
             </li>
 
+            <li class="nav-section-label">Patients</li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.patients_page' %}active{% endif %}" href="/patients">
+                    <i class="bi bi-people-fill"></i>
+                    <span>Patient Profiles</span>
+                </a>
+            </li>
+
             <li class="nav-section-label">Analytics</li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'ui.payers_page' %}active{% endif %}" href="/payers">

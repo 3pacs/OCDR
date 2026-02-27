@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+{% block title %}Patient Profiles{% endblock %}
+{% block page_title %}Patient Profiles{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Total Patients</div>
+            <div class="kpi-value" id="kpi-total">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">With Topaz ID</div>
+            <div class="kpi-value" id="kpi-topaz">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-purple">
+            <div class="kpi-label">Total Scans</div>
+            <div class="kpi-value" id="kpi-scans">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-amber">
+            <div class="kpi-label">Total Revenue</div>
+            <div class="kpi-value" id="kpi-revenue">--</div>
+        </div>
+    </div>
+</div>
+
+<!-- Search & Filters -->
+<div class="data-card padded mb-4">
+    <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label text-muted small">Search Patient</label>
+            <input type="text" id="patient-search" class="form-control" placeholder="Patient name...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-muted small">Carrier</label>
+            <select id="filter-carrier" class="form-select">
+                <option value="">All Carriers</option>
+                <option>M/M</option>
+                <option>CALOPTIMA</option>
+                <option>FAMILY</option>
+                <option>INS</option>
+                <option>W/C</option>
+                <option>SELF PAY</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-muted small">Modality</label>
+            <select id="filter-modality" class="form-select">
+                <option value="">All</option>
+                <option>CT</option>
+                <option>HMRI</option>
+                <option>PET</option>
+                <option>BONE</option>
+                <option>OPEN</option>
+                <option>DX</option>
+                <option>GH</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-primary w-100" onclick="loadPatients()">
+                <i class="bi bi-search me-1"></i> Search
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Patient List -->
+<div class="data-card mb-4" id="patient-list-card">
+    <div class="data-card-header">
+        <h6 class="fw-semibold mb-0">Patient Directory</h6>
+        <span class="badge bg-secondary" id="result-count">0 patients</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Patient Name</th>
+                    <th>Topaz ID</th>
+                    <th class="text-center">Scans</th>
+                    <th class="text-end">Total Payments</th>
+                    <th>Modalities</th>
+                    <th>Carrier(s)</th>
+                    <th>Last Visit</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="patient-table-body">
+                <tr><td colspan="8" class="text-center text-muted py-4">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center p-3">
+        <span class="text-muted small" id="page-info">Page 1</span>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" id="btn-prev" disabled onclick="changePage(-1)">Prev</button>
+            <button class="btn btn-outline-secondary" id="btn-next" disabled onclick="changePage(1)">Next</button>
+        </div>
+    </div>
+</div>
+
+<!-- Patient Detail Modal -->
+<div class="modal fade" id="patientModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modal-patient-name">Patient Profile</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <div class="text-center py-4"><div class="spinner-border text-primary"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+let totalPages = 1;
+
+async function loadPatients() {
+    const search = document.getElementById('patient-search').value;
+    const carrier = document.getElementById('filter-carrier').value;
+    const modality = document.getElementById('filter-modality').value;
+    const params = new URLSearchParams({page: currentPage, per_page: 50});
+    if (search) params.set('search', search);
+    if (carrier) params.set('carrier', carrier);
+    if (modality) params.set('modality', modality);
+
+    try {
+        const resp = await fetch(`/api/patients?${params}`);
+        const data = await resp.json();
+        totalPages = data.pages || 1;
+        renderPatientList(data);
+        document.getElementById('result-count').textContent = `${data.total} patients`;
+        document.getElementById('page-info').textContent = `Page ${data.page} of ${totalPages}`;
+        document.getElementById('btn-prev').disabled = data.page <= 1;
+        document.getElementById('btn-next').disabled = data.page >= totalPages;
+    } catch (e) {
+        console.error('Failed to load patients:', e);
+    }
+}
+
+function renderPatientList(data) {
+    const tbody = document.getElementById('patient-table-body');
+    if (!data.items || data.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No patients found</td></tr>';
+        return;
+    }
+
+    let totalScans = 0, totalRevenue = 0, topazCount = 0;
+    tbody.innerHTML = data.items.map(p => {
+        totalScans += p.total_scans;
+        totalRevenue += p.total_payments;
+        if (p.topaz_patient_id) topazCount++;
+        const mods = (p.modalities || []).map(m =>
+            `<span class="badge bg-primary-subtle text-primary-emphasis me-1">${m}</span>`
+        ).join('');
+        const topazBadge = p.topaz_patient_id
+            ? `<span class="badge bg-success-subtle text-success-emphasis">${p.topaz_patient_id}</span>`
+            : `<span class="text-muted small">—</span>`;
+        return `<tr style="cursor:pointer" onclick="openProfile('${encodeURIComponent(p.patient_name)}')">
+            <td class="fw-semibold">${escHtml(p.patient_name)}</td>
+            <td>${topazBadge}</td>
+            <td class="text-center">${p.total_scans}</td>
+            <td class="text-end">$${(p.total_payments || 0).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
+            <td>${mods}</td>
+            <td>${(p.carriers || []).join(', ')}</td>
+            <td>${p.last_visit || '—'}</td>
+            <td><button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();openProfile('${encodeURIComponent(p.patient_name)}')">
+                <i class="bi bi-person-lines-fill"></i></button></td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('kpi-total').textContent = data.total;
+    document.getElementById('kpi-topaz').textContent = topazCount;
+    document.getElementById('kpi-scans').textContent = totalScans.toLocaleString();
+    document.getElementById('kpi-revenue').textContent = '$' + totalRevenue.toLocaleString('en-US', {minimumFractionDigits:2});
+}
+
+function changePage(delta) {
+    currentPage = Math.max(1, Math.min(totalPages, currentPage + delta));
+    loadPatients();
+}
+
+async function openProfile(encodedName) {
+    const name = decodeURIComponent(encodedName);
+    document.getElementById('modal-patient-name').textContent = name;
+    const modal = new bootstrap.Modal(document.getElementById('patientModal'));
+    modal.show();
+
+    document.getElementById('modal-body').innerHTML =
+        '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+
+    try {
+        const resp = await fetch(`/api/patients/${encodedName}`);
+        const data = await resp.json();
+        if (data.error) {
+            document.getElementById('modal-body').innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+            return;
+        }
+        renderProfile(data);
+    } catch (e) {
+        document.getElementById('modal-body').innerHTML = `<div class="alert alert-danger">Failed to load profile</div>`;
+    }
+}
+
+function renderProfile(data) {
+    const s = data.summary;
+    const topazSection = `
+        <div class="d-flex align-items-center gap-3 mb-3">
+            <strong>Topaz Patient ID:</strong>
+            <input type="text" id="topaz-id-input" class="form-control form-control-sm" style="width:150px"
+                   value="${escHtml(data.topaz_patient_id || '')}" placeholder="Enter ID...">
+            <button class="btn btn-sm btn-outline-success" onclick="saveTopazId('${encodeURIComponent(data.patient_name)}')">
+                <i class="bi bi-check-lg"></i> Save
+            </button>
+            <span id="topaz-save-status"></span>
+        </div>`;
+
+    const summaryCards = `
+        <div class="row g-3 mb-4">
+            <div class="col-md-2"><div class="kpi-card kpi-card-blue"><div class="kpi-label">Scans</div><div class="kpi-value">${s.total_scans}</div></div></div>
+            <div class="col-md-2"><div class="kpi-card kpi-card-green"><div class="kpi-label">Payments</div><div class="kpi-value">$${(s.total_payments||0).toLocaleString('en-US',{minimumFractionDigits:2})}</div></div></div>
+            <div class="col-md-2"><div class="kpi-card kpi-card-red"><div class="kpi-label">Denied</div><div class="kpi-value">${s.total_denied}</div></div></div>
+            <div class="col-md-2"><div class="kpi-card kpi-card-purple"><div class="kpi-label">Scheduled</div><div class="kpi-value">${s.total_scheduled}</div></div></div>
+            <div class="col-md-2"><div class="kpi-card kpi-card-amber"><div class="kpi-label">ERA Claims</div><div class="kpi-value">${s.total_era_claims}</div></div></div>
+            <div class="col-md-2"><div class="kpi-card"><div class="kpi-label">First Visit</div><div class="kpi-value" style="font-size:0.9rem">${s.first_visit||'—'}</div></div></div>
+        </div>`;
+
+    // Billing records table
+    let billingTable = '';
+    if (data.billing_records && data.billing_records.length > 0) {
+        billingTable = `<h6 class="fw-semibold mt-4 mb-2"><i class="bi bi-receipt me-1"></i> Billing Records (${data.billing_records.length})</h6>
+        <div class="table-responsive"><table class="table table-sm table-hover">
+            <thead><tr><th>Date</th><th>Modality</th><th>Scan</th><th>Carrier</th><th>Doctor</th><th class="text-end">Payment</th><th>Status</th></tr></thead>
+            <tbody>${data.billing_records.map(b => `<tr>
+                <td>${b.service_date||'—'}</td>
+                <td><span class="badge bg-primary-subtle text-primary-emphasis">${b.modality}</span></td>
+                <td>${escHtml(b.scan_type||'')}</td>
+                <td>${escHtml(b.insurance_carrier||'')}</td>
+                <td>${escHtml(b.referring_doctor||'')}</td>
+                <td class="text-end ${b.total_payment==0?'text-danger':''}">$${(b.total_payment||0).toFixed(2)}</td>
+                <td>${b.denial_status ? `<span class="badge bg-danger-subtle text-danger-emphasis">${b.denial_status}</span>` : '<span class="badge bg-success-subtle text-success-emphasis">PAID</span>'}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+
+    // Schedule records table
+    let scheduleTable = '';
+    if (data.schedule_records && data.schedule_records.length > 0) {
+        scheduleTable = `<h6 class="fw-semibold mt-4 mb-2"><i class="bi bi-calendar3 me-1"></i> Schedule Records (${data.schedule_records.length})</h6>
+        <div class="table-responsive"><table class="table table-sm table-hover">
+            <thead><tr><th>Date</th><th>Time</th><th>Modality</th><th>Scan</th><th>Status</th><th>Match</th></tr></thead>
+            <tbody>${data.schedule_records.map(s => `<tr>
+                <td>${s.scheduled_date||'—'}</td>
+                <td>${escHtml(s.scheduled_time||'')}</td>
+                <td><span class="badge bg-primary-subtle text-primary-emphasis">${s.modality||''}</span></td>
+                <td>${escHtml(s.scan_type||'')}</td>
+                <td>${s.status||'—'}</td>
+                <td>${s.match_status === 'MATCHED' ? '<span class="badge bg-success">MATCHED</span>' : '<span class="badge bg-warning text-dark">UNMATCHED</span>'}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+
+    // ERA claims table
+    let eraTable = '';
+    if (data.era_claims && data.era_claims.length > 0) {
+        eraTable = `<h6 class="fw-semibold mt-4 mb-2"><i class="bi bi-file-earmark-medical me-1"></i> ERA Claims (${data.era_claims.length})</h6>
+        <div class="table-responsive"><table class="table table-sm table-hover">
+            <thead><tr><th>Claim ID</th><th>Date</th><th>CPT</th><th class="text-end">Billed</th><th class="text-end">Paid</th><th>Status</th></tr></thead>
+            <tbody>${data.era_claims.map(e => `<tr>
+                <td>${escHtml(e.claim_id||'')}</td>
+                <td>${e.service_date_835||'—'}</td>
+                <td>${escHtml(e.cpt_code||'')}</td>
+                <td class="text-end">$${(e.billed_amount||0).toFixed(2)}</td>
+                <td class="text-end">$${(e.paid_amount||0).toFixed(2)}</td>
+                <td>${escHtml(e.claim_status||'')}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+
+    // Cross-check note
+    const crossCheckNote = `
+        <div class="alert alert-info mt-4 mb-0">
+            <i class="bi bi-info-circle me-2"></i>
+            <strong>Topaz Cross-Check:</strong> When Topaz data is imported, records will be
+            automatically linked using the Topaz Patient ID and cross-checked against the billing
+            and schedule records shown above.
+        </div>`;
+
+    document.getElementById('modal-body').innerHTML =
+        topazSection + summaryCards + billingTable + scheduleTable + eraTable + crossCheckNote;
+}
+
+async function saveTopazId(encodedName) {
+    const topazId = document.getElementById('topaz-id-input').value.trim();
+    const statusEl = document.getElementById('topaz-save-status');
+    try {
+        const resp = await fetch(`/api/patients/${encodedName}/topaz-id`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({topaz_patient_id: topazId})
+        });
+        const data = await resp.json();
+        if (data.error) {
+            statusEl.innerHTML = `<span class="text-danger">${data.error}</span>`;
+        } else {
+            statusEl.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> Saved (${data.records_updated} records)</span>`;
+            setTimeout(() => loadPatients(), 500);
+        }
+    } catch (e) {
+        statusEl.innerHTML = `<span class="text-danger">Failed to save</span>`;
+    }
+}
+
+function escHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// Enter key in search
+document.getElementById('patient-search').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { currentPage = 1; loadPatients(); }
+});
+
+// Load on page load
+loadPatients();
+</script>
+{% endblock %}

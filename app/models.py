@@ -82,6 +82,7 @@ class BillingRecord(db.Model):
     denial_reason_code = db.Column(db.Text, index=True)
     era_claim_id = db.Column(db.Text, index=True)
     appeal_deadline = db.Column(db.Date, index=True)
+    topaz_patient_id = db.Column(db.Text, index=True)  # Legacy Topaz system patient ID
     import_source = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=_utcnow)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
@@ -114,6 +115,7 @@ class BillingRecord(db.Model):
             "denial_status": self.denial_status,
             "denial_reason_code": self.denial_reason_code,
             "appeal_deadline": self.appeal_deadline.isoformat() if self.appeal_deadline else None,
+            "topaz_patient_id": self.topaz_patient_id,
             "import_source": self.import_source,
         }
 
@@ -521,3 +523,29 @@ class ClaimStatusHistory(db.Model):
     changed_by = db.Column(db.Text)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=_utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  OCR Correction Learning (handwritten schedule import)
+# ══════════════════════════════════════════════════════════════════
+
+class OcrCorrection(db.Model):
+    """Stores learned OCR corrections for handwritten schedule imports.
+
+    When OCR misreads handwritten text, user corrections are stored here
+    and automatically applied to future imports.
+    """
+    __tablename__ = "ocr_corrections"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ocr_text = db.Column(db.Text, nullable=False, index=True)        # what OCR produced
+    corrected_text = db.Column(db.Text, nullable=False)               # what user corrected it to
+    field_type = db.Column(db.Text, nullable=False, index=True)       # patient_name, scan_type, modality, doctor, carrier
+    correction_count = db.Column(db.Integer, default=1)               # times this correction was applied
+    source_file = db.Column(db.Text)                                   # file where first seen
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("ocr_text", "field_type", name="uq_ocr_correction"),
+    )

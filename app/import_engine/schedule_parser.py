@@ -403,8 +403,17 @@ def _ocr_image_file(filepath):
 def _store_schedule_entries(entries, filename, used_ocr=False):
     """Store parsed schedule entries in the database and match to billing.
 
+    If OCR was used, applies learned corrections before storing.
     Returns summary dict with counts.
     """
+    corrections_applied = 0
+    if used_ocr:
+        try:
+            from app.import_engine.ocr_learner import apply_corrections_to_entries
+            corrections_applied = apply_corrections_to_entries(entries)
+        except Exception:
+            pass  # Don't break import if learner fails
+
     stored = 0
     matched = 0
     skipped = 0
@@ -470,6 +479,7 @@ def _store_schedule_entries(entries, filename, used_ocr=False):
         'entries_stored': stored,
         'entries_matched': matched,
         'entries_skipped': skipped,
+        'corrections_applied': corrections_applied,
     }
 
 
@@ -1023,6 +1033,175 @@ def schedule_calendar_data():
             'total_no_show': total_no_show,
         },
     })
+
+
+@import_bp.route('/schedule/ocr-review', methods=['POST'])
+def ocr_review_upload():
+    """POST /api/import/schedule/ocr-review - Upload a handwritten PDF for OCR review.
+
+    Extracts text via OCR, parses schedule entries, applies learned corrections,
+    and returns the results for user review BEFORE storing to database.
+    The user can correct OCR mistakes, then confirm to import.
+    """
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ('.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp'):
+        return jsonify({'error': 'File must be PDF or image for OCR review'}), 400
+
+    fd, tmp_path = tempfile.mkstemp(suffix=ext)
+    os.close(fd)
+    try:
+        file.save(tmp_path)
+
+        # Extract text via OCR
+        if ext == '.pdf':
+            try:
+                all_text, used_ocr = _extract_text_from_pdf(tmp_path)
+            except Exception:
+                all_text = _ocr_image_file(tmp_path) or ''
+                used_ocr = True
+        else:
+            all_text = _ocr_image_file(tmp_path) or ''
+            used_ocr = True
+
+        if not all_text.strip():
+            return jsonify({
+                'entries': [],
+                'raw_text': '',
+                'message': 'Could not extract text. Ensure Tesseract OCR is installed.',
+                'needs_ocr': True,
+            })
+
+        # Parse schedule entries
+        parsed = parse_schedule_text(all_text, file.filename)
+        entries = parsed.get('entries', [])
+
+        # Apply learned corrections
+        corrections_applied = 0
+        try:
+            from app.import_engine.ocr_learner import apply_corrections_to_entries
+            corrections_applied = apply_corrections_to_entries(entries)
+        except Exception:
+            pass
+
+        return jsonify({
+            'filename': file.filename,
+            'raw_text': all_text[:5000],
+            'schedule_date': parsed.get('schedule_date'),
+            'entries': entries,
+            'entries_found': len(entries),
+            'corrections_applied': corrections_applied,
+            'used_ocr': used_ocr,
+            'message': 'Review entries below. Correct any OCR mistakes, then confirm import.',
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+@import_bp.route('/schedule/ocr-confirm', methods=['POST'])
+def ocr_confirm_import():
+    """POST /api/import/schedule/ocr-confirm - Confirm reviewed OCR entries.
+
+    After user reviews and corrects OCR output, this stores the entries
+    and learns from any corrections made.
+
+    JSON body: {
+        "filename": "schedule.pdf",
+        "entries": [
+            {"patient_name": "WILLIAMS, ROBERT", "schedule_date": "2026-02-27", ...},
+            ...
+        ],
+        "corrections": [
+            {"ocr_text": "W1LLIAMS, R0BERT", "corrected_text": "WILLIAMS, ROBERT", "field_type": "patient_name"},
+            ...
+        ]
+    }
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Provide JSON body'}), 400
+
+    filename = data.get('filename', 'unknown')
+    entries = data.get('entries', [])
+    corrections = data.get('corrections', [])
+
+    # Store user corrections for future learning
+    corrections_stored = 0
+    if corrections:
+        try:
+            from app.import_engine.ocr_learner import store_bulk_corrections
+            corrections_stored = store_bulk_corrections(corrections, source_file=filename)
+        except Exception:
+            pass
+
+    # Store the schedule entries
+    result = _store_schedule_entries(entries, filename, used_ocr=True)
+    result['corrections_learned'] = corrections_stored
+    result['filename'] = filename
+
+    return jsonify(result)
+
+
+@import_bp.route('/schedule/ocr-corrections', methods=['GET'])
+def list_ocr_corrections():
+    """GET /api/import/schedule/ocr-corrections - List learned OCR corrections."""
+    field_type = request.args.get('field_type')
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+
+    try:
+        from app.import_engine.ocr_learner import list_corrections, get_correction_stats
+        result = list_corrections(field_type=field_type, page=page, per_page=per_page)
+        result['stats'] = get_correction_stats()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@import_bp.route('/schedule/ocr-corrections', methods=['POST'])
+def add_ocr_correction():
+    """POST /api/import/schedule/ocr-corrections - Add a manual OCR correction.
+
+    JSON body: {"ocr_text": "W1LLIAMS", "corrected_text": "WILLIAMS", "field_type": "patient_name"}
+    """
+    data = request.get_json(silent=True)
+    if not data or 'ocr_text' not in data or 'corrected_text' not in data:
+        return jsonify({'error': 'Provide ocr_text and corrected_text'}), 400
+
+    try:
+        from app.import_engine.ocr_learner import store_correction
+        result = store_correction(
+            ocr_text=data['ocr_text'],
+            corrected_text=data['corrected_text'],
+            field_type=data.get('field_type', 'patient_name'),
+            source_file=data.get('source_file'),
+        )
+        if result:
+            return jsonify({'stored': True, 'id': result.id})
+        return jsonify({'stored': False, 'message': 'No correction needed (texts are identical)'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@import_bp.route('/schedule/ocr-corrections/<int:correction_id>', methods=['DELETE'])
+def delete_ocr_correction(correction_id):
+    """DELETE /api/import/schedule/ocr-corrections/<id> - Remove a learned correction."""
+    from app.models import OcrCorrection
+    correction = db.session.get(OcrCorrection, correction_id)
+    if not correction:
+        return jsonify({'error': 'Correction not found'}), 404
+    db.session.delete(correction)
+    db.session.commit()
+    return jsonify({'deleted': correction_id})
 
 
 @import_bp.route('/schedule/rematch', methods=['POST'])

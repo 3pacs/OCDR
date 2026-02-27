@@ -120,6 +120,11 @@ def chat_page():
     return render_template("chat.html")
 
 
+@ui_bp.route("/patients")
+def patients_page():
+    return render_template("patients.html")
+
+
 @ui_bp.route("/aging")
 def aging_page():
     return render_template("aging.html")
