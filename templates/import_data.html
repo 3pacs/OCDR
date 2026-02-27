@@ -190,6 +190,52 @@
     </div>
 </div>
 
+<!-- Purview PACS CSV Import -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-image me-2 text-accent-purple"></i>Purview PACS Import
+                <span class="badge bg-info-subtle text-info-emphasis ms-2 small">CSV</span>
+            </h6>
+            <p class="text-muted small mb-3">Export a study list CSV from Purview and upload it here. Auto-maps patient names, dates, modalities, and referring physicians to your schedule.</p>
+            <div class="upload-zone" id="purview-zone">
+                <i class="bi bi-image upload-icon text-accent-purple"></i>
+                <div class="upload-title">Drop your Purview CSV export here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.csv</span>
+                </div>
+                <input type="file" class="d-none" id="purview-input" accept=".csv">
+            </div>
+            <div class="upload-progress" id="purview-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Importing Purview data...</div>
+            </div>
+            <div class="upload-result" id="purview-result"></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-info-circle me-2 text-accent-blue"></i>Purview CSV Columns</h6>
+            <p class="text-muted small mb-2">The importer auto-detects these common Purview/Ambra Health CSV columns:</p>
+            <div class="small" style="columns:2;column-gap:1rem;">
+                <div class="mb-1"><code>Patient Name</code></div>
+                <div class="mb-1"><code>Study Date</code></div>
+                <div class="mb-1"><code>Modality</code></div>
+                <div class="mb-1"><code>Study Description</code></div>
+                <div class="mb-1"><code>Referring Physician</code></div>
+                <div class="mb-1"><code>Accession Number</code></div>
+                <div class="mb-1"><code>Status</code></div>
+                <div class="mb-1"><code>Patient ID / MRN</code></div>
+                <div class="mb-1"><code>Insurance</code></div>
+                <div class="mb-1"><code>Location / Facility</code></div>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Column headers are fuzzy-matched, so slight variations in naming will still be detected.</p>
+        </div>
+    </div>
+</div>
+
 <!-- AI Assistant Config -->
 <div class="data-card padded mb-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -461,6 +507,11 @@ function setupUploads() {
             return ext === 'pdf' ? 'file' : 'files';
         },
         multi: true,
+    });
+    setupZone({
+        zoneId: 'purview-zone', inputId: 'purview-input', progressId: 'purview-progress', resultId: 'purview-result',
+        getUrl: function() { return '/api/import/purview-csv'; },
+        fieldName: 'file', multi: false,
     });
 }
 

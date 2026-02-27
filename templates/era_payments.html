@@ -7,7 +7,7 @@
 <div class="row g-3 mb-4">
     <div class="col-12">
         <div id="drop-zone" class="upload-zone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
-            <input type="file" id="file-input" multiple accept=".835,.edi,.txt" style="display:none" onchange="handleFiles(this.files)">
+            <input type="file" id="file-input" multiple accept=".835,.edi,.txt,.csv" style="display:none" onchange="handleFiles(this.files)">
             <div class="upload-content" id="upload-content">
                 <i class="bi bi-cloud-arrow-up fs-1 text-accent-blue"></i>
                 <h6 class="mt-2 mb-1 fw-semibold">Upload 835 ERA Files</h6>
@@ -124,15 +124,15 @@
                 <span class="text-muted small" id="payment-count"></span>
             </div>
             <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
-                <table class="table table-dark table-striped table-hover mb-0">
+                <table class="table table-dark table-striped table-hover mb-0" id="payment-table">
                     <thead>
                         <tr>
-                            <th data-bs-toggle="tooltip" title="835 EDI filename — click a row to filter claim lines for that file">File</th>
-                            <th>Payer</th>
-                            <th data-bs-toggle="tooltip" title="Check number or EFT trace number from the remittance">Check/EFT</th>
-                            <th data-bs-toggle="tooltip" data-bs-html="true" title="Payment method:<br>CHK = Paper check<br>ACH = Electronic transfer<br>FWT = Federal wire<br>NON = Non-payment (zero-pay remittance)">Method</th>
-                            <th data-bs-toggle="tooltip" title="Total payment amount on this remittance">Amount</th>
-                            <th>Date</th>
+                            <th data-sort="filename" data-bs-toggle="tooltip" title="835 EDI filename — click a row to filter claim lines for that file">File</th>
+                            <th data-sort="payer">Payer</th>
+                            <th data-sort="check" data-bs-toggle="tooltip" title="Check number or EFT trace number from the remittance">Check/EFT</th>
+                            <th data-sort="method" data-bs-toggle="tooltip" data-bs-html="true" title="Payment method:<br>CHK = Paper check<br>ACH = Electronic transfer<br>FWT = Federal wire<br>NON = Non-payment (zero-pay remittance)">Method</th>
+                            <th data-sort="amount" data-bs-toggle="tooltip" title="Total payment amount on this remittance">Amount</th>
+                            <th data-sort="date">Date</th>
                             <th data-bs-toggle="tooltip" title="Number of individual claim lines in this 835 file">Claims</th>
                         </tr>
                     </thead>
@@ -166,23 +166,24 @@
         <span class="text-muted small" id="claims-count"></span>
     </div>
     <div class="table-responsive">
-        <table class="table table-dark table-striped table-hover mb-0">
+        <table class="table table-dark table-striped table-hover mb-0" id="claims-table">
             <thead>
                 <tr>
-                    <th data-bs-toggle="tooltip" title="Unique claim identifier from the 835 file">Claim ID</th>
-                    <th>Patient</th>
-                    <th>Service Date</th>
-                    <th data-bs-toggle="tooltip" title="CPT/HCPCS procedure code identifying the service performed">CPT</th>
-                    <th data-bs-toggle="tooltip" title="Amount originally billed to the carrier">Billed</th>
-                    <th data-bs-toggle="tooltip" title="Amount actually paid by the carrier">Paid</th>
+                    <th style="width:30px"></th>
+                    <th data-sort="claim_id" data-bs-toggle="tooltip" title="Unique claim identifier from the 835 file">Claim ID</th>
+                    <th data-sort="patient">Patient</th>
+                    <th data-sort="service_date">Service Date</th>
+                    <th data-sort="cpt_code" data-bs-toggle="tooltip" title="CPT/HCPCS procedure code(s). Click the arrow to expand per-CPT payment detail.">CPT</th>
+                    <th data-sort="billed" data-bs-toggle="tooltip" title="Amount originally billed to the carrier">Billed</th>
+                    <th data-sort="paid" data-bs-toggle="tooltip" title="Amount actually paid by the carrier">Paid</th>
                     <th data-bs-toggle="tooltip" data-bs-html="true" title="CAS Group Code:<br>CO = Contractual Obligation<br>CR = Correction/Reversal<br>OA = Other Adjustment<br>PI = Payer Initiated<br>PR = Patient Responsibility">Adj Group <i class="bi bi-info-circle help-icon"></i></th>
                     <th data-bs-toggle="tooltip" data-bs-html="true" title="CAS Reason Code — explains WHY the adjustment was made.<br>Common: 1=Deductible, 2=Coinsurance, 3=Copay,<br>29=Filing limit expired, 45=Exceeds usual rate,<br>50=Non-covered, 197=No precertification">Adj Reason <i class="bi bi-info-circle help-icon"></i></th>
-                    <th data-bs-toggle="tooltip" title="Dollar amount of the CAS adjustment — the difference between billed and paid">Adj Amount</th>
-                    <th data-bs-toggle="tooltip" data-bs-html="true" title="Claim processing status:<br>PROCESSED PRIMARY = Paid as primary<br>PROCESSED SECONDARY = Paid as secondary<br>DENIED = Claim denied<br>REVERSAL = Prior payment reversed">Status</th>
+                    <th data-sort="adj_amount" data-bs-toggle="tooltip" title="Dollar amount of the CAS adjustment — the difference between billed and paid">Adj Amt</th>
+                    <th data-sort="status" data-bs-toggle="tooltip" data-bs-html="true" title="Claim processing status:<br>PROCESSED PRIMARY = Paid as primary<br>PROCESSED SECONDARY = Paid as secondary<br>DENIED = Claim denied<br>REVERSAL = Prior payment reversed">Status</th>
                 </tr>
             </thead>
             <tbody id="claims-tbody">
-                <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
+                <tr><td colspan="11" class="text-center text-muted py-4">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -199,8 +200,18 @@
 let claimsPage = 1;
 const claimsPerPage = 50;
 let searchTimeout = null;
+let paymentSorter = null;
+let claimsSorter = null;
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Init sortable tables
+    paymentSorter = initSortableTable('payment-table', function(col, dir) {
+        loadPayments(col, dir);
+    });
+    claimsSorter = initSortableTable('claims-table', function(col, dir) {
+        claimsPage = 1;
+        loadClaims();
+    });
     loadAll();
     document.getElementById('drop-zone').addEventListener('click', function(e) {
         if (e.target.tagName !== 'A') document.getElementById('file-input').click();
@@ -209,23 +220,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadAll() {
     try {
-        const [stats, byMonth, payments] = await Promise.all([
+        const [stats, byMonth] = await Promise.all([
             fetchJSON('/api/era/stats'),
             fetchJSON('/api/era/by-month'),
-            fetchJSON('/api/era/payments?per_page=100'),
         ]);
 
         renderKPIs(stats);
         renderMonthlyChart(byMonth);
         renderMethodChart(stats.by_method);
         renderPayerChart(stats.by_payer);
-        renderPaymentTable(payments);
+        loadPayments();
         loadClaims();
 
         document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
     } catch (err) {
         console.error('ERA load error:', err);
     }
+}
+
+async function loadPayments(sortCol, sortDir) {
+    let url = '/api/era/payments?per_page=100';
+    if (!sortCol && paymentSorter) {
+        var s = paymentSorter.getSort();
+        sortCol = s.sort;
+        sortDir = s.dir;
+    }
+    if (sortCol && sortDir) url += '&sort=' + sortCol + '&dir=' + sortDir;
+
+    const data = await fetchJSON(url);
+    renderPaymentTable(data);
 }
 
 function renderKPIs(s) {
@@ -482,9 +505,9 @@ function renderPaymentTable(data) {
 
     tbody.innerHTML = data.items.map(p => `
         <tr style="cursor:pointer" onclick="filterClaimsByPayment(${p.id})">
-            <td class="fw-semibold text-accent-blue">${p.filename}</td>
-            <td>${p.payer_name || '—'}</td>
-            <td><code>${p.check_eft_number || '—'}</code></td>
+            <td class="fw-semibold text-accent-blue">${escapeHtml(p.filename)}</td>
+            <td>${escapeHtml(p.payer_name || '—')}</td>
+            <td><code>${escapeHtml(p.check_eft_number || '—')}</code></td>
             <td>${methodBadge(p.payment_method)}</td>
             <td class="text-accent-green fw-semibold">${formatCurrency(p.payment_amount)}</td>
             <td>${formatDate(p.payment_date)}</td>
@@ -526,32 +549,139 @@ async function loadClaims(paymentId) {
     if (patient) url += '&patient=' + encodeURIComponent(patient);
     if (activePaymentId) url += '&payment_id=' + activePaymentId;
 
+    // Add sort params
+    if (claimsSorter) {
+        var s = claimsSorter.getSort();
+        if (s.sort && s.dir) url += '&sort=' + s.sort + '&dir=' + s.dir;
+    }
+
     const data = await fetchJSON(url);
     const tbody = document.getElementById('claims-tbody');
 
     if (!data.items.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4"><i class="bi bi-inbox fs-3 d-block mb-2"></i>No claim lines found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4"><i class="bi bi-inbox fs-3 d-block mb-2"></i>No claim lines found</td></tr>';
     } else {
-        tbody.innerHTML = data.items.map(c => `
+        tbody.innerHTML = data.items.map(c => {
+            const hasCpt = c.cpt_code && c.cpt_code.includes(',');
+            return `
             <tr>
-                <td><code>${c.claim_id || '—'}</code></td>
-                <td class="fw-semibold">${c.patient_name_835 || '—'}</td>
+                <td>
+                    <button class="btn-expand-row" onclick="toggleClaimDetail(this, ${c.id})" title="Show per-CPT detail">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                </td>
+                <td><code>${escapeHtml(c.claim_id || '—')}</code></td>
+                <td class="fw-semibold">${escapeHtml(c.patient_name_835 || '—')}</td>
                 <td>${formatDate(c.service_date_835)}</td>
-                <td><code>${c.cpt_code || '—'}</code></td>
+                <td>${renderCptCodes(c.cpt_code)}</td>
                 <td>${formatCurrency(c.billed_amount)}</td>
                 <td class="fw-semibold ${c.paid_amount > 0 ? 'text-accent-green' : 'text-accent-red'}">${formatCurrency(c.paid_amount)}</td>
-                <td>${c.cas_group_code || '—'}</td>
-                <td>${c.cas_reason_code || '—'}</td>
+                <td>${renderGroupCodes(c.cas_group_code)}</td>
+                <td>${renderReasonCodes(c.cas_reason_code)}</td>
                 <td>${c.cas_adjustment_amount ? formatCurrency(c.cas_adjustment_amount) : '—'}</td>
                 <td>${claimStatusBadge(c.claim_status)}</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
     }
 
     document.getElementById('claims-count').textContent = formatNumber(data.total) + ' claim lines' + (activePaymentId ? ' (filtered by file)' : '');
     document.getElementById('page-info').textContent = 'Page ' + data.page + ' of ' + Math.max(data.pages, 1);
     document.getElementById('btn-prev').disabled = claimsPage <= 1;
     document.getElementById('btn-next').disabled = claimsPage >= data.pages;
+    initTooltips();
+}
+
+function renderCptCodes(cptStr) {
+    if (!cptStr) return '<span class="text-muted">—</span>';
+    return cptStr.split(',').map(function(c) {
+        c = c.trim();
+        return '<code class="me-1" style="font-size:0.8em">' + escapeHtml(c) + '</code>';
+    }).join('');
+}
+
+function renderGroupCodes(codes) {
+    if (!codes) return '—';
+    return codes.split(',').map(function(c) {
+        c = c.trim();
+        var desc = CAS_GROUP_CODES[c] || c;
+        return '<span class="badge-status me-1" style="font-size:0.7em;' + groupCodeStyle(c) + '" data-bs-toggle="tooltip" title="' + escapeHtml(desc) + '">' + escapeHtml(c) + '</span>';
+    }).join('');
+}
+
+function renderReasonCodes(codes) {
+    if (!codes) return '—';
+    return codes.split(',').map(function(c) {
+        c = c.trim();
+        var desc = CAS_COMMON_REASONS[c] || 'Reason ' + c;
+        return '<span class="badge-status me-1" style="font-size:0.7em;background:rgba(148,163,184,0.12);color:#94a3b8" data-bs-toggle="tooltip" title="' + escapeHtml(desc) + '">' + escapeHtml(c) + '</span>';
+    }).join('');
+}
+
+function groupCodeStyle(code) {
+    var map = {
+        CO: 'background:rgba(251,191,36,0.15);color:#fbbf24',
+        CR: 'background:rgba(167,139,250,0.15);color:#a78bfa',
+        OA: 'background:rgba(148,163,184,0.15);color:#94a3b8',
+        PI: 'background:rgba(248,113,113,0.15);color:#f87171',
+        PR: 'background:rgba(99,179,237,0.15);color:#63b3ed',
+    };
+    return map[code] || '';
+}
+
+async function toggleClaimDetail(btn, claimId) {
+    var tr = btn.closest('tr');
+    var existingDetail = tr.nextElementSibling;
+    if (existingDetail && existingDetail.classList.contains('cpt-detail-row')) {
+        existingDetail.remove();
+        btn.classList.remove('expanded');
+        return;
+    }
+
+    btn.classList.add('expanded');
+    try {
+        var data = await fetchJSON('/api/era/claims/' + claimId + '/details');
+        var html = '<tr class="cpt-detail-row"><td colspan="11"><div class="px-3 py-2">';
+
+        if (data.cpt_details && data.cpt_details.length > 0) {
+            html += '<table class="cpt-detail-table"><thead><tr>';
+            html += '<th>CPT Code</th><th>Billed</th><th>Paid</th><th>Units</th>';
+            html += '</tr></thead><tbody>';
+            data.cpt_details.forEach(function(c) {
+                html += '<tr>';
+                html += '<td><code>' + escapeHtml(c.cpt_code) + '</code></td>';
+                html += '<td>' + formatCurrency(c.billed_amount) + '</td>';
+                html += '<td class="' + (c.paid_amount > 0 ? 'text-accent-green' : '') + '">' + formatCurrency(c.paid_amount) + '</td>';
+                html += '<td>' + (c.units || 1) + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+        } else {
+            html += '<span class="text-muted small">No per-CPT detail available (single service line)</span>';
+        }
+
+        if (data.adjustment_details && data.adjustment_details.length > 0) {
+            html += '<table class="cpt-detail-table mt-2"><thead><tr>';
+            html += '<th>Group</th><th>Reason</th><th>Description</th><th>Amount</th>';
+            html += '</tr></thead><tbody>';
+            data.adjustment_details.forEach(function(a) {
+                var groupDesc = CAS_GROUP_CODES[a.group_code] || a.group_code;
+                var reasonDesc = CAS_COMMON_REASONS[a.reason_code] || 'Code ' + a.reason_code;
+                html += '<tr>';
+                html += '<td><span class="badge-status" style="font-size:0.75em;' + groupCodeStyle(a.group_code) + '">' + escapeHtml(a.group_code) + '</span></td>';
+                html += '<td><code>' + escapeHtml(a.reason_code) + '</code></td>';
+                html += '<td class="text-muted">' + escapeHtml(reasonDesc) + '</td>';
+                html += '<td>' + formatCurrency(a.amount) + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+        }
+
+        html += '</div></td></tr>';
+        tr.insertAdjacentHTML('afterend', html);
+    } catch (e) {
+        btn.classList.remove('expanded');
+        console.error('Failed to load claim detail:', e);
+    }
 }
 
 function changePage(delta) {

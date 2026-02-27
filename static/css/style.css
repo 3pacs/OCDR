@@ -1096,6 +1096,102 @@ th[data-bs-toggle="tooltip"] {
     border-bottom: 1px dashed var(--text-muted);
 }
 
+/* ── Sortable Table Headers ──────────────────────────────────── */
+
+th[data-sort] {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 1.4em !important;
+    transition: color 0.15s ease;
+    white-space: nowrap;
+}
+
+th[data-sort]:hover {
+    color: var(--accent-blue);
+}
+
+th[data-sort]::after {
+    content: '\F282';  /* bi-chevron-expand */
+    font-family: 'bootstrap-icons';
+    position: absolute;
+    right: 0.3em;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.65em;
+    opacity: 0.3;
+    transition: opacity 0.15s ease;
+}
+
+th[data-sort]:hover::after {
+    opacity: 0.6;
+}
+
+th[data-sort].sort-asc::after {
+    content: '\F286';  /* bi-chevron-up */
+    opacity: 1;
+    color: var(--accent-blue);
+}
+
+th[data-sort].sort-desc::after {
+    content: '\F282';  /* bi-chevron-down */
+    opacity: 1;
+    color: var(--accent-blue);
+}
+
+th[data-sort].sort-asc,
+th[data-sort].sort-desc {
+    color: var(--accent-blue);
+}
+
+/* ── Expandable CPT Detail Rows ──────────────────────────────── */
+
+tr.cpt-detail-row td {
+    background: rgba(99,179,237,0.04);
+    padding: 0.25rem 0.75rem;
+    border-top: none;
+}
+
+tr.cpt-detail-row .cpt-detail-table {
+    width: 100%;
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+tr.cpt-detail-row .cpt-detail-table th {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+tr.cpt-detail-row .cpt-detail-table td {
+    padding: 0.2rem 0.5rem;
+    background: transparent;
+}
+
+.btn-expand-row {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.85rem;
+    transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.btn-expand-row:hover {
+    color: var(--accent-blue);
+}
+
+.btn-expand-row.expanded {
+    color: var(--accent-blue);
+    transform: rotate(90deg);
+}
+
 /* ── Filter Bar Clear Button ─────────────────────────────────── */
 
 .btn-clear-filters {

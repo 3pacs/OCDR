@@ -140,17 +140,17 @@
         <span class="text-muted small" id="table-count"></span>
     </div>
     <div class="table-responsive">
-        <table class="table table-dark table-striped table-hover mb-0">
+        <table class="table table-dark table-striped table-hover mb-0" id="schedule-table">
             <thead>
                 <tr>
-                    <th data-bs-toggle="tooltip" title="Appointment date">Date</th>
-                    <th data-bs-toggle="tooltip" title="Scheduled time of day">Time</th>
-                    <th>Patient</th>
-                    <th data-bs-toggle="tooltip" title="Imaging type: HMRI=MRI, CT, PET, OPEN=Open MRI, DX=X-Ray, BONE=Bone Scan">Modality</th>
-                    <th data-bs-toggle="tooltip" title="Specific body region being scanned (e.g., BRAIN, CERVICAL, CHEST)">Scan Type</th>
-                    <th data-bs-toggle="tooltip" title="Ordering/referring physician">Doctor</th>
-                    <th data-bs-toggle="tooltip" title="Patient's insurance carrier">Insurance</th>
-                    <th data-bs-toggle="tooltip" title="SCHEDULED=Upcoming, COMPLETED=Done, CANCELLED=Cancelled, NO_SHOW=Patient did not show">Status</th>
+                    <th data-sort="date" data-bs-toggle="tooltip" title="Appointment date">Date</th>
+                    <th data-sort="time" data-bs-toggle="tooltip" title="Scheduled time of day">Time</th>
+                    <th data-sort="patient">Patient</th>
+                    <th data-sort="modality" data-bs-toggle="tooltip" title="Imaging type: HMRI=MRI, CT, PET, OPEN=Open MRI, DX=X-Ray, BONE=Bone Scan">Modality</th>
+                    <th data-sort="scan_type" data-bs-toggle="tooltip" title="Specific body region being scanned (e.g., BRAIN, CERVICAL, CHEST)">Scan Type</th>
+                    <th data-sort="doctor" data-bs-toggle="tooltip" title="Ordering/referring physician">Doctor</th>
+                    <th data-sort="insurance" data-bs-toggle="tooltip" title="Patient's insurance carrier">Insurance</th>
+                    <th data-sort="status" data-bs-toggle="tooltip" title="SCHEDULED=Upcoming, COMPLETED=Done, CANCELLED=Cancelled, NO_SHOW=Patient did not show">Status</th>
                 </tr>
             </thead>
             <tbody id="schedule-tbody">
@@ -170,8 +170,13 @@
 <script>
 let currentPage = 1;
 const perPage = 50;
+let scheduleSorter = null;
 
 document.addEventListener('DOMContentLoaded', function() {
+    scheduleSorter = initSortableTable('schedule-table', function(col, dir) {
+        currentPage = 1;
+        loadTable();
+    });
     loadAll();
 });
 
@@ -460,6 +465,10 @@ async function loadTable() {
     if (status) url += '&status=' + status;
     if (start) url += '&start_date=' + start;
     if (end) url += '&end_date=' + end;
+    if (scheduleSorter) {
+        var s = scheduleSorter.getSort();
+        if (s.sort && s.dir) url += '&sort=' + s.sort + '&dir=' + s.dir;
+    }
 
     const data = await fetchJSON(url);
     const tbody = document.getElementById('schedule-tbody');

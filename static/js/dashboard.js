@@ -165,6 +165,52 @@ function getCasReasonTooltip(code) {
     return CAS_COMMON_REASONS[code] || 'Reason code: ' + code;
 }
 
+// ── Sortable Table Headers ────────────────────────────────────
+
+/**
+ * Initialize sortable column headers for a table.
+ * Expects <th data-sort="column_name"> in thead.
+ * @param {string} tableId - The table element ID
+ * @param {function} onSort - Callback(sortColumn, sortDir) called when sort changes
+ * @returns {object} - { getSort(), reset() } for external control
+ */
+function initSortableTable(tableId, onSort) {
+    var table = document.getElementById(tableId);
+    if (!table) return { getSort: function() { return {}; }, reset: function() {} };
+
+    var currentSort = '';
+    var currentDir = '';
+    var headers = table.querySelectorAll('th[data-sort]');
+
+    headers.forEach(function(th) {
+        th.addEventListener('click', function() {
+            var col = th.getAttribute('data-sort');
+            if (currentSort === col) {
+                currentDir = currentDir === 'asc' ? 'desc' : currentDir === 'desc' ? '' : 'asc';
+            } else {
+                currentSort = col;
+                currentDir = 'asc';
+            }
+            if (!currentDir) currentSort = '';
+
+            // Update visual indicators
+            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+            if (currentDir) th.classList.add('sort-' + currentDir);
+
+            if (onSort) onSort(currentSort, currentDir);
+        });
+    });
+
+    return {
+        getSort: function() { return { sort: currentSort, dir: currentDir }; },
+        reset: function() {
+            currentSort = '';
+            currentDir = '';
+            headers.forEach(function(h) { h.classList.remove('sort-asc', 'sort-desc'); });
+        }
+    };
+}
+
 // ── Auto-update timestamp ────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function() {

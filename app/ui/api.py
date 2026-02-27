@@ -8,7 +8,10 @@ from datetime import date, datetime, timedelta, timezone
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, case, extract
 
-from app.models import db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord, EraPayment, EraClaimLine
+from app.models import (
+    db, BillingRecord, Payer, FeeSchedule, Physician, ScheduleRecord,
+    EraPayment, EraClaimLine, EraClaimCptCode, EraClaimAdjustment,
+)
 
 api_bp = Blueprint("api", __name__)
 
@@ -509,7 +512,7 @@ def schedule_stats():
 
 @api_bp.route("/schedule/list")
 def schedule_list():
-    """Paginated schedule records with filters."""
+    """Paginated schedule records with filters and sorting."""
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
     modality_group = request.args.get("modality_group")  # mri or ct_pet
@@ -517,6 +520,8 @@ def schedule_list():
     status_filter = request.args.get("status")
     start_date = request.args.get("start_date")
     end_date = request.args.get("end_date")
+    sort_by = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
 
     query = ScheduleRecord.query
     today = date.today()
@@ -545,9 +550,24 @@ def schedule_list():
         except ValueError:
             pass
 
-    records = query.order_by(ScheduleRecord.scheduled_date.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
+    # Sorting
+    sort_cols = {
+        "date": ScheduleRecord.scheduled_date,
+        "time": ScheduleRecord.scheduled_time,
+        "patient": ScheduleRecord.patient_name,
+        "modality": ScheduleRecord.modality,
+        "scan_type": ScheduleRecord.scan_type,
+        "doctor": ScheduleRecord.referring_doctor,
+        "insurance": ScheduleRecord.insurance_carrier,
+        "status": ScheduleRecord.status,
+    }
+    col = sort_cols.get(sort_by)
+    if col is not None and sort_dir in ("asc", "desc"):
+        query = query.order_by(col.desc() if sort_dir == "desc" else col.asc())
+    else:
+        query = query.order_by(ScheduleRecord.scheduled_date.desc())
+
+    records = query.paginate(page=page, per_page=per_page, error_out=False)
 
     return jsonify({
         "items": [r.to_dict() for r in records.items],
@@ -806,6 +826,30 @@ def era_upload():
                 cas_adjustment_amount=total_adj_amount if total_adj_amount else None,
             )
             db.session.add(era_claim)
+            db.session.flush()  # get era_claim.id for junction tables
+
+            # Populate per-CPT detail (junction table)
+            for svc in claim.get("service_lines", []):
+                if svc.get("cpt_code"):
+                    db.session.add(EraClaimCptCode(
+                        era_claim_id=era_claim.id,
+                        cpt_code=svc["cpt_code"],
+                        billed_amount=svc.get("billed_amount", 0.0),
+                        paid_amount=svc.get("paid_amount", 0.0),
+                        units=1,
+                    ))
+
+            # Populate per-adjustment detail (junction table)
+            for adj in all_adjustments:
+                if adj.get("reason_code"):
+                    db.session.add(EraClaimAdjustment(
+                        era_claim_id=era_claim.id,
+                        group_code=adj.get("group_code", ""),
+                        reason_code=adj["reason_code"],
+                        amount=adj.get("amount", 0.0),
+                        quantity=0,
+                    ))
+
             claim_count += 1
 
         db.session.commit()
@@ -834,18 +878,32 @@ def era_upload():
 
 @api_bp.route("/era/payments")
 def era_payments():
-    """List all ERA payments with pagination."""
+    """List all ERA payments with pagination and sorting."""
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
     payer = request.args.get("payer")
+    sort_by = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
 
     query = EraPayment.query
     if payer:
         query = query.filter(EraPayment.payer_name.ilike(f"%{payer}%"))
 
-    payments = query.order_by(EraPayment.parsed_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
+    sort_cols = {
+        "filename": EraPayment.filename,
+        "payer": EraPayment.payer_name,
+        "check": EraPayment.check_eft_number,
+        "method": EraPayment.payment_method,
+        "amount": EraPayment.payment_amount,
+        "date": EraPayment.payment_date,
+    }
+    col = sort_cols.get(sort_by)
+    if col is not None and sort_dir in ("asc", "desc"):
+        query = query.order_by(col.desc() if sort_dir == "desc" else col.asc())
+    else:
+        query = query.order_by(EraPayment.parsed_at.desc())
+
+    payments = query.paginate(page=page, per_page=per_page, error_out=False)
 
     return jsonify({
         "items": [p.to_dict() for p in payments.items],
@@ -869,14 +927,43 @@ def era_payment_detail(payment_id):
     })
 
 
+@api_bp.route("/era/claims/<int:claim_id>/details")
+def era_claim_details(claim_id):
+    """Get per-CPT and per-adjustment detail for a single claim line."""
+    claim = EraClaimLine.query.get_or_404(claim_id)
+
+    cpt_details = EraClaimCptCode.query.filter_by(era_claim_id=claim_id).all()
+    adj_details = EraClaimAdjustment.query.filter_by(era_claim_id=claim_id).all()
+
+    return jsonify({
+        "claim_id": claim.id,
+        "cpt_details": [{
+            "cpt_code": c.cpt_code,
+            "billed_amount": c.billed_amount,
+            "paid_amount": c.paid_amount,
+            "units": c.units,
+        } for c in cpt_details],
+        "adjustment_details": [{
+            "group_code": a.group_code,
+            "reason_code": a.reason_code,
+            "amount": a.amount,
+            "quantity": a.quantity,
+            "group_desc": a.group_code,
+            "reason_desc": a.reason_code,
+        } for a in adj_details],
+    })
+
+
 @api_bp.route("/era/claims")
 def era_claims():
-    """List all ERA claim lines with pagination and filters."""
+    """List all ERA claim lines with pagination, filters, and sorting."""
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
     patient = request.args.get("patient")
     status = request.args.get("status")
     payment_id = request.args.get("payment_id", type=int)
+    sort_by = request.args.get("sort", "")
+    sort_dir = request.args.get("dir", "asc")
 
     query = EraClaimLine.query
     if patient:
@@ -886,9 +973,24 @@ def era_claims():
     if payment_id:
         query = query.filter(EraClaimLine.era_payment_id == payment_id)
 
-    claims = query.order_by(EraClaimLine.id.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
+    # Sorting
+    sort_cols = {
+        "claim_id": EraClaimLine.claim_id,
+        "patient": EraClaimLine.patient_name_835,
+        "service_date": EraClaimLine.service_date_835,
+        "cpt_code": EraClaimLine.cpt_code,
+        "billed": EraClaimLine.billed_amount,
+        "paid": EraClaimLine.paid_amount,
+        "adj_amount": EraClaimLine.cas_adjustment_amount,
+        "status": EraClaimLine.claim_status,
+    }
+    col = sort_cols.get(sort_by)
+    if col is not None and sort_dir in ("asc", "desc"):
+        query = query.order_by(col.desc() if sort_dir == "desc" else col.asc())
+    else:
+        query = query.order_by(EraClaimLine.id.desc())
+
+    claims = query.paginate(page=page, per_page=per_page, error_out=False)
 
     return jsonify({
         "items": [c.to_dict() for c in claims.items],
@@ -1037,6 +1139,198 @@ def import_csv_endpoint():
     return jsonify(result)
 
 
+@api_bp.route("/import/purview-csv", methods=["POST"])
+def import_purview_csv():
+    """Upload and import Purview PACS study data from a CSV export.
+
+    Maps common Purview/Ambra Health column names to ScheduleRecord fields.
+    Accepts CSV files exported directly from the Purview portal.
+    """
+    import csv
+    import io
+    from flask import current_app
+    from werkzeug.utils import secure_filename
+    from app.import_engine.validation import parse_date, normalize_modality
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided. Use field name 'file'."}), 400
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    filename = secure_filename(f.filename)
+    upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "purview")
+    os.makedirs(upload_dir, exist_ok=True)
+    filepath = os.path.join(upload_dir, filename)
+    f.save(filepath)
+
+    # Purview column aliases → internal field names
+    col_aliases = {
+        "patient name": "patient_name", "patient": "patient_name",
+        "name": "patient_name", "patient_name": "patient_name",
+        "patientname": "patient_name",
+        "study date": "scheduled_date", "studydate": "scheduled_date",
+        "study_date": "scheduled_date", "exam date": "scheduled_date",
+        "date": "scheduled_date", "exam_date": "scheduled_date",
+        "appointment date": "scheduled_date",
+        "modality": "modality", "modalities": "modality", "type": "modality",
+        "study description": "scan_type", "studydescription": "scan_type",
+        "study_description": "scan_type", "description": "scan_type",
+        "exam": "scan_type", "exam description": "scan_type",
+        "procedure": "scan_type", "body part": "scan_type",
+        "referring physician": "referring_doctor", "referringphysician": "referring_doctor",
+        "referring_physician": "referring_doctor", "ref physician": "referring_doctor",
+        "ordering physician": "referring_doctor", "doctor": "referring_doctor",
+        "referring": "referring_doctor", "ref doctor": "referring_doctor",
+        "accession": "accession", "accession number": "accession",
+        "accession_number": "accession", "accessionnumber": "accession",
+        "study id": "accession", "study_id": "accession",
+        "status": "status", "study status": "status",
+        "patient id": "patient_id", "patient_id": "patient_id",
+        "mrn": "patient_id", "medical record number": "patient_id",
+        "insurance": "insurance_carrier", "insurance carrier": "insurance_carrier",
+        "payer": "insurance_carrier", "carrier": "insurance_carrier",
+        "location": "location", "site": "location", "facility": "location",
+        "time": "scheduled_time", "study time": "scheduled_time",
+        "appointment time": "scheduled_time",
+    }
+
+    result = {"imported": 0, "skipped": 0, "errors": [], "total_rows": 0, "filename": f.filename}
+
+    try:
+        with open(filepath, "r", encoding="utf-8-sig", errors="replace") as fh:
+            # Try to detect delimiter
+            sample = fh.read(4096)
+            fh.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=",\t|;")
+            reader = csv.reader(fh, dialect)
+
+            # Map headers
+            raw_headers = next(reader, None)
+            if not raw_headers:
+                result["errors"].append("Empty CSV file")
+                return jsonify(result)
+
+            col_map = {}
+            unmapped = []
+            for i, h in enumerate(raw_headers):
+                norm = h.strip().lower().replace("_", " ")
+                field = col_aliases.get(norm)
+                if field:
+                    col_map[i] = field
+                else:
+                    unmapped.append(h.strip())
+
+            if "patient_name" not in col_map.values():
+                result["errors"].append(
+                    f"Cannot find patient name column. Headers found: {[h.strip() for h in raw_headers[:15]]}"
+                )
+                return jsonify(result), 400
+
+            if unmapped:
+                result["unmapped_columns"] = unmapped
+
+            batch = []
+            for row_idx, row in enumerate(reader, start=2):
+                result["total_rows"] += 1
+                try:
+                    data = {}
+                    for col_idx, field in col_map.items():
+                        if col_idx < len(row):
+                            data[field] = row[col_idx].strip() if row[col_idx] else ""
+
+                    patient_name = data.get("patient_name", "").strip().upper()
+                    if not patient_name:
+                        result["skipped"] += 1
+                        continue
+
+                    sched_date = parse_date(data.get("scheduled_date"))
+                    if not sched_date:
+                        result["skipped"] += 1
+                        continue
+
+                    # Dedup
+                    existing = ScheduleRecord.query.filter_by(
+                        patient_name=patient_name,
+                        scheduled_date=sched_date,
+                    ).first()
+                    if existing:
+                        result["skipped"] += 1
+                        continue
+
+                    modality_raw = data.get("modality", "")
+                    modality = normalize_modality(modality_raw) if modality_raw else "HMRI"
+                    scan_type = data.get("scan_type", "").strip().upper() or modality
+
+                    # Map Purview status → OCDR status
+                    raw_status = data.get("status", "").strip().upper()
+                    status_map = {
+                        "COMPLETED": "COMPLETED", "COMPLETE": "COMPLETED",
+                        "READ": "COMPLETED", "VERIFIED": "COMPLETED",
+                        "DICTATED": "COMPLETED", "FINALIZED": "COMPLETED",
+                        "SIGNED": "COMPLETED", "CANCELLED": "CANCELLED",
+                        "CANCELED": "CANCELLED", "NO SHOW": "NO_SHOW",
+                        "NO_SHOW": "NO_SHOW", "NOSHOW": "NO_SHOW",
+                    }
+                    status = status_map.get(raw_status, "SCHEDULED")
+
+                    rec = ScheduleRecord(
+                        patient_name=patient_name,
+                        scheduled_date=sched_date,
+                        scheduled_time=data.get("scheduled_time", "").strip() or None,
+                        modality=modality,
+                        scan_type=scan_type,
+                        referring_doctor=data.get("referring_doctor", "").strip() or None,
+                        insurance_carrier=data.get("insurance_carrier", "").strip() or None,
+                        location=data.get("location", "").strip() or None,
+                        status=status,
+                        notes=f"Accession: {data.get('accession', '')}" if data.get("accession") else None,
+                        source_file=filename,
+                        import_source="PURVIEW_CSV",
+                    )
+                    batch.append(rec)
+
+                    if len(batch) >= 500:
+                        db.session.bulk_save_objects(batch)
+                        db.session.commit()
+                        result["imported"] += len(batch)
+                        batch = []
+
+                except Exception as e:
+                    result["errors"].append(f"Row {row_idx}: {e}")
+
+            if batch:
+                db.session.bulk_save_objects(batch)
+                db.session.commit()
+                result["imported"] += len(batch)
+
+    except Exception as e:
+        result["errors"].append(f"CSV parsing error: {e}")
+
+    # Try to match imported records to billing
+    if result["imported"] > 0:
+        try:
+            unmatched = ScheduleRecord.query.filter_by(
+                import_source="PURVIEW_CSV", match_status="UNMATCHED"
+            ).all()
+            matched = 0
+            for entry in unmatched:
+                billing = BillingRecord.query.filter_by(
+                    patient_name=entry.patient_name,
+                    service_date=entry.scheduled_date,
+                ).first()
+                if billing:
+                    entry.matched_billing_id = billing.id
+                    entry.match_status = "MATCHED"
+                    matched += 1
+            db.session.commit()
+            result["matched"] = matched
+        except Exception:
+            pass
+
+    return jsonify(result)
+
+
 @api_bp.route("/import/pdf", methods=["POST"])
 def import_pdf_endpoint():
     """Upload and import billing data from a PDF file."""
@@ -1116,11 +1410,19 @@ def import_schedule_upload():
                 result["type"] = "schedule_pdf"
                 if result.get("entries_found", 0) == 0:
                     result["needs_input"] = True
-                    result["prompt"] = (
-                        "No schedule entries found in this PDF. "
-                        "The file may be scanned (needs OCR) or in an unexpected format. "
-                        "Try using the Smart Upload which can auto-detect formats."
-                    )
+                    msg = result.get("message", "")
+                    if result.get("needs_ocr"):
+                        result["prompt"] = (
+                            "This PDF appears to be a scanned image. "
+                            "For OCR support, install: pip install pytesseract Pillow "
+                            "and install Tesseract OCR on your system. " + msg
+                        )
+                    else:
+                        result["prompt"] = (
+                            "No schedule entries found in this PDF. "
+                            "Make sure patient names are in the format LAST, FIRST "
+                            "and dates are visible. You can also try CSV or Excel import. " + msg
+                        )
             except ImportError:
                 result = {
                     "imported": 0,

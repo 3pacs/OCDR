@@ -46,6 +46,18 @@ _DATE_LINE_RE = re.compile(
     re.MULTILINE
 )
 
+# Date anywhere in text (broader catch)
+_DATE_ANYWHERE_RE = re.compile(
+    r'\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b'
+)
+
+# Date from filename: "2026 0202.pdf" → 2026-02-02, "02-02-2026.pdf", "20260202.pdf"
+_FILENAME_DATE_RE = re.compile(
+    r'(\d{4})\s*(\d{2})(\d{2})|'  # YYYY MMDD or YYYYMMDD
+    r'(\d{2})[/-](\d{2})[/-](\d{4})|'  # MM-DD-YYYY
+    r'(\d{4})[/-](\d{2})[/-](\d{2})'  # YYYY-MM-DD
+)
+
 # Modality keywords
 _MODALITY_MAP = {
     'MRI': 'HMRI', 'HMRI': 'HMRI', 'OPEN MRI': 'OPEN', 'OPEN': 'OPEN',
@@ -62,8 +74,13 @@ _SCAN_KEYWORDS = [
     'CARDIAC', 'BREAST', 'PROSTATE', 'PSMA', 'WHOLE BODY',
 ]
 
-# Name pattern: LAST, FIRST (comma required to reduce false positives)
-_NAME_RE = re.compile(r'\b([A-Z][A-Z\'-]{1,}),\s+([A-Z][A-Z\'-]{1,})\b')
+# Name patterns (multiple strategies, ordered by specificity)
+# 1. LAST, FIRST (comma separated — most reliable)
+_NAME_COMMA_RE = re.compile(r'\b([A-Z][A-Z\'-]{1,}),\s*([A-Z][A-Z\'-]{1,})\b')
+# 2. FIRST LAST (space separated, 2+ chars each, at line start or after time/tab)
+_NAME_SPACE_RE = re.compile(r'(?:^|\t|(?:\d{1,2}:\d{2}\s*(?:AM|PM)?)\s+)([A-Z][a-zA-Z\'-]{1,})\s+([A-Z][a-zA-Z\'-]{1,})\b')
+# 3. Any two capitalized words that look like names (fallback)
+_NAME_CAPS_RE = re.compile(r'\b([A-Z]{2,})\s+([A-Z]{2,})\b')
 
 # File extensions for schedule folder scanning
 _SCHEDULE_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif', '.bmp', '.txt', '.csv', '.xlsx', '.xls'}
@@ -74,12 +91,32 @@ def _parse_date_flexible(date_str):
     if not date_str:
         return None
     date_str = date_str.strip()
-    for fmt in ('%m/%d/%Y', '%m/%d/%y', '%m-%d-%Y', '%Y-%m-%d',
-                '%B %d, %Y', '%b %d, %Y', '%B %d %Y'):
+    for fmt in ('%m/%d/%Y', '%m/%d/%y', '%m-%d-%Y', '%m-%d-%y',
+                '%Y-%m-%d', '%Y/%m/%d',
+                '%B %d, %Y', '%b %d, %Y', '%B %d %Y', '%b %d %Y'):
         try:
             return datetime.strptime(date_str, fmt).date()
         except ValueError:
             continue
+    return None
+
+
+def _extract_date_from_filename(filename):
+    """Extract a date from a filename like '2026 0202.pdf' or '02-02-2026.pdf'."""
+    basename = os.path.splitext(os.path.basename(filename))[0]
+    m = _FILENAME_DATE_RE.search(basename)
+    if not m:
+        return None
+
+    try:
+        if m.group(1):  # YYYY MMDD or YYYYMMDD
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        elif m.group(4):  # MM-DD-YYYY
+            return date(int(m.group(6)), int(m.group(4)), int(m.group(5)))
+        elif m.group(7):  # YYYY-MM-DD
+            return date(int(m.group(7)), int(m.group(8)), int(m.group(9)))
+    except (ValueError, TypeError):
+        pass
     return None
 
 
@@ -124,10 +161,15 @@ def parse_schedule_text(text, filename='unknown'):
     """Extract schedule entries from text content.
 
     Returns a dict with extracted appointments and stats.
+    Uses multiple strategies: date headers, filename dates, and
+    flexible name patterns (comma-separated, space-separated, all-caps).
     """
     lines = text.split('\n')
     entries = []
     current_date = None
+
+    # Try extracting date from filename first (e.g., "2026 0202.pdf")
+    filename_date = _extract_date_from_filename(filename)
 
     # First pass: find any date in the document for context
     for line in lines:
@@ -144,10 +186,32 @@ def parse_schedule_text(text, filename='unknown'):
                 current_date = d
                 break
 
+    # Broader search: any date-like string in the text
+    if not current_date:
+        for match in _DATE_ANYWHERE_RE.finditer(text):
+            d = _parse_date_flexible(match.group(1))
+            if d:
+                current_date = d
+                break
+
+    # Fall back to filename date
+    if not current_date and filename_date:
+        current_date = filename_date
+
+    # Detect dominant modality from the full document
+    doc_modality = _detect_modality(text)
+
+    # Collect all skip-words (header/label text to filter out)
+    _skip_words = {
+        'PATIENT', 'NAME', 'DATE', 'TIME', 'MODALITY', 'TYPE', 'DOCTOR',
+        'PHYSICIAN', 'INSURANCE', 'STATUS', 'NOTES', 'SCHEDULE', 'SCAN',
+        'APPOINTMENT', 'SCHEDULED', 'PAGE', 'TOTAL', 'REPORT',
+    }
+
     # Second pass: extract individual appointments
     for line in lines:
         line_stripped = line.strip()
-        if not line_stripped:
+        if not line_stripped or len(line_stripped) < 4:
             continue
 
         # Check if this line is a new date header
@@ -166,12 +230,40 @@ def parse_schedule_text(text, filename='unknown'):
                 current_date = d
                 continue
 
-        # Look for patient name
-        name_match = _NAME_RE.search(line_stripped)
-        if not name_match:
-            continue
+        # Inline date in the line (update current_date)
+        inline_date_match = _DATE_ANYWHERE_RE.search(line_stripped)
+        if inline_date_match:
+            d = _parse_date_flexible(inline_date_match.group(1))
+            if d:
+                current_date = d
 
-        patient_name = f'{name_match.group(1)}, {name_match.group(2)}'.upper()
+        # Look for patient name using multiple strategies
+        patient_name = None
+
+        # Strategy 1: LAST, FIRST (comma separated — most reliable)
+        name_match = _NAME_COMMA_RE.search(line_stripped)
+        if name_match:
+            patient_name = f'{name_match.group(1)}, {name_match.group(2)}'.upper()
+
+        # Strategy 2: FIRST LAST after time or at start of tab-delimited line
+        if not patient_name:
+            name_match = _NAME_SPACE_RE.search(line_stripped)
+            if name_match:
+                first, last = name_match.group(1).upper(), name_match.group(2).upper()
+                if first not in _skip_words and last not in _skip_words:
+                    patient_name = f'{last}, {first}'
+
+        # Strategy 3: Two consecutive ALL-CAPS words (common in schedules)
+        if not patient_name:
+            name_match = _NAME_CAPS_RE.search(line_stripped)
+            if name_match:
+                w1, w2 = name_match.group(1), name_match.group(2)
+                if (w1 not in _skip_words and w2 not in _skip_words
+                        and len(w1) >= 2 and len(w2) >= 2):
+                    patient_name = f'{w1}, {w2}'
+
+        if not patient_name:
+            continue
 
         # Extract time
         appt_time = None
@@ -180,13 +272,8 @@ def parse_schedule_text(text, filename='unknown'):
             appt_time = _parse_time(time_match.group(1), time_match.group(2))
 
         # Extract modality and scan type from the line
-        modality = _detect_modality(line_stripped)
+        modality = _detect_modality(line_stripped) or doc_modality
         scan_type = _detect_scan_type(line_stripped)
-
-        # If no modality in this line, check surrounding context
-        if not modality:
-            # Look at the full document for dominant modality
-            modality = _detect_modality(text)
 
         entry = {
             'patient_name': patient_name,
@@ -259,7 +346,33 @@ def _ocr_pdf_page(page):
 
 
 def _ocr_image_file(filepath):
-    """OCR a single image file. Returns extracted text or None."""
+    """OCR a single image file. Returns extracted text or None.
+
+    Tries multiple OCR strategies in order:
+    1. pytesseract with Pillow (lightweight, no cv2 needed)
+    2. pytesseract with cv2 preprocessing (better for noisy scans)
+    """
+    # Strategy 1: Pillow + pytesseract (most portable)
+    try:
+        import pytesseract
+        from PIL import Image, ImageFilter, ImageOps
+
+        img = Image.open(filepath)
+        # Preprocess: grayscale, sharpen, threshold
+        img = ImageOps.grayscale(img)
+        img = img.filter(ImageFilter.SHARPEN)
+        # Simple threshold to clean up scanned text
+        img = img.point(lambda x: 0 if x < 140 else 255, '1')
+
+        text = pytesseract.image_to_string(img, config='--psm 6 --oem 3')
+        if text and text.strip():
+            return text
+    except ImportError:
+        pass  # pytesseract not installed, try cv2 below
+    except Exception:
+        pass
+
+    # Strategy 2: cv2 + pytesseract (better preprocessing)
     try:
         import cv2
         import pytesseract
@@ -268,7 +381,6 @@ def _ocr_image_file(filepath):
         if image is None:
             return None
 
-        # Preprocessing: grayscale → denoise → adaptive threshold
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
@@ -378,10 +490,30 @@ def import_schedule_pdf(filepath):
         used_ocr = True if all_text else False
 
     if not all_text.strip():
+        # Check which OCR deps are available for the error message
+        ocr_status = []
+        try:
+            import pytesseract
+            ocr_status.append('pytesseract: installed')
+        except ImportError:
+            ocr_status.append('pytesseract: NOT installed (pip install pytesseract)')
+        try:
+            from PIL import Image
+            ocr_status.append('Pillow: installed')
+        except ImportError:
+            ocr_status.append('Pillow: NOT installed (pip install Pillow)')
+
         return {
             'entries_found': 0,
             'needs_ocr': True,
-            'message': 'Could not extract text from schedule PDF (pdfplumber + OCR both failed)',
+            'message': (
+                'Could not extract text from this PDF. '
+                'It appears to be a scanned image. '
+                'Install OCR: pip install pytesseract Pillow, '
+                'and ensure Tesseract OCR is installed on your system '
+                '(apt install tesseract-ocr or download from github.com/tesseract-ocr/tesseract). '
+                'OCR status: ' + '; '.join(ocr_status)
+            ),
         }
 
     parsed = parse_schedule_text(all_text, filename)
