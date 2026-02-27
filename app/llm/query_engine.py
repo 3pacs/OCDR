@@ -140,10 +140,27 @@ def execute_query(query_spec: dict) -> dict:
 
 # ── Validation ──────────────────────────────────────────────────────
 
+def _normalize_spec(spec: dict) -> None:
+    """Normalize LLM-generated spec: replace nulls with safe defaults."""
+    # LLMs sometimes send null instead of [] for list fields
+    for key in ("measures", "dimensions", "filters", "order_by", "columns"):
+        if spec.get(key) is None:
+            spec[key] = []
+
+    # Normalize limit: null, 0, or missing → default
+    limit = spec.get("limit")
+    if not isinstance(limit, int) or limit < 1:
+        spec["limit"] = DEFAULT_LIMIT
+    elif limit > MAX_LIMIT:
+        spec["limit"] = MAX_LIMIT
+
+
 def _validate_spec(spec: dict) -> None:
     """Validate the entire query spec. Raises ValueError on problems."""
     if not isinstance(spec, dict):
         raise ValueError("query_spec must be a dict")
+
+    _normalize_spec(spec)
 
     action = spec.get("action")
     if action not in ALLOWED_ACTIONS:
@@ -161,11 +178,11 @@ def _validate_spec(spec: dict) -> None:
     allowed_cols = ALLOWED_TABLES[table_name]["columns"]
 
     # Validate measures (for aggregate)
-    for measure in spec.get("measures", []):
+    for measure in spec["measures"]:
         _validate_measure(measure, allowed_cols)
 
     # Validate dimensions (for aggregate)
-    for dim in spec.get("dimensions", []):
+    for dim in spec["dimensions"]:
         if dim not in allowed_cols:
             raise ValueError(
                 f"Invalid dimension '{dim}' for table '{table_name}'. "
@@ -173,19 +190,12 @@ def _validate_spec(spec: dict) -> None:
             )
 
     # Validate filters
-    for filt in spec.get("filters", []):
+    for filt in spec["filters"]:
         _validate_filter(filt, allowed_cols, table_name)
 
     # Validate order_by
-    for ob in spec.get("order_by", []):
+    for ob in spec["order_by"]:
         _validate_order_by(ob, allowed_cols)
-
-    # Validate limit
-    limit = spec.get("limit", DEFAULT_LIMIT)
-    if not isinstance(limit, int) or limit < 1:
-        raise ValueError("limit must be a positive integer")
-    if limit > MAX_LIMIT:
-        raise ValueError(f"limit cannot exceed {MAX_LIMIT}")
 
 
 def _validate_measure(measure: str, allowed_cols: list[str]) -> None:
