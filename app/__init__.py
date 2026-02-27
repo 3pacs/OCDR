@@ -65,6 +65,7 @@ def create_app(config_class=Config, **config_overrides):
     with app.app_context():
         _ensure_directories(app)
         db.create_all()
+        _auto_migrate_missing_columns(app)
         _seed_lookup_tables()
         _ensure_default_admin()
 
@@ -91,6 +92,73 @@ def _setup_logging(app):
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     app.logger.addHandler(file_handler)
+
+
+def _auto_migrate_missing_columns(app):
+    """Detect and add any columns defined in SQLAlchemy models but missing from SQLite.
+
+    This fixes schema drift that occurs when new columns are added to models
+    after the initial db.create_all() — SQLite's CREATE TABLE IF NOT EXISTS
+    won't add new columns to existing tables.
+    """
+    from sqlalchemy import text, inspect as sa_inspect
+
+    inspector = sa_inspect(db.engine)
+    existing_tables = inspector.get_table_names()
+
+    # Map SQLAlchemy types to SQLite type strings
+    type_map = {
+        'INTEGER': 'INTEGER',
+        'TEXT': 'TEXT',
+        'VARCHAR': 'TEXT',
+        'FLOAT': 'REAL',
+        'REAL': 'REAL',
+        'BOOLEAN': 'BOOLEAN',
+        'DATE': 'DATE',
+        'DATETIME': 'DATETIME',
+        'NUMERIC': 'NUMERIC',
+    }
+
+    altered = []
+
+    for table_name, table in db.metadata.tables.items():
+        if table_name not in existing_tables:
+            continue  # db.create_all() handles new tables
+
+        existing_cols = {col['name'] for col in inspector.get_columns(table_name)}
+
+        for col in table.columns:
+            if col.name in existing_cols:
+                continue
+
+            # Determine SQLite type
+            sa_type = str(col.type).upper().split('(')[0]
+            sqlite_type = type_map.get(sa_type, 'TEXT')
+
+            # Determine default value
+            default_clause = ''
+            if col.default is not None:
+                val = col.default.arg
+                if callable(val):
+                    default_clause = ''  # dynamic defaults (like _utcnow) can't be set in DDL
+                elif isinstance(val, bool):
+                    default_clause = f' DEFAULT {1 if val else 0}'
+                elif isinstance(val, (int, float)):
+                    default_clause = f' DEFAULT {val}'
+                elif isinstance(val, str):
+                    default_clause = f" DEFAULT '{val}'"
+
+            sql = f'ALTER TABLE {table_name} ADD COLUMN {col.name} {sqlite_type}{default_clause}'
+            try:
+                db.session.execute(text(sql))
+                altered.append(f'{table_name}.{col.name}')
+            except Exception as e:
+                # Column might already exist (race condition) or other error
+                app.logger.debug(f'Auto-migrate skip {table_name}.{col.name}: {e}')
+
+    if altered:
+        db.session.commit()
+        app.logger.info(f'Auto-migration: added {len(altered)} missing column(s): {", ".join(altered)}')
 
 
 def _ensure_directories(app):
