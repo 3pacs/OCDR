@@ -59,9 +59,14 @@ document.addEventListener('DOMContentLoaded', function() {
 async function checkLLMStatus() {
     try {
         const data = await fetchJSON('/api/llm/status');
-        document.getElementById('llm-status').innerHTML = data.available
-            ? '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Local LLM connected</span>'
-            : '<span class="text-accent-yellow"><i class="bi bi-info-circle"></i> Using template matching (no local LLM)</span>';
+        var el = document.getElementById('llm-status');
+        if (data.ollama) {
+            el.innerHTML = '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Local LLM (Ollama) connected</span>';
+        } else if (data.anthropic) {
+            el.innerHTML = '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Claude API connected</span>';
+        } else {
+            el.innerHTML = '<span class="text-accent-yellow"><i class="bi bi-info-circle"></i> Template matching mode (no LLM configured)</span>';
+        }
     } catch (e) {
         document.getElementById('llm-status').innerHTML = '<span class="text-muted">Template matching mode</span>';
     }

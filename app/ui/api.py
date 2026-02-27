@@ -2219,10 +2219,24 @@ def schema_context():
 
 @api_bp.route("/llm/status")
 def llm_status():
-    """Check if local LLM is available."""
+    """Check which LLM backends are available."""
     try:
-        from app.llm.local_bridge import check_llm_status
-        return jsonify(check_llm_status())
+        from app.llm.local_bridge import is_llm_available
+        from app.llm.anthropic_bridge import is_anthropic_available
+
+        ollama_ok = is_llm_available()
+        anthropic_ok = is_anthropic_available()
+
+        return jsonify({
+            "available": ollama_ok or anthropic_ok,
+            "ollama": ollama_ok,
+            "anthropic": anthropic_ok,
+            "active_backend": (
+                "ollama" if ollama_ok else
+                "anthropic" if anthropic_ok else
+                None
+            ),
+        })
     except ImportError:
         return jsonify({"available": False, "reason": "LLM module not installed"})
 

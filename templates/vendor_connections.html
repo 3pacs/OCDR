@@ -259,16 +259,24 @@ function unlockStore() {
 
     // Try to list credentials to verify the password works
     fetch('/api/vendor/credentials?master_password=' + encodeURIComponent(pw))
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.error) {
-                // If file doesn't exist yet, that's OK — first time setup
-                if (data.error.includes('decrypt') || data.error.includes('token')) {
-                    showToast('Wrong master password', 'error');
-                    masterPassword = null;
-                    return;
-                }
+        .then(function(r) {
+            return r.json().then(function(data) { return { status: r.status, data: data }; });
+        })
+        .then(function(result) {
+            var data = result.data;
+
+            if (result.status === 401) {
+                showToast(data.error || 'Wrong master password', 'error');
+                masterPassword = null;
+                return;
             }
+
+            if (result.status >= 400) {
+                showToast(data.error || 'Failed to unlock store', 'error');
+                masterPassword = null;
+                return;
+            }
+
             storeUnlocked = true;
             document.getElementById('store-status').innerHTML =
                 '<i class="bi bi-unlock-fill me-1 text-accent-green"></i>Unlocked — credentials are accessible';
@@ -286,7 +294,7 @@ function unlockStore() {
             document.getElementById('btn-start-sync').style.display = '';
             showToast('Credential store unlocked', 'success');
         })
-        .catch(function(e) {
+        .catch(function() {
             // Store doesn't exist yet — first time, just set the master key
             storeUnlocked = true;
             document.getElementById('store-status').innerHTML =
@@ -342,18 +350,19 @@ function saveVendorCreds(vendor) {
             portal_url: portalUrl,
         }),
     })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
+    .then(function(r) {
+        return r.json().then(function(data) { return { status: r.status, data: data }; });
+    })
+    .then(function(result) {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-save me-1"></i>Save Credentials';
 
-        if (data.stored) {
+        if (result.data.stored) {
             showToast(vendor + ' credentials saved (encrypted)', 'success');
-            // Clear password field
             document.getElementById(vendor + '-password').value = '';
             markVendorConfigured(vendor, username);
         } else {
-            showToast(data.error || 'Failed to save', 'error');
+            showToast(result.data.error || 'Failed to save', 'error');
         }
     })
     .catch(function(e) {

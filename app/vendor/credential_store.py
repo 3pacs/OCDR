@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
@@ -50,12 +50,18 @@ class CredentialStore:
         if os.path.exists(self.filepath):
             with open(self.filepath, 'rb') as f:
                 raw = f.read()
+            if len(raw) < 17:
+                raise ValueError('Credential store file is corrupted')
             # First 16 bytes are the salt
             self._salt = raw[:16]
             encrypted = raw[16:]
             key = self._derive_key(master_password, self._salt)
             self._fernet = Fernet(key)
-            decrypted = self._fernet.decrypt(encrypted)
+            try:
+                decrypted = self._fernet.decrypt(encrypted)
+            except InvalidToken:
+                self._fernet = None
+                raise ValueError('Wrong master password')
             self._data = json.loads(decrypted)
         else:
             # New store

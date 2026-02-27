@@ -1,10 +1,11 @@
 """Handles chat interactions for the LLM integration layer.
 
-Processes user messages through a three-tier approach:
-1. If a local LLM is available, sends a structured prompt and parses
-   the JSON query spec from the response.
-2. If no LLM, tries to pattern-match the message to a pre-built template.
-3. Falls back to a helpful error message with suggestions.
+Processes user messages through a four-tier approach:
+1. If a local LLM (Ollama) is available, sends a structured prompt and
+   parses the JSON query spec from the response.
+2. If Anthropic API key is configured, uses Claude to generate query specs.
+3. If no LLM, tries to pattern-match the message to a pre-built template.
+4. Falls back to a helpful error message with suggestions.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from app.llm.prompt_templates import (
     match_template,
 )
 from app.llm.local_bridge import query_local_llm, is_llm_available
+from app.llm.anthropic_bridge import query_anthropic, is_anthropic_available
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +58,22 @@ def handle_chat_message(message: str) -> dict:
 
     message = message.strip()
 
-    # Strategy 1: Try local LLM
+    # Strategy 1: Try local LLM (Ollama)
     result = _try_llm(message)
     if result is not None:
         return result
 
-    # Strategy 2: Try template matching
+    # Strategy 2: Try Anthropic API (Claude)
+    result = _try_anthropic(message)
+    if result is not None:
+        return result
+
+    # Strategy 3: Try template matching
     result = _try_template(message)
     if result is not None:
         return result
 
-    # Strategy 3: Fallback
+    # Strategy 4: Fallback
     return _fallback_response(message)
 
 
@@ -145,6 +152,59 @@ def _try_llm(message: str) -> dict | None:
 
     except Exception as exc:
         logger.error("LLM strategy failed: %s", exc)
+        return None
+
+
+# ── Strategy 2: Anthropic API ─────────────────────────────────────
+
+
+def _try_anthropic(message: str) -> dict | None:
+    """Attempt to use the Anthropic Claude API to generate a query spec."""
+    if not is_anthropic_available():
+        return None
+
+    try:
+        context_data = build_context()
+        context_summary = _format_context_for_prompt(context_data)
+
+        system_prompt = _SYSTEM_PROMPT.format(
+            schema=get_schema_context(),
+            context=context_summary,
+        )
+
+        api_response = query_anthropic(
+            prompt=message,
+            system_prompt=system_prompt,
+        )
+
+        if not api_response:
+            return None
+
+        # Parse JSON from the response
+        query_spec = _extract_json(api_response)
+        if query_spec is None:
+            logger.warning("Anthropic response was not valid JSON: %s",
+                           api_response[:200])
+            return None
+
+        # Execute the query
+        results = execute_query(query_spec)
+
+        if not results.get("success"):
+            logger.warning("Anthropic-generated query failed: %s",
+                           results.get("error"))
+            return None
+
+        formatted = format_results(query_spec, results)
+
+        return {
+            "response": formatted,
+            "query_used": query_spec,
+            "source": "anthropic",
+        }
+
+    except Exception as exc:
+        logger.error("Anthropic strategy failed: %s", exc)
         return None
 
 

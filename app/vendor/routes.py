@@ -113,8 +113,10 @@ def store_credentials():
             extra=extra if extra else None,
         )
         store.save()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
-        return jsonify({'error': f'Failed to store credentials: {e}'}), 500
+        return jsonify({'error': f'Failed to store credentials: {type(e).__name__}: {e}'}), 500
 
     return jsonify({
         'stored': True,
@@ -137,8 +139,10 @@ def list_credentials():
     try:
         store.unlock(master)
         vendors = store.list_vendors()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
-        return jsonify({'error': f'Failed to unlock store: {e}'}), 500
+        return jsonify({'error': f'Failed to unlock store: {type(e).__name__}: {e}'}), 500
 
     return jsonify({'vendors': vendors})
 
@@ -155,8 +159,10 @@ def delete_credentials(vendor_name):
         store.unlock(data['master_password'])
         store.delete(vendor_name)
         store.save()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
 
     return jsonify({'deleted': True, 'vendor': vendor_name})
 
@@ -184,8 +190,10 @@ def vendor_download():
     try:
         store.unlock(master_password)
         creds = store.get(vendor_name)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
-        return jsonify({'error': f'Failed to unlock credentials: {e}'}), 500
+        return jsonify({'error': f'Failed to unlock credentials: {type(e).__name__}: {e}'}), 500
 
     if not creds:
         return jsonify({'error': f'No credentials stored for {vendor_name}'}), 404
