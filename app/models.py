@@ -452,6 +452,51 @@ class User(db.Model):
 #  Claim Lifecycle (Sprint 14)
 # ══════════════════════════════════════════════════════════════════
 
+class ServerFileIndex(db.Model):
+    """Tracks files discovered on the records server (X: drive) for read-only extraction."""
+    __tablename__ = "server_file_index"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    file_path = db.Column(db.Text, nullable=False, index=True)          # full path on server
+    relative_path = db.Column(db.Text, nullable=False, index=True)      # path relative to root
+    filename = db.Column(db.Text, nullable=False, index=True)
+    extension = db.Column(db.Text, index=True)                          # .835, .csv, .xlsx, etc.
+    file_size = db.Column(db.Integer)                                    # bytes
+    file_modified = db.Column(db.DateTime)                               # mtime from OS
+    detected_format = db.Column(db.Text, index=True)                    # 835, csv, xlsx, pdf, image, etc.
+    detected_category = db.Column(db.Text, index=True)                  # billing, era, schedule, pacs, unknown
+    detection_confidence = db.Column(db.Float)
+    import_status = db.Column(db.Text, default="DISCOVERED", index=True)  # DISCOVERED, IMPORTED, SKIPPED, ERROR
+    import_result = db.Column(db.Text)                                   # summary or error message
+    records_imported = db.Column(db.Integer, default=0)
+    last_scanned = db.Column(db.DateTime, default=_utcnow)
+    imported_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        db.Index("idx_server_file_path_mod", "file_path", "file_modified"),
+        db.UniqueConstraint("file_path", name="uq_server_file_path"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "file_path": self.file_path,
+            "relative_path": self.relative_path,
+            "filename": self.filename,
+            "extension": self.extension,
+            "file_size": self.file_size,
+            "file_modified": self.file_modified.isoformat() if self.file_modified else None,
+            "detected_format": self.detected_format,
+            "detected_category": self.detected_category,
+            "detection_confidence": self.detection_confidence,
+            "import_status": self.import_status,
+            "import_result": self.import_result,
+            "records_imported": self.records_imported,
+            "last_scanned": self.last_scanned.isoformat() if self.last_scanned else None,
+            "imported_at": self.imported_at.isoformat() if self.imported_at else None,
+        }
+
+
 class ClaimStatusHistory(db.Model):
     """Tracks claim state transitions with timestamps."""
     __tablename__ = "claim_status_history"

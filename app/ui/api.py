@@ -2718,6 +2718,206 @@ def admin_create_user():
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Records Server (Read-Only X: Drive)
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/records-server/status")
+def records_server_status():
+    """Get records server connection status and summary."""
+    from flask import current_app
+    from app.import_engine.records_server import validate_server_path, get_server_summary
+
+    path = current_app.config.get("RECORDS_SERVER_PATH", "")
+    validation = validate_server_path(path) if path else {"valid": False, "error": "Not configured"}
+    summary = get_server_summary()
+
+    return jsonify({
+        "configured_path": path,
+        "connection": validation,
+        "summary": summary,
+    })
+
+
+@api_bp.route("/records-server/configure", methods=["POST"])
+def records_server_configure():
+    """Set the records server path (persists for current session)."""
+    from flask import current_app
+    from app.import_engine.records_server import validate_server_path
+
+    data = request.get_json(silent=True)
+    if not data or not data.get("path"):
+        return jsonify({"error": "path is required"}), 400
+
+    path = data["path"].strip()
+    validation = validate_server_path(path)
+
+    if not validation["valid"]:
+        return jsonify({"error": validation["error"]}), 400
+
+    # Update runtime config (not persistent across restarts — use env var for that)
+    current_app.config["RECORDS_SERVER_PATH"] = path
+    return jsonify({
+        "status": "configured",
+        "path": path,
+        "connection": validation,
+    })
+
+
+@api_bp.route("/records-server/discover", methods=["POST"])
+def records_server_discover():
+    """Scan the records server and catalog all importable files."""
+    from flask import current_app
+    from app.import_engine.records_server import validate_server_path, discover_files, detect_file_formats
+
+    path = current_app.config.get("RECORDS_SERVER_PATH", "")
+    if not path:
+        return jsonify({"error": "Records server path not configured"}), 400
+
+    validation = validate_server_path(path)
+    if not validation["valid"]:
+        return jsonify({"error": validation["error"]}), 400
+
+    # Phase 1: Discover files (filesystem metadata only)
+    discovery = discover_files(path, app=current_app)
+    if "error" in discovery:
+        return jsonify({"error": discovery["error"]}), 400
+
+    # Phase 2: Detect formats (reads file content headers)
+    detection = detect_file_formats(limit=500, app=current_app)
+
+    return jsonify({
+        "discovery": discovery,
+        "detection": detection,
+    })
+
+
+@api_bp.route("/records-server/files")
+def records_server_files():
+    """List discovered files with optional filters."""
+    from app.models import ServerFileIndex
+
+    page = request.args.get("page", 1, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
+    category = request.args.get("category")
+    fmt = request.args.get("format")
+    status = request.args.get("status")
+    search = request.args.get("q", "").strip()
+    sort = request.args.get("sort", "file_modified")
+    sort_dir = request.args.get("dir", "desc")
+
+    query = ServerFileIndex.query
+
+    if category:
+        query = query.filter_by(detected_category=category)
+    if fmt:
+        query = query.filter_by(detected_format=fmt)
+    if status:
+        query = query.filter_by(import_status=status)
+    if search:
+        query = query.filter(ServerFileIndex.filename.ilike(f"%{_escape_like(search)}%"))
+
+    sort_cols = {
+        "filename": ServerFileIndex.filename,
+        "file_size": ServerFileIndex.file_size,
+        "file_modified": ServerFileIndex.file_modified,
+        "extension": ServerFileIndex.extension,
+        "detected_format": ServerFileIndex.detected_format,
+        "detected_category": ServerFileIndex.detected_category,
+        "import_status": ServerFileIndex.import_status,
+    }
+    col = sort_cols.get(sort, ServerFileIndex.file_modified)
+    if sort_dir == "asc":
+        query = query.order_by(col.asc())
+    else:
+        query = query.order_by(col.desc())
+
+    result = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    return jsonify({
+        "items": [f.to_dict() for f in result.items],
+        "total": result.total,
+        "page": page,
+        "pages": result.pages,
+    })
+
+
+@api_bp.route("/records-server/extract", methods=["POST"])
+def records_server_extract():
+    """Extract (import) files from the records server.
+
+    JSON body options:
+      - file_ids: [1, 2, 3] — extract specific files
+      - category: "era" — extract all discovered files in a category
+      - format: "835" — extract all discovered files of a format
+      - limit: 50 — max files to process
+    """
+    from flask import current_app
+    from app.import_engine.records_server import extract_file, extract_batch
+
+    data = request.get_json(silent=True) or {}
+
+    # Extract specific files by ID
+    if "file_ids" in data:
+        file_ids = data["file_ids"]
+        if not isinstance(file_ids, list) or len(file_ids) == 0:
+            return jsonify({"error": "file_ids must be a non-empty list"}), 400
+        if len(file_ids) > 100:
+            return jsonify({"error": "Maximum 100 files per batch"}), 400
+
+        results = {"total": len(file_ids), "imported": 0, "errors": 0, "records_imported": 0, "details": []}
+        for fid in file_ids:
+            result = extract_file(fid, app=current_app)
+            if result.get("status") == "IMPORTED":
+                results["imported"] += 1
+                results["records_imported"] += result.get("records_imported", 0)
+            elif "error" in result:
+                results["errors"] += 1
+            results["details"].append(result)
+
+        return jsonify(results)
+
+    # Batch extract by category/format
+    limit = min(data.get("limit", 50), 200)
+    return jsonify(extract_batch(
+        category=data.get("category"),
+        format_type=data.get("format"),
+        limit=limit,
+        app=current_app,
+    ))
+
+
+@api_bp.route("/records-server/extract/<int:file_id>", methods=["POST"])
+def records_server_extract_single(file_id):
+    """Extract a single file from the records server."""
+    from flask import current_app
+    from app.import_engine.records_server import extract_file
+    result = extract_file(file_id, app=current_app)
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@api_bp.route("/records-server/reset", methods=["POST"])
+def records_server_reset():
+    """Reset the file index (re-scan from scratch)."""
+    from app.models import ServerFileIndex
+    data = request.get_json(silent=True) or {}
+
+    if data.get("status_only"):
+        # Reset import status to DISCOVERED for re-import
+        count = ServerFileIndex.query.filter(
+            ServerFileIndex.import_status.in_(["ERROR", "SKIPPED"])
+        ).update({"import_status": "DISCOVERED"}, synchronize_session=False)
+        db.session.commit()
+        return jsonify({"reset": count, "type": "status_reset"})
+
+    # Full reset — clear the entire index
+    count = ServerFileIndex.query.delete()
+    db.session.commit()
+    return jsonify({"reset": count, "type": "full_reset"})
+
+
+# ══════════════════════════════════════════════════════════════════
 #  Helpers
 # ══════════════════════════════════════════════════════════════════
 

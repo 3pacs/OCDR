@@ -236,6 +236,150 @@
     </div>
 </div>
 
+<!-- Records Server (Read-Only X: Drive) -->
+<div class="data-card padded mb-4" id="records-server-section">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="fw-semibold mb-0">
+            <i class="bi bi-hdd-network me-2 text-accent-blue"></i>Records Server
+            <span class="badge ms-2 small" id="rs-status-badge">Checking...</span>
+        </h6>
+        <span class="text-muted small"><i class="bi bi-shield-lock me-1"></i>Read-Only Access</span>
+    </div>
+    <p class="text-muted small mb-3">
+        Connect to your records server drive to automatically discover and import billing, ERA, schedule, and PACS data.
+        The app will <strong>never write, move, or delete</strong> files on the server — all operations are read-only.
+    </p>
+
+    <!-- Path Configuration -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-8">
+            <label class="form-label small text-muted">Server Drive Path</label>
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                <input type="text" class="form-control form-control-sm" id="rs-path-input"
+                       value="{{ config.get('RECORDS_SERVER_PATH', '') }}"
+                       placeholder="X:\ or /mnt/records-server">
+                <button class="btn btn-sm btn-primary" id="btn-rs-connect" onclick="rsConnect()">
+                    <i class="bi bi-plug me-1"></i>Connect
+                </button>
+            </div>
+            <small class="text-muted d-block mt-1">Or set <code>RECORDS_SERVER_PATH</code> environment variable.</small>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <button class="btn btn-sm btn-outline-info w-100" id="btn-rs-discover" onclick="rsDiscover()" disabled>
+                <i class="bi bi-search me-1"></i>Discover Files
+            </button>
+        </div>
+    </div>
+
+    <!-- Discovery Progress -->
+    <div class="upload-progress" id="rs-discover-progress">
+        <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+        <div class="progress-text">Scanning records server...</div>
+    </div>
+
+    <!-- Summary Cards (shown after discovery) -->
+    <div class="row g-3 mb-3" id="rs-summary" style="display:none;">
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-blue" style="padding:.75rem;">
+                <div class="kpi-label small">Total Files</div>
+                <div class="kpi-value fs-5" id="rs-total-files">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-green" style="padding:.75rem;">
+                <div class="kpi-label small">Imported</div>
+                <div class="kpi-value fs-5" id="rs-imported">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-purple" style="padding:.75rem;">
+                <div class="kpi-label small">Ready</div>
+                <div class="kpi-value fs-5" id="rs-ready">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-amber" style="padding:.75rem;">
+                <div class="kpi-label small">Total Size</div>
+                <div class="kpi-value fs-5" id="rs-total-size">0</div>
+            </div>
+        </div>
+        <div class="col-md-4 d-flex align-items-center">
+            <div class="d-flex gap-2 w-100">
+                <button class="btn btn-sm btn-success flex-fill" id="btn-rs-extract-all" onclick="rsExtractAll()" disabled>
+                    <i class="bi bi-download me-1"></i>Extract All
+                </button>
+                <button class="btn btn-sm btn-outline-light flex-fill" onclick="rsReset()" title="Re-scan">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Re-scan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Format Breakdown -->
+    <div id="rs-breakdown" style="display:none;">
+        <h6 class="fw-semibold small mb-2">Files by Type</h6>
+        <div class="d-flex flex-wrap gap-2 mb-3" id="rs-format-tags"></div>
+    </div>
+
+    <!-- File Browser -->
+    <div id="rs-file-browser" style="display:none;">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="fw-semibold small mb-0">Discovered Files</h6>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" id="rs-filter-category" onchange="rsLoadFiles()" style="width:auto">
+                    <option value="">All Categories</option>
+                    <option value="era">ERA/EOB</option>
+                    <option value="billing">Billing</option>
+                    <option value="schedule">Schedule</option>
+                    <option value="unknown">Unknown</option>
+                </select>
+                <select class="form-select form-select-sm" id="rs-filter-status" onchange="rsLoadFiles()" style="width:auto">
+                    <option value="">All Status</option>
+                    <option value="DISCOVERED">Discovered</option>
+                    <option value="IMPORTED">Imported</option>
+                    <option value="SKIPPED">Skipped</option>
+                    <option value="ERROR">Error</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
+            <table class="data-table" id="rs-files-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="rs-select-all" onchange="rsToggleSelectAll()"></th>
+                        <th data-sort="filename">File</th>
+                        <th data-sort="extension">Type</th>
+                        <th data-sort="detected_category">Category</th>
+                        <th data-sort="file_size">Size</th>
+                        <th data-sort="file_modified">Modified</th>
+                        <th data-sort="import_status">Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="rs-files-body"></tbody>
+            </table>
+        </div>
+        <div class="d-flex align-items-center justify-content-between mt-2">
+            <span class="text-muted small" id="rs-files-info">--</span>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-light" id="rs-prev-page" onclick="rsChangePage(-1)" disabled>&laquo; Prev</button>
+                <button class="btn btn-sm btn-outline-light" id="rs-next-page" onclick="rsChangePage(1)" disabled>Next &raquo;</button>
+            </div>
+            <button class="btn btn-sm btn-primary" id="btn-rs-extract-selected" onclick="rsExtractSelected()" disabled>
+                <i class="bi bi-download me-1"></i>Extract Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Extract Progress & Results -->
+    <div class="upload-progress" id="rs-extract-progress">
+        <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+        <div class="progress-text">Extracting data from records server...</div>
+    </div>
+    <div class="upload-result" id="rs-extract-result"></div>
+</div>
+
 <!-- AI Assistant Config -->
 <div class="data-card padded mb-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -342,6 +486,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadImportStatus();
     checkAiStatus();
     setupUploads();
+    rsCheckStatus();
 });
 
 // ── Interactive Prompt System ─────────────────────────────────
@@ -772,6 +917,364 @@ function showToast(message, type) {
     toast.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> ' + message;
     container.appendChild(toast);
     setTimeout(function() { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; toast.style.transition = 'all 0.3s ease'; setTimeout(function() { toast.remove(); }, 300); }, 4000);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Records Server (Read-Only X: Drive)
+// ══════════════════════════════════════════════════════════════
+
+var rsCurrentPage = 1;
+var rsTotalPages = 1;
+var rsConnected = false;
+
+async function rsCheckStatus() {
+    try {
+        var data = await fetchJSON('/api/records-server/status');
+        var badge = document.getElementById('rs-status-badge');
+        var pathInput = document.getElementById('rs-path-input');
+
+        if (data.connection && data.connection.valid) {
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis ms-2 small';
+            rsConnected = true;
+            document.getElementById('btn-rs-discover').disabled = false;
+            if (data.configured_path) pathInput.value = data.configured_path;
+
+            // If we already have indexed files, show the summary
+            if (data.summary && data.summary.total_files > 0) {
+                rsShowSummary(data.summary);
+                rsLoadFiles();
+            }
+        } else if (data.configured_path) {
+            badge.textContent = 'Disconnected';
+            badge.className = 'badge bg-danger-subtle text-danger-emphasis ms-2 small';
+            pathInput.value = data.configured_path;
+        } else {
+            badge.textContent = 'Not configured';
+            badge.className = 'badge bg-warning-subtle text-warning-emphasis ms-2 small';
+        }
+    } catch (e) {
+        var badge = document.getElementById('rs-status-badge');
+        badge.textContent = 'Unavailable';
+        badge.className = 'badge bg-secondary ms-2 small';
+    }
+}
+
+async function rsConnect() {
+    var path = document.getElementById('rs-path-input').value.trim();
+    if (!path) { showToast('Enter a server drive path', 'warning'); return; }
+
+    var btn = document.getElementById('btn-rs-connect');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Connecting...';
+
+    try {
+        var resp = await fetch('/api/records-server/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path }),
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            showToast('Connected to records server', 'success');
+            rsConnected = true;
+            document.getElementById('btn-rs-discover').disabled = false;
+            var badge = document.getElementById('rs-status-badge');
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis ms-2 small';
+            if (data.connection && data.connection.writable_warning) {
+                showToast('Drive is writable — app will only READ, never modify files', 'warning');
+            }
+        } else {
+            showToast(data.error || 'Failed to connect', 'error');
+        }
+    } catch (e) {
+        showToast('Connection error: ' + e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-plug me-1"></i>Connect';
+}
+
+async function rsDiscover() {
+    if (!rsConnected) { showToast('Connect to the server first', 'warning'); return; }
+
+    var btn = document.getElementById('btn-rs-discover');
+    var progress = document.getElementById('rs-discover-progress');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+    progress.classList.add('active');
+
+    try {
+        var resp = await fetch('/api/records-server/discover', { method: 'POST' });
+        var data = await resp.json();
+
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Discover Files';
+
+        if (resp.ok) {
+            var disc = data.discovery || {};
+            var det = data.detection || {};
+            var totalNew = disc.new_files || 0;
+            var totalUpdated = disc.updated_files || 0;
+            var totalUnchanged = disc.unchanged_files || 0;
+
+            showToast(
+                'Found ' + (totalNew + totalUpdated + totalUnchanged) + ' files (' +
+                totalNew + ' new, ' + det.detected + ' classified)',
+                'success'
+            );
+
+            // Refresh summary
+            await rsRefreshSummary();
+            rsLoadFiles();
+        } else {
+            showToast(data.error || 'Discovery failed', 'error');
+        }
+    } catch (e) {
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Discover Files';
+        showToast('Discovery error: ' + e.message, 'error');
+    }
+}
+
+async function rsRefreshSummary() {
+    try {
+        var data = await fetchJSON('/api/records-server/status');
+        if (data.summary) rsShowSummary(data.summary);
+    } catch (e) {}
+}
+
+function rsShowSummary(summary) {
+    document.getElementById('rs-summary').style.display = 'flex';
+    document.getElementById('rs-breakdown').style.display = 'block';
+    document.getElementById('rs-file-browser').style.display = 'block';
+
+    document.getElementById('rs-total-files').textContent = formatNumber(summary.total_files || 0);
+    document.getElementById('rs-total-size').textContent = (summary.total_size_mb || 0) + ' MB';
+
+    var byStatus = summary.by_status || {};
+    document.getElementById('rs-imported').textContent = formatNumber(byStatus['IMPORTED'] || 0);
+    document.getElementById('rs-ready').textContent = formatNumber(byStatus['DISCOVERED'] || 0);
+
+    var extractBtn = document.getElementById('btn-rs-extract-all');
+    extractBtn.disabled = !(byStatus['DISCOVERED'] > 0);
+
+    // Format tags
+    var tagsDiv = document.getElementById('rs-format-tags');
+    tagsDiv.innerHTML = '';
+    var byFormat = summary.by_format || {};
+    var catColors = { '835': 'bg-success-subtle text-success-emphasis', 'csv': 'bg-info-subtle text-info-emphasis',
+        'xlsx': 'bg-primary-subtle text-primary-emphasis', 'pdf': 'bg-warning-subtle text-warning-emphasis',
+        'eob_pdf': 'bg-success-subtle text-success-emphasis', 'schedule_pdf': 'bg-info-subtle text-info-emphasis',
+        'image': 'bg-secondary', 'unknown': 'bg-dark' };
+    var fmtKeys = Object.keys(byFormat);
+    for (var i = 0; i < fmtKeys.length; i++) {
+        var fmt = fmtKeys[i];
+        var cls = catColors[fmt] || 'bg-secondary';
+        tagsDiv.innerHTML += '<span class="badge ' + cls + ' me-1" style="cursor:pointer" onclick="rsFilterByFormat(\'' +
+            escapeHtml(fmt) + '\')">' + escapeHtml(fmt) + ' <strong>' + byFormat[fmt] + '</strong></span>';
+    }
+}
+
+function rsFilterByFormat(fmt) {
+    var catSel = document.getElementById('rs-filter-category');
+    var statusSel = document.getElementById('rs-filter-status');
+    catSel.value = '';
+    statusSel.value = '';
+    rsCurrentPage = 1;
+    rsLoadFiles(fmt);
+}
+
+async function rsLoadFiles(formatOverride) {
+    var category = document.getElementById('rs-filter-category').value;
+    var status = document.getElementById('rs-filter-status').value;
+    var params = 'page=' + rsCurrentPage + '&per_page=25';
+    if (category) params += '&category=' + encodeURIComponent(category);
+    if (status) params += '&status=' + encodeURIComponent(status);
+    if (formatOverride) params += '&format=' + encodeURIComponent(formatOverride);
+
+    try {
+        var data = await fetchJSON('/api/records-server/files?' + params);
+        var tbody = document.getElementById('rs-files-body');
+        tbody.innerHTML = '';
+        rsTotalPages = data.pages || 1;
+
+        var statusColors = { 'DISCOVERED': 'badge-warning', 'IMPORTED': 'badge-safe', 'SKIPPED': 'badge-written-off', 'ERROR': 'badge-past-deadline' };
+
+        for (var i = 0; i < data.items.length; i++) {
+            var f = data.items[i];
+            var size = f.file_size ? (f.file_size < 1024 ? f.file_size + ' B' : f.file_size < 1048576 ? Math.round(f.file_size/1024) + ' KB' : (f.file_size/1048576).toFixed(1) + ' MB') : '--';
+            var modified = f.file_modified ? formatDate(f.file_modified.split('T')[0]) : '--';
+            var statusCls = statusColors[f.import_status] || 'badge-warning';
+            var actionBtn = f.import_status === 'DISCOVERED'
+                ? '<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="rsExtractOne(' + f.id + ',this)"><i class="bi bi-download"></i></button>'
+                : f.import_status === 'IMPORTED'
+                ? '<span class="text-muted small">' + (f.records_imported || 0) + ' rec</span>'
+                : '<button class="btn btn-sm btn-outline-warning py-0 px-2" onclick="rsExtractOne(' + f.id + ',this)" title="Retry"><i class="bi bi-arrow-clockwise"></i></button>';
+
+            tbody.innerHTML += '<tr data-id="' + f.id + '">' +
+                '<td><input type="checkbox" class="rs-file-check" value="' + f.id + '"></td>' +
+                '<td class="small" title="' + escapeHtml(f.relative_path) + '">' + escapeHtml(f.filename) + '</td>' +
+                '<td><span class="badge bg-secondary">' + escapeHtml(f.extension || '?') + '</span></td>' +
+                '<td>' + escapeHtml(f.detected_category || '--') + '</td>' +
+                '<td class="small">' + size + '</td>' +
+                '<td class="small">' + modified + '</td>' +
+                '<td><span class="badge-status ' + statusCls + '">' + escapeHtml(f.import_status) + '</span></td>' +
+                '<td>' + actionBtn + '</td>' +
+                '</tr>';
+        }
+
+        if (data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No files found matching filters</td></tr>';
+        }
+
+        document.getElementById('rs-files-info').textContent = 'Page ' + rsCurrentPage + ' of ' + rsTotalPages + ' (' + data.total + ' files)';
+        document.getElementById('rs-prev-page').disabled = rsCurrentPage <= 1;
+        document.getElementById('rs-next-page').disabled = rsCurrentPage >= rsTotalPages;
+
+        rsUpdateSelectedCount();
+    } catch (e) {
+        console.error('Failed to load RS files', e);
+    }
+}
+
+function rsChangePage(delta) {
+    rsCurrentPage = Math.max(1, Math.min(rsTotalPages, rsCurrentPage + delta));
+    rsLoadFiles();
+}
+
+function rsToggleSelectAll() {
+    var checked = document.getElementById('rs-select-all').checked;
+    var boxes = document.querySelectorAll('.rs-file-check');
+    boxes.forEach(function(cb) { cb.checked = checked; });
+    rsUpdateSelectedCount();
+}
+
+function rsUpdateSelectedCount() {
+    var checked = document.querySelectorAll('.rs-file-check:checked');
+    var btn = document.getElementById('btn-rs-extract-selected');
+    btn.disabled = checked.length === 0;
+    btn.innerHTML = '<i class="bi bi-download me-1"></i>Extract Selected' + (checked.length > 0 ? ' (' + checked.length + ')' : '');
+}
+
+// Attach change listener for checkboxes (delegated)
+document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('rs-file-check')) rsUpdateSelectedCount();
+});
+
+async function rsExtractOne(fileId, btn) {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+    try {
+        var resp = await fetch('/api/records-server/extract/' + fileId, { method: 'POST' });
+        var data = await resp.json();
+        if (resp.ok && data.status === 'IMPORTED') {
+            showToast(data.filename + ': ' + (data.records_imported || 0) + ' records imported', 'success');
+        } else {
+            showToast(data.detail || data.error || 'Import failed', 'error');
+        }
+    } catch (e) {
+        showToast('Extract error: ' + e.message, 'error');
+    }
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsExtractSelected() {
+    var checked = document.querySelectorAll('.rs-file-check:checked');
+    if (checked.length === 0) return;
+    var ids = Array.from(checked).map(function(cb) { return parseInt(cb.value); });
+
+    var progress = document.getElementById('rs-extract-progress');
+    var resultDiv = document.getElementById('rs-extract-result');
+    progress.classList.add('active');
+    progress.querySelector('.progress-text').textContent = 'Extracting ' + ids.length + ' files...';
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/records-server/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_ids: ids }),
+        });
+        var data = await resp.json();
+        progress.classList.remove('active');
+
+        var msg = '<strong>' + (data.imported || 0) + '</strong> files imported, ' +
+            '<strong>' + (data.records_imported || 0) + '</strong> total records';
+        if (data.errors > 0) msg += ' <span class="text-accent-yellow">(' + data.errors + ' errors)</span>';
+
+        resultDiv.className = 'upload-result show ' + (data.errors > 0 && data.imported === 0 ? 'result-error' : data.errors > 0 ? 'result-warning' : 'result-success');
+        resultDiv.innerHTML = msg;
+
+        showToast((data.records_imported || 0) + ' records extracted from ' + ids.length + ' files', data.errors > 0 ? 'warning' : 'success');
+    } catch (e) {
+        progress.classList.remove('active');
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Error: ' + escapeHtml(e.message) + '</span>';
+    }
+
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsExtractAll() {
+    var progress = document.getElementById('rs-extract-progress');
+    var resultDiv = document.getElementById('rs-extract-result');
+    progress.classList.add('active');
+    progress.querySelector('.progress-text').textContent = 'Extracting all discovered files...';
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/records-server/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 200 }),
+        });
+        var data = await resp.json();
+        progress.classList.remove('active');
+
+        var msg = '<strong>' + (data.imported || 0) + '</strong> files imported, ' +
+            '<strong>' + (data.records_imported || 0) + '</strong> total records';
+        if (data.skipped > 0) msg += ', ' + data.skipped + ' skipped';
+        if (data.errors > 0) msg += ' <span class="text-accent-yellow">(' + data.errors + ' errors)</span>';
+
+        resultDiv.className = 'upload-result show ' + (data.errors > 0 && data.imported === 0 ? 'result-error' : data.errors > 0 ? 'result-warning' : 'result-success');
+        resultDiv.innerHTML = msg;
+
+        showToast((data.records_imported || 0) + ' records extracted from server', data.errors > 0 ? 'warning' : 'success');
+    } catch (e) {
+        progress.classList.remove('active');
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Error: ' + escapeHtml(e.message) + '</span>';
+    }
+
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsReset() {
+    if (!confirm('This will re-scan the records server from scratch. Existing import history will be cleared. Continue?')) return;
+    try {
+        var resp = await fetch('/api/records-server/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        var data = await resp.json();
+        showToast('Index cleared (' + (data.reset || 0) + ' entries removed)', 'info');
+        document.getElementById('rs-summary').style.display = 'none';
+        document.getElementById('rs-breakdown').style.display = 'none';
+        document.getElementById('rs-file-browser').style.display = 'none';
+        document.getElementById('rs-extract-result').classList.remove('show');
+    } catch (e) {
+        showToast('Reset error: ' + e.message, 'error');
+    }
 }
 </script>
 {% endblock %}

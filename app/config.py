@@ -25,6 +25,9 @@ class Config:
     )
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max upload
 
+    # Records server (read-only network drive, e.g., X:\ on Windows)
+    RECORDS_SERVER_PATH = os.environ.get("RECORDS_SERVER_PATH", "")
+
     # LLM integration
     LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "http://localhost:11434")
     LLM_MODEL = os.environ.get("LLM_MODEL", "llama3")
