@@ -34,7 +34,7 @@
 <!-- KPI Cards Row -->
 <div class="row g-3 mb-4" id="kpi-row-1">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue clickable" onclick="window.location='/import'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Sum of all primary + secondary payments collected across all billing records">
+        <div class="kpi-card kpi-revenue expandable" onclick="expandRevenue()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for revenue breakdown by carrier and modality">
             <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Revenue</div>
@@ -44,7 +44,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-danger clickable" onclick="window.location='/denials'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims where total payment is $0 — includes denials, pending claims, and unbilled items">
+        <div class="kpi-card kpi-danger expandable" onclick="expandDenials()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for denial breakdown and top denial reasons">
             <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Unpaid / Denied</div>
@@ -54,7 +54,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-warning clickable" onclick="window.location='/underpayments'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dollar gap between what carriers paid vs expected rates from your fee schedule. Requires fee schedule setup.">
+        <div class="kpi-card kpi-warning expandable" onclick="expandUnderpayments()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for underpayment details by carrier">
             <div class="kpi-icon"><i class="bi bi-arrow-down-circle-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Underpayment Gap</div>
@@ -64,7 +64,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-alert clickable" onclick="window.location='/filing-deadlines'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims approaching or past carrier filing deadlines. Configure deadlines under System Admin > Payers.">
+        <div class="kpi-card kpi-alert expandable" onclick="expandDeadlines()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click to see claims approaching deadlines">
             <div class="kpi-icon"><i class="bi bi-alarm-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Filing Deadline Alerts</div>
@@ -78,7 +78,7 @@
 <!-- Secondary row of KPI cards -->
 <div class="row g-3 mb-4" id="kpi-row-2">
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-info clickable" onclick="window.location='/secondary'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims where the carrier expects secondary insurance. Track these for additional reimbursement.">
+        <div class="kpi-card kpi-info expandable" onclick="expandSecondary()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for secondary follow-up details">
             <div class="kpi-icon"><i class="bi bi-layers-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Secondary Follow-Up</div>
@@ -88,7 +88,7 @@
         </div>
     </div>
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-payer clickable" onclick="window.location='/payers'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Carriers whose monthly revenue dropped significantly vs historical average. Investigate declining reimbursements.">
+        <div class="kpi-card kpi-payer expandable" onclick="expandPayerAlerts()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for detailed payer revenue changes">
             <div class="kpi-icon"><i class="bi bi-building-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Payer Alerts</div>
@@ -98,7 +98,7 @@
         </div>
     </div>
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-physician clickable" onclick="window.location='/physicians'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Referring physician with the highest total billing revenue. Click to see the full physician rankings.">
+        <div class="kpi-card kpi-physician expandable" onclick="expandPhysicians()" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click for full physician rankings">
             <div class="kpi-icon"><i class="bi bi-person-badge-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Top Physicians</div>
@@ -138,6 +138,7 @@
 <div class="row g-3 mb-4" id="charts-row">
     <div class="col-xl-8">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(revenueChartInstance, 'Monthly Revenue Trend')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Monthly Revenue Trend</h6>
                 <div class="chart-legend" id="revenue-legend"></div>
@@ -154,6 +155,7 @@
     </div>
     <div class="col-xl-4">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(modalityChartInstance, 'Revenue by Modality')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Revenue by Modality</h6>
             </div>
@@ -168,6 +170,7 @@
 <div class="row g-3 mb-4">
     <div class="col-xl-7">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(carrierChartInstance, 'Revenue by Carrier')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Revenue by Carrier</h6>
             </div>
@@ -197,74 +200,6 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDashboard();
     setInterval(loadDashboard, 60000);
 });
-
-async function loadDashboard() {
-    try {
-        const [stats, byMonth, byCarrier, byModality, payerData, physicians] = await Promise.all([
-            fetchJSON('/api/dashboard/stats'),
-            fetchJSON('/api/dashboard/revenue-by-month'),
-            fetchJSON('/api/dashboard/revenue-by-carrier'),
-            fetchJSON('/api/dashboard/revenue-by-modality'),
-            fetchJSON('/api/payer-monitor'),
-            fetchJSON('/api/physicians?limit=5'),
-        ]);
-
-        // Show welcome banner if no data
-        if (stats.total_records === 0) {
-            document.getElementById('welcome-banner').style.display = 'block';
-            document.getElementById('revenue-empty').style.display = 'block';
-            document.getElementById('revenueChart').style.display = 'none';
-        } else {
-            document.getElementById('welcome-banner').style.display = 'none';
-            document.getElementById('revenue-empty').style.display = 'none';
-            document.getElementById('revenueChart').style.display = 'block';
-        }
-
-        // KPI cards
-        document.getElementById('kpi-revenue').textContent = formatCurrency(stats.total_revenue);
-        document.getElementById('kpi-records').textContent = formatNumber(stats.total_records) + ' total claims';
-        document.getElementById('kpi-denials').textContent = formatNumber(stats.unpaid_claims);
-        document.getElementById('kpi-underpayment').textContent = formatCurrency(stats.underpayments.total_variance);
-        document.getElementById('kpi-underpayment-count').textContent = formatNumber(stats.underpayments.total_flagged) + ' flagged claims';
-        document.getElementById('kpi-deadlines').textContent = formatNumber(stats.filing_deadlines.past_deadline + stats.filing_deadlines.warning);
-        document.getElementById('kpi-deadline-warning').textContent = stats.filing_deadlines.past_deadline + ' past deadline, ' + stats.filing_deadlines.warning + ' warning';
-        document.getElementById('kpi-secondary').textContent = formatNumber(stats.secondary_followup.count) + ' claims';
-        document.getElementById('kpi-secondary-est').textContent = 'Est. recovery: ' + formatCurrency(stats.secondary_followup.estimated_recovery);
-
-        // Payer alerts
-        document.getElementById('kpi-payer-alerts').textContent = payerData.alerts.length;
-        renderAlertList(payerData.alerts);
-
-        // Top physician
-        if (physicians.length > 0) {
-            document.getElementById('kpi-top-physician').textContent = physicians[0].name;
-            document.getElementById('kpi-physician-pct').textContent = physicians[0].pct_of_total + '% of total revenue';
-        } else {
-            document.getElementById('kpi-top-physician').textContent = '--';
-            document.getElementById('kpi-physician-pct').textContent = 'No data yet';
-        }
-
-        // Charts (only render if there's data)
-        if (byMonth.length > 0) renderRevenueChart(byMonth);
-        if (byCarrier.length > 0) renderCarrierChart(byCarrier);
-        if (byModality.length > 0) renderModalityChart(byModality);
-
-        // Smart insights & forecast
-        if (stats.insights && stats.insights.length > 0) {
-            document.getElementById('insights-row').style.display = '';
-            renderInsightList(stats.insights);
-        }
-        if (stats.forecast && stats.forecast.status === 'ok') {
-            document.getElementById('forecast-empty').style.display = 'none';
-            document.getElementById('forecastChart').style.display = 'block';
-            renderForecastChart(stats.forecast);
-        }
-
-        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
-    } catch (err) {
-        console.error('Dashboard load error:', err);
-    }
-}
 
 let revenueChartInstance = null;
 function renderRevenueChart(data) {
@@ -546,14 +481,205 @@ function renderForecastChart(data) {
         }
     });
 
-    // Trend badge
+    // Trend badge — replace existing instead of appending
     const trend = data.trend;
-    const trendEl = document.createElement('div');
-    trendEl.className = 'text-center mt-2 small';
+    let trendEl = document.getElementById('forecast-trend-badge');
+    if (!trendEl) {
+        trendEl = document.createElement('div');
+        trendEl.id = 'forecast-trend-badge';
+        trendEl.className = 'text-center mt-2 small';
+        document.getElementById('forecast-body').appendChild(trendEl);
+    }
     const trendColor = trend.direction === 'UP' ? 'text-success' : trend.direction === 'DOWN' ? 'text-danger' : 'text-muted';
     const trendIcon = trend.direction === 'UP' ? 'bi-arrow-up-right' : trend.direction === 'DOWN' ? 'bi-arrow-down-right' : 'bi-arrow-right';
     trendEl.innerHTML = `<i class="bi ${trendIcon} ${trendColor}"></i> <span class="${trendColor}">${trend.monthly_change_pct > 0 ? '+' : ''}${trend.monthly_change_pct}%/mo</span> <span class="text-muted">(${trend.direction.toLowerCase()})</span>`;
-    document.getElementById('forecast-body').appendChild(trendEl);
+}
+
+// ── Cache dashboard data for expand modals ────────────────
+let _dashStats = null, _dashByCarrier = null, _dashByModality = null, _dashPayerData = null, _dashPhysicians = null;
+
+// Store data when loaded (patch loadDashboard to save refs)
+const _origLoadDashboard = loadDashboard;
+loadDashboard = async function() {
+    try {
+        const [stats, byMonth, byCarrier, byModality, payerData, physicians] = await Promise.all([
+            fetchJSON('/api/dashboard/stats'),
+            fetchJSON('/api/dashboard/revenue-by-month'),
+            fetchJSON('/api/dashboard/revenue-by-carrier'),
+            fetchJSON('/api/dashboard/revenue-by-modality'),
+            fetchJSON('/api/payer-monitor'),
+            fetchJSON('/api/physicians?limit=20'),
+        ]);
+        _dashStats = stats;
+        _dashByCarrier = byCarrier;
+        _dashByModality = byModality;
+        _dashPayerData = payerData;
+        _dashPhysicians = physicians;
+
+        // Show welcome banner if no data
+        if (stats.total_records === 0) {
+            document.getElementById('welcome-banner').style.display = 'block';
+            document.getElementById('revenue-empty').style.display = 'block';
+            document.getElementById('revenueChart').style.display = 'none';
+        } else {
+            document.getElementById('welcome-banner').style.display = 'none';
+            document.getElementById('revenue-empty').style.display = 'none';
+            document.getElementById('revenueChart').style.display = 'block';
+        }
+
+        // KPI cards
+        document.getElementById('kpi-revenue').textContent = formatCurrency(stats.total_revenue);
+        document.getElementById('kpi-records').textContent = formatNumber(stats.total_records) + ' total claims';
+        document.getElementById('kpi-denials').textContent = formatNumber(stats.unpaid_claims);
+        document.getElementById('kpi-underpayment').textContent = formatCurrency(stats.underpayments.total_variance);
+        document.getElementById('kpi-underpayment-count').textContent = formatNumber(stats.underpayments.total_flagged) + ' flagged claims';
+        document.getElementById('kpi-deadlines').textContent = formatNumber(stats.filing_deadlines.past_deadline + stats.filing_deadlines.warning);
+        document.getElementById('kpi-deadline-warning').textContent = stats.filing_deadlines.past_deadline + ' past deadline, ' + stats.filing_deadlines.warning + ' warning';
+        document.getElementById('kpi-secondary').textContent = formatNumber(stats.secondary_followup.count) + ' claims';
+        document.getElementById('kpi-secondary-est').textContent = 'Est. recovery: ' + formatCurrency(stats.secondary_followup.estimated_recovery);
+
+        // Payer alerts
+        document.getElementById('kpi-payer-alerts').textContent = payerData.alerts.length;
+        renderAlertList(payerData.alerts);
+
+        // Top physician
+        if (physicians.length > 0) {
+            document.getElementById('kpi-top-physician').textContent = physicians[0].name;
+            document.getElementById('kpi-physician-pct').textContent = physicians[0].pct_of_total + '% of total revenue';
+        } else {
+            document.getElementById('kpi-top-physician').textContent = '--';
+            document.getElementById('kpi-physician-pct').textContent = 'No data yet';
+        }
+
+        // Charts
+        if (byMonth.length > 0) renderRevenueChart(byMonth);
+        if (byCarrier.length > 0) renderCarrierChart(byCarrier);
+        if (byModality.length > 0) renderModalityChart(byModality);
+
+        // Smart insights & forecast
+        if (stats.insights && stats.insights.length > 0) {
+            document.getElementById('insights-row').style.display = '';
+            renderInsightList(stats.insights);
+        }
+        if (stats.forecast && stats.forecast.status === 'ok') {
+            document.getElementById('forecast-empty').style.display = 'none';
+            document.getElementById('forecastChart').style.display = 'block';
+            renderForecastChart(stats.forecast);
+        }
+
+        document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+        console.error('Dashboard load error:', err);
+    }
+};
+
+// ── KPI Expand Functions ──────────────────────────────────
+
+function expandRevenue() {
+    if (!_dashByModality || !_dashByCarrier) return;
+    let html = renderDetailStats([
+        {label: 'Total Revenue', value: formatCurrency(_dashStats.total_revenue), color: '#34d399'},
+        {label: 'Total Claims', value: formatNumber(_dashStats.total_records)},
+        {label: 'Avg per Claim', value: _dashStats.total_records ? formatCurrency(_dashStats.total_revenue / _dashStats.total_records) : '$0'},
+        {label: 'Unpaid Claims', value: formatNumber(_dashStats.unpaid_claims), color: '#f87171'},
+    ]);
+    html += '<h6 class="fw-semibold mb-2">Revenue by Modality</h6>';
+    html += '<div class="table-responsive"><table class="table table-sm table-hover mb-3"><thead><tr><th>Modality</th><th class="text-end">Revenue</th><th class="text-end">Claims</th><th class="text-end">Avg Payment</th></tr></thead><tbody>';
+    _dashByModality.forEach(m => {
+        html += `<tr><td><span class="badge bg-primary-subtle text-primary-emphasis">${escapeHtml(m.modality)}</span></td><td class="text-end">${formatCurrency(m.revenue)}</td><td class="text-end">${formatNumber(m.claim_count)}</td><td class="text-end">${formatCurrency(m.avg_payment)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    html += '<h6 class="fw-semibold mb-2">Revenue by Carrier (Top 10)</h6>';
+    html += '<div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>Carrier</th><th class="text-end">Revenue</th><th class="text-end">Claims</th></tr></thead><tbody>';
+    _dashByCarrier.slice(0, 10).forEach(c => {
+        html += `<tr><td>${escapeHtml(c.carrier)}</td><td class="text-end">${formatCurrency(c.revenue)}</td><td class="text-end">${formatNumber(c.claim_count)}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    html += '<div class="text-end mt-3"><a href="/import" class="btn btn-sm btn-outline-primary">Go to Import Data</a></div>';
+    showExpandModal('Total Revenue Breakdown', html);
+}
+
+function expandDenials() {
+    if (!_dashStats) return;
+    let html = renderDetailStats([
+        {label: 'Unpaid Claims', value: formatNumber(_dashStats.unpaid_claims), color: '#f87171'},
+        {label: 'With Denial Code', value: formatNumber(_dashStats.denial_count || 0)},
+        {label: 'Potential Recovery', value: 'Review needed'},
+    ]);
+    html += '<p class="text-muted small">Click below to see the full list of denied and unpaid claims with denial reasons, carrier breakdown, and appeal deadlines.</p>';
+    html += '<div class="d-flex gap-2"><a href="/denials" class="btn btn-sm btn-outline-danger">View All Denials</a><a href="/denial-queue" class="btn btn-sm btn-outline-warning">Denial Queue</a><a href="/denial-analytics" class="btn btn-sm btn-outline-info">Denial Analytics</a></div>';
+    showExpandModal('Unpaid / Denied Claims', html, {width: '700px'});
+}
+
+function expandUnderpayments() {
+    if (!_dashStats) return;
+    const u = _dashStats.underpayments;
+    let html = renderDetailStats([
+        {label: 'Total Variance', value: formatCurrency(u.total_variance), color: '#fbbf24'},
+        {label: 'Flagged Claims', value: formatNumber(u.total_flagged)},
+        {label: 'Avg Underpayment', value: u.total_flagged ? formatCurrency(u.total_variance / u.total_flagged) : '$0'},
+    ]);
+    html += '<p class="text-muted small">Underpayments are claims where the carrier paid less than your fee schedule rate. Review these to identify systematic underpayments by carrier.</p>';
+    html += '<a href="/underpayments" class="btn btn-sm btn-outline-warning">View All Underpayments</a>';
+    showExpandModal('Underpayment Gap Details', html, {width: '700px'});
+}
+
+function expandDeadlines() {
+    if (!_dashStats) return;
+    const d = _dashStats.filing_deadlines;
+    let html = renderDetailStats([
+        {label: 'Past Deadline', value: formatNumber(d.past_deadline), color: '#f87171'},
+        {label: 'Warning (Soon)', value: formatNumber(d.warning), color: '#fbbf24'},
+        {label: 'Safe', value: formatNumber(d.safe || 0), color: '#34d399'},
+    ]);
+    html += '<p class="text-muted small">Claims approaching or past their carrier-specific filing deadline. Past-deadline claims may no longer be billable.</p>';
+    html += '<a href="/filing-deadlines" class="btn btn-sm btn-outline-danger">View Filing Deadlines</a>';
+    showExpandModal('Filing Deadline Alerts', html, {width: '700px'});
+}
+
+function expandSecondary() {
+    if (!_dashStats) return;
+    const s = _dashStats.secondary_followup;
+    let html = renderDetailStats([
+        {label: 'Claims Needing Follow-Up', value: formatNumber(s.count), color: '#63b3ed'},
+        {label: 'Estimated Recovery', value: formatCurrency(s.estimated_recovery), color: '#34d399'},
+    ]);
+    html += '<p class="text-muted small">These claims have a carrier that typically has secondary insurance. Following up on secondary billing can recover significant revenue.</p>';
+    html += '<a href="/secondary" class="btn btn-sm btn-outline-info">View Secondary Queue</a>';
+    showExpandModal('Secondary Follow-Up', html, {width: '700px'});
+}
+
+function expandPayerAlerts() {
+    if (!_dashPayerData) return;
+    const alerts = _dashPayerData.alerts || [];
+    let html = renderDetailStats([
+        {label: 'Active Alerts', value: formatNumber(alerts.length), color: alerts.length > 0 ? '#f87171' : '#34d399'},
+        {label: 'Critical', value: formatNumber(alerts.filter(a => a.severity === 'critical').length), color: '#f87171'},
+        {label: 'Warning', value: formatNumber(alerts.filter(a => a.severity === 'warning').length), color: '#fbbf24'},
+    ]);
+    if (alerts.length > 0) {
+        html += '<div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>Carrier</th><th>Severity</th><th class="text-end">Prior Avg</th><th class="text-end">Current</th><th class="text-end">Change</th></tr></thead><tbody>';
+        alerts.forEach(a => {
+            const sev = a.severity === 'critical' ? '<span class="badge bg-danger">CRITICAL</span>' : '<span class="badge bg-warning text-dark">WARNING</span>';
+            html += `<tr><td class="fw-semibold">${escapeHtml(a.carrier)}</td><td>${sev}</td><td class="text-end">${formatCurrency(a.prior_avg_revenue)}</td><td class="text-end">${formatCurrency(a.current_revenue)}</td><td class="text-end text-danger">${a.revenue_change_pct.toFixed(1)}%</td></tr>`;
+        });
+        html += '</tbody></table></div>';
+    } else {
+        html += '<p class="text-center text-muted py-3"><i class="bi bi-check-circle fs-3 d-block mb-2"></i>No active payer alerts</p>';
+    }
+    html += '<div class="text-end mt-3"><a href="/payers" class="btn btn-sm btn-outline-primary">Payer Monitor</a></div>';
+    showExpandModal('Payer Revenue Alerts', html);
+}
+
+function expandPhysicians() {
+    if (!_dashPhysicians) return;
+    let html = '<div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>#</th><th>Physician</th><th class="text-end">Revenue</th><th class="text-end">Claims</th><th class="text-end">% of Total</th></tr></thead><tbody>';
+    _dashPhysicians.forEach((p, i) => {
+        html += `<tr><td class="text-muted">${i+1}</td><td class="fw-semibold">${escapeHtml(p.name)}</td><td class="text-end">${formatCurrency(p.total_revenue)}</td><td class="text-end">${formatNumber(p.claim_count)}</td><td class="text-end">${p.pct_of_total}%</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    html += '<div class="text-end mt-3"><a href="/physicians" class="btn btn-sm btn-outline-primary">Full Physician Dashboard</a></div>';
+    showExpandModal('Physician Rankings', html);
 }
 </script>
 {% endblock %}

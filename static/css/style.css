@@ -1266,3 +1266,161 @@ tr.cpt-detail-row .cpt-detail-table td {
     color: var(--text-muted);
     margin-top: 0.25rem;
 }
+
+/* ── Expand Modal (full-screen detail view for widgets/charts) ── */
+
+.expand-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1050;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    cursor: pointer;
+}
+.expand-modal-backdrop.show { opacity: 1; }
+
+.expand-modal {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.95);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    z-index: 1051;
+    width: 90vw;
+    max-width: 1100px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.expand-modal.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+.expand-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    z-index: 2;
+}
+
+.expand-modal-header h5 {
+    margin: 0;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.expand-modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+}
+.expand-modal-close:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.expand-modal-body {
+    padding: 1.5rem;
+}
+
+/* Chart expand button overlay */
+.chart-card {
+    position: relative;
+}
+
+.chart-expand-btn {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    border-radius: 6px;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.15s ease;
+    z-index: 5;
+}
+.chart-card:hover .chart-expand-btn { opacity: 1; }
+.chart-expand-btn:hover {
+    background: var(--bg-card-hover);
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+/* KPI expand indicator */
+.kpi-card.expandable {
+    cursor: pointer;
+}
+.kpi-card.expandable::after {
+    content: '\F285';
+    font-family: 'bootstrap-icons';
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.kpi-card.expandable {
+    position: relative;
+}
+.kpi-card.expandable:hover::after {
+    opacity: 0.6;
+}
+
+/* Patient name link in tables */
+.patient-link {
+    color: var(--accent-blue);
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.15s ease;
+}
+.patient-link:hover {
+    color: #93c5fd;
+    text-decoration: underline;
+}
+
+/* Detail list in expand modals */
+.detail-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.detail-stat {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+.detail-stat-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+}
+.detail-stat-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}

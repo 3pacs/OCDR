@@ -16,10 +16,10 @@
     </button>
 </div>
 
-<!-- KPI Cards -->
+<!-- KPI Cards (clickable to filter table) -->
 <div class="row g-3 mb-4">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-info" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Total patient appointments imported from schedule files. Includes past and future dates.">
+        <div class="kpi-card kpi-info expandable" onclick="filterFromKpi('', '')" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click to show all schedule records">
             <div class="kpi-icon"><i class="bi bi-calendar3"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Scheduled</div>
@@ -29,7 +29,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-payer" data-bs-toggle="tooltip" data-bs-placement="bottom" title="MRI and Open MRI appointments (modality codes HMRI and OPEN).">
+        <div class="kpi-card kpi-payer expandable" onclick="filterFromKpi('mri', '')" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click to filter MRI scans only">
             <div class="kpi-icon"><i class="bi bi-magnet-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">MRI Scans</div>
@@ -39,7 +39,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-physician" data-bs-toggle="tooltip" data-bs-placement="bottom" title="CT, PET, and PET/CT scan appointments combined.">
+        <div class="kpi-card kpi-physician expandable" onclick="filterFromKpi('ct_pet', '')" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click to filter CT/PET scans only">
             <div class="kpi-icon"><i class="bi bi-radioactive"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">CT / PET Scans</div>
@@ -49,7 +49,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Appointments marked as completed. Sub-counts show cancellations and no-shows.">
+        <div class="kpi-card kpi-revenue expandable" onclick="filterFromKpi('', 'COMPLETED')" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Click to filter completed appointments">
             <div class="kpi-icon"><i class="bi bi-check-circle-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Completed</div>
@@ -64,6 +64,7 @@
 <div class="row g-3 mb-4">
     <div class="col-xl-8">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(monthlyChartInstance, 'Monthly Schedule Volume')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Monthly Schedule Volume — MRI vs CT/PET</h6>
             </div>
@@ -74,6 +75,7 @@
     </div>
     <div class="col-xl-4">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(statusChartInstance, 'Status Breakdown')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Status Breakdown</h6>
             </div>
@@ -88,6 +90,7 @@
 <div class="row g-3 mb-4">
     <div class="col-xl-7">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(dailyChartInstance, 'Daily Volume')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Daily Volume (Last 60 Days &amp; Next 60 Days)</h6>
             </div>
@@ -98,6 +101,7 @@
     </div>
     <div class="col-xl-5">
         <div class="chart-card">
+            <button class="chart-expand-btn" onclick="expandChart(doctorChartInstance, 'Top Referring Doctors')" title="Expand"><i class="bi bi-arrows-fullscreen"></i></button>
             <div class="chart-header">
                 <h6 class="mb-0 fw-semibold">Top Referring Doctors</h6>
             </div>
@@ -479,12 +483,12 @@ async function loadTable() {
         tbody.innerHTML = data.items.map(r => `
             <tr>
                 <td>${formatDate(r.scheduled_date)}</td>
-                <td>${r.scheduled_time || '—'}</td>
-                <td class="fw-semibold">${r.patient_name}</td>
-                <td><span class="badge ${modalityBadgeClass(r.modality)}">${r.modality}</span></td>
-                <td>${r.scan_type}</td>
-                <td>${r.referring_doctor || '—'}</td>
-                <td>${r.insurance_carrier || '—'}</td>
+                <td>${escapeHtml(r.scheduled_time || '—')}</td>
+                <td><a class="patient-link fw-semibold" href="/patients" onclick="event.preventDefault();openPatientFromSchedule('${encodeURIComponent(r.patient_name)}')">${escapeHtml(r.patient_name)}</a></td>
+                <td><span class="badge ${modalityBadgeClass(r.modality)}">${escapeHtml(r.modality)}</span></td>
+                <td>${escapeHtml(r.scan_type || '')}</td>
+                <td>${escapeHtml(r.referring_doctor || '—')}</td>
+                <td>${escapeHtml(r.insurance_carrier || '—')}</td>
                 <td>${schedStatusBadge(r.status)}</td>
             </tr>
         `).join('');
@@ -525,7 +529,58 @@ function schedStatusBadge(status) {
         NO_SHOW: ['badge-status', 'background:rgba(248,113,113,0.15);color:#f87171'],
     };
     const [cls, style] = map[status] || ['badge-status', ''];
-    return `<span class="${cls}" style="${style}">${status}</span>`;
+    return `<span class="${cls}" style="${style}">${escapeHtml(status)}</span>`;
+}
+
+/* ── KPI card click → filter table ────────────────────── */
+function filterFromKpi(modality, status) {
+    document.getElementById('filter-modality').value = modality;
+    document.getElementById('filter-status').value = status;
+    document.getElementById('filter-time').value = '';
+    document.getElementById('filter-start').value = '';
+    document.getElementById('filter-end').value = '';
+    currentPage = 1;
+    loadTable();
+    // Scroll to the table
+    document.getElementById('schedule-table').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ── Patient name click → expand profile ──────────────── */
+async function openPatientFromSchedule(encodedName) {
+    const name = decodeURIComponent(encodedName);
+    try {
+        const resp = await fetch(`/api/patients/${encodedName}`);
+        const data = await resp.json();
+        if (data.error) {
+            showToast('Patient not found in billing records', 'warning');
+            return;
+        }
+        const s = data.summary;
+        let html = renderDetailStats([
+            {label: 'Total Scans', value: formatNumber(s.total_scans)},
+            {label: 'Total Payments', value: formatCurrency(s.total_payments), color: '#34d399'},
+            {label: 'Denied', value: formatNumber(s.total_denied), color: s.total_denied > 0 ? '#f87171' : undefined},
+            {label: 'Scheduled', value: formatNumber(s.total_scheduled), color: '#63b3ed'},
+            {label: 'First Visit', value: s.first_visit || '—'},
+            {label: 'Last Visit', value: s.last_visit || '—'},
+        ]);
+        if (data.topaz_patient_id) {
+            html += `<p class="small text-muted mb-2">Topaz ID: <strong>${escapeHtml(data.topaz_patient_id)}</strong></p>`;
+        }
+        if (data.billing_records && data.billing_records.length > 0) {
+            html += '<h6 class="fw-semibold mt-3 mb-2">Recent Billing (' + data.billing_records.length + ')</h6>';
+            html += '<div class="table-responsive"><table class="table table-sm table-hover mb-0"><thead><tr><th>Date</th><th>Modality</th><th>Scan</th><th>Carrier</th><th class="text-end">Payment</th><th>Status</th></tr></thead><tbody>';
+            data.billing_records.slice(0, 20).forEach(b => {
+                html += `<tr><td>${b.service_date||'—'}</td><td><span class="badge bg-primary-subtle text-primary-emphasis">${escapeHtml(b.modality)}</span></td><td>${escapeHtml(b.scan_type||'')}</td><td>${escapeHtml(b.insurance_carrier||'')}</td><td class="text-end ${b.total_payment==0?'text-danger':''}">$${(b.total_payment||0).toFixed(2)}</td><td>${b.denial_status ? '<span class="badge bg-danger-subtle text-danger-emphasis">'+escapeHtml(b.denial_status)+'</span>' : '<span class="badge bg-success-subtle text-success-emphasis">PAID</span>'}</td></tr>`;
+            });
+            html += '</tbody></table></div>';
+            if (data.billing_records.length > 20) html += `<p class="text-muted small mt-1">Showing 20 of ${data.billing_records.length}. <a href="/patients">View full profile</a></p>`;
+        }
+        html += '<div class="text-end mt-3"><a href="/patients" class="btn btn-sm btn-outline-primary">Open Patient Profiles</a></div>';
+        showExpandModal(name, html);
+    } catch (e) {
+        showToast('Failed to load patient data', 'error');
+    }
 }
 </script>
 

@@ -211,6 +211,121 @@ function initSortableTable(tableId, onSort) {
     };
 }
 
+// ── Expand Modal (click-to-expand for KPI/charts) ────────────
+
+/**
+ * Show an expand modal with custom content.
+ * @param {string} title - Modal header title
+ * @param {string|HTMLElement} content - HTML string or DOM element for the body
+ * @param {object} opts - Optional: { width: '1100px', onClose: fn }
+ */
+function showExpandModal(title, content, opts) {
+    opts = opts || {};
+    closeExpandModal();  // close any existing
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'expand-modal-backdrop';
+    backdrop.id = 'expand-backdrop';
+    backdrop.onclick = closeExpandModal;
+
+    var modal = document.createElement('div');
+    modal.className = 'expand-modal';
+    modal.id = 'expand-modal';
+    if (opts.width) modal.style.maxWidth = opts.width;
+
+    modal.innerHTML =
+        '<div class="expand-modal-header">' +
+            '<h5>' + escapeHtml(title) + '</h5>' +
+            '<button class="expand-modal-close" onclick="closeExpandModal()">' +
+                '<i class="bi bi-x-lg"></i>' +
+            '</button>' +
+        '</div>' +
+        '<div class="expand-modal-body" id="expand-modal-body"></div>';
+
+    document.body.appendChild(backdrop);
+    document.body.appendChild(modal);
+
+    var body = document.getElementById('expand-modal-body');
+    if (typeof content === 'string') {
+        body.innerHTML = content;
+    } else if (content instanceof HTMLElement) {
+        body.appendChild(content);
+    }
+
+    // Animate in
+    requestAnimationFrame(function() {
+        backdrop.classList.add('show');
+        modal.classList.add('show');
+    });
+
+    // ESC to close
+    modal._escHandler = function(e) { if (e.key === 'Escape') closeExpandModal(); };
+    document.addEventListener('keydown', modal._escHandler);
+
+    // Re-init tooltips inside modal
+    if (typeof initTooltips === 'function') setTimeout(initTooltips, 100);
+}
+
+function closeExpandModal() {
+    var backdrop = document.getElementById('expand-backdrop');
+    var modal = document.getElementById('expand-modal');
+    if (modal && modal._escHandler) {
+        document.removeEventListener('keydown', modal._escHandler);
+    }
+    if (backdrop) { backdrop.classList.remove('show'); setTimeout(function() { backdrop.remove(); }, 200); }
+    if (modal) { modal.classList.remove('show'); setTimeout(function() { modal.remove(); }, 200); }
+}
+
+/**
+ * Render a detail stat grid for expand modals.
+ * @param {Array} items - [{label, value, color}]
+ * @returns {string} HTML
+ */
+function renderDetailStats(items) {
+    return '<div class="detail-stat-grid">' +
+        items.map(function(item) {
+            var style = item.color ? 'color:' + item.color : '';
+            return '<div class="detail-stat">' +
+                '<div class="detail-stat-label">' + escapeHtml(item.label) + '</div>' +
+                '<div class="detail-stat-value" style="' + style + '">' + item.value + '</div>' +
+            '</div>';
+        }).join('') + '</div>';
+}
+
+/**
+ * Expand a Chart.js chart into a full-screen modal.
+ * Clones the chart data and renders a new, larger chart.
+ * @param {Chart} chartInstance - The Chart.js instance to expand
+ * @param {string} title - Modal title
+ */
+function expandChart(chartInstance, title) {
+    if (!chartInstance) return;
+
+    var canvas = document.createElement('canvas');
+    canvas.style.width = '100%';
+    canvas.style.height = '500px';
+
+    var wrapper = document.createElement('div');
+    wrapper.style.position = 'relative';
+    wrapper.style.height = '500px';
+    wrapper.appendChild(canvas);
+
+    showExpandModal(title, wrapper, { width: '1200px' });
+
+    // Clone config and render larger chart
+    var config = JSON.parse(JSON.stringify(chartInstance.config));
+    config.options = config.options || {};
+    config.options.responsive = true;
+    config.options.maintainAspectRatio = false;
+    if (config.options.plugins && config.options.plugins.legend) {
+        config.options.plugins.legend.display = true;
+    }
+
+    setTimeout(function() {
+        new Chart(canvas.getContext('2d'), config);
+    }, 100);
+}
+
 // ── Auto-update timestamp ────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function() {
