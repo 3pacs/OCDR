@@ -1,5 +1,6 @@
 from datetime import datetime, date, timezone
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
@@ -132,6 +133,18 @@ class EraPayment(db.Model):
     claim_lines = db.relationship("EraClaimLine", backref="era_payment", lazy=True)
 
     def to_dict(self):
+        # Use a lightweight COUNT query instead of loading all claim_lines (N+1 fix)
+        from sqlalchemy import text
+        from sqlalchemy.orm import object_session
+        session = object_session(self)
+        if session and self.id:
+            claim_count = session.execute(
+                text("SELECT COUNT(*) FROM era_claim_lines WHERE era_payment_id = :pid"),
+                {"pid": self.id}
+            ).scalar() or 0
+        else:
+            claim_count = 0
+
         return {
             "id": self.id,
             "filename": self.filename,
@@ -141,7 +154,7 @@ class EraPayment(db.Model):
             "payment_method": self.payment_method,
             "payer_name": self.payer_name,
             "parsed_at": self.parsed_at.isoformat() if self.parsed_at else None,
-            "claim_count": len(self.claim_lines) if self.claim_lines else 0,
+            "claim_count": claim_count,
         }
 
 

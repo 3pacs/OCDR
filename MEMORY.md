@@ -36,19 +36,33 @@
 ## Current Sprint Status
 
 - Sprints 1-10: COMPLETE (core billing, ERA, matching, smart matching)
-- Sprint 11: PLANNED (schema hardening)
-- Sprint 12: PLANNED (performance/security)
-- Sprint 13: PLANNED (LLM integration)
-- Sprint 14: PLANNED (advanced workflows)
-- Sprint 15: PLANNED (production polish)
+- Sprint 11: 15% (lookup tables exist, migrations not initialized)
+- Sprint 12: 40% (8 issues fixed this session, see below)
+- Sprint 13: 70% (query engine + chat working, Ollama untested)
+- Sprint 14: 20% (scaffolded, not wired to UI)
+- Sprint 15: 5% (Flask-Login wired, User model exists, but auth not enforced)
+
+## Issues Fixed (2026-02-27 session 2)
+
+- Registered analysis_bp blueprint (fixed 404 on /api/analysis/post-import)
+- Fixed LIKE wildcard escape in physician_statements.py and api.py search endpoints
+- Fixed EraPayment.to_dict() N+1 query (COUNT query instead of loading all claim_lines)
+- Fixed ERA parser rsplit path handling → os.path.basename()
+- Capped per_page to 500 on all pagination endpoints
+- Added file extension validation on ERA, Excel, and CSV upload endpoints
+- Improved denial queue: DB-level pagination for age/amount sorts
+- Replaced all deprecated Query.get() with db.session.get()
+- All tests: 318 passed, 0 failed, 0 warnings
 
 ## Key Decisions
 
 - 2026-02-27: Decided to add MEMORY.md, LEARNINGS.md, autonomy rules to project
 - 2026-02-27: Topaz data extraction identified as major upcoming project
 - 2026-02-27: Created topaz_importer.py scaffold in import_engine/
+- 2026-02-27: Fixed 8 ISSUES.md items (Sprint 12 work)
 
 ## Active Blockers
 
 - X:\ drive not accessible from Claude Code sandbox — need sample files copied locally
 - No Topaz documentation exists — format must be reverse-engineered from raw data
+- Authentication not enforced (Flask-Login wired but no @login_required on routes)

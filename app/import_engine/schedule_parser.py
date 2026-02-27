@@ -783,7 +783,7 @@ def list_schedule_entries():
 @import_bp.route('/schedule/entries/<int:entry_id>', methods=['GET'])
 def get_schedule_entry(entry_id):
     """GET /api/import/schedule/entries/<id> - Get a single schedule entry."""
-    entry = ScheduleRecord.query.get(entry_id)
+    entry = db.session.get(ScheduleRecord, entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
     return jsonify(entry.to_dict())
@@ -797,7 +797,7 @@ def update_schedule_entry(entry_id):
     patient_name, schedule_date, appointment_time, modality, scan_type,
     status, notes, referring_doctor, insurance_carrier
     """
-    entry = ScheduleRecord.query.get(entry_id)
+    entry = db.session.get(ScheduleRecord, entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
 
@@ -844,7 +844,7 @@ def update_schedule_entry(entry_id):
 @import_bp.route('/schedule/entries/<int:entry_id>', methods=['DELETE'])
 def delete_schedule_entry(entry_id):
     """DELETE /api/import/schedule/entries/<id> - Delete a schedule entry."""
-    entry = ScheduleRecord.query.get(entry_id)
+    entry = db.session.get(ScheduleRecord, entry_id)
     if not entry:
         return jsonify({'error': 'Entry not found'}), 404
 

@@ -29,16 +29,31 @@ def get_denial_queue(carrier=None, modality=None, status_filter=None,
     if status_filter and status_filter in DENIAL_STATUSES:
         query = query.filter(BillingRecord.denial_status == status_filter)
 
-    records = query.all()
+    # Get total count at DB level (avoids loading all records for count)
+    total = query.count()
 
-    # Pre-load fee schedule into dict (fixes N+1)
+    # Pre-load fee schedule into dict (small table, fast lookup)
     fee_map = {}
     for fs in FeeSchedule.query.all():
         fee_map[(fs.payer_code, fs.modality)] = fs.expected_rate
         if fs.payer_code == "DEFAULT":
             fee_map[("_default", fs.modality)] = fs.expected_rate
 
-    # Pre-load ERA claim lines for all denial records (fixes N+1)
+    # For age/amount sorts, use DB-level ORDER BY + LIMIT
+    if sort_by == "age":
+        query = query.order_by(BillingRecord.service_date.asc())
+    elif sort_by == "amount":
+        query = query.order_by(BillingRecord.total_payment.desc())
+
+    # Use DB pagination when not sorting by recoverability (which requires Python)
+    if sort_by in ("age", "amount"):
+        paginated = query.paginate(page=page, per_page=per_page, error_out=False)
+        records = paginated.items
+    else:
+        # Recoverability sort requires Python computation — load all, but limit memory
+        records = query.all()
+
+    # Pre-load ERA claim lines for current page records (fixes N+1)
     era_claim_ids = [r.era_claim_id for r in records if r.era_claim_id]
     era_map = {}
     if era_claim_ids:
@@ -71,25 +86,20 @@ def get_denial_queue(carrier=None, modality=None, status_filter=None,
             **era_info,
         })
 
+    # For recoverability sort, sort in Python and slice for pagination
     if sort_by == "recoverability":
         items.sort(key=lambda x: x["recoverability_score"], reverse=True)
-    elif sort_by == "amount":
-        items.sort(key=lambda x: x.get("billed_amount_835", 0) or 0, reverse=True)
-    elif sort_by == "age":
-        items.sort(key=lambda x: x["days_old"])
-
-    total = len(items)
-    start = (page - 1) * per_page
-    end = start + per_page
+        start = (page - 1) * per_page
+        end = start + per_page
+        items = items[start:end]
 
     return {
-        "items": items[start:end],
+        "items": items,
         "total": total,
         "page": page,
         "pages": (total + per_page - 1) // per_page,
         "summary": {
             "total_denied": total,
-            "total_recoverable": round(sum(i["recoverability_score"] for i in items), 2),
             "by_status": _count_by_status(items),
         }
     }

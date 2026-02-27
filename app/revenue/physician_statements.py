@@ -26,16 +26,19 @@ def generate_statement(physician_name, year, month):
     else:
         end_date = date(year, month + 1, 1)
 
+    # Escape LIKE wildcards in user input
+    escaped = physician_name.replace("%", r"\%").replace("_", r"\_")
+
     # Search by reading_physician first
     records = BillingRecord.query.filter(
-        BillingRecord.reading_physician.ilike(f"%{physician_name}%"),
+        BillingRecord.reading_physician.ilike(f"%{escaped}%"),
         BillingRecord.service_date >= start_date,
         BillingRecord.service_date < end_date,
     ).order_by(BillingRecord.service_date).all()
 
     # Also check referring_doctor
     referring_records = BillingRecord.query.filter(
-        BillingRecord.referring_doctor.ilike(f"%{physician_name}%"),
+        BillingRecord.referring_doctor.ilike(f"%{escaped}%"),
         BillingRecord.service_date >= start_date,
         BillingRecord.service_date < end_date,
     ).order_by(BillingRecord.service_date).all()
@@ -92,7 +95,8 @@ def list_statements(physician=None, status=None, page=1, per_page=50):
     """List all physician statements with optional filters."""
     query = PhysicianStatement.query
     if physician:
-        query = query.filter(PhysicianStatement.physician_name.ilike(f"%{physician}%"))
+        escaped = physician.replace("%", r"\%").replace("_", r"\_")
+        query = query.filter(PhysicianStatement.physician_name.ilike(f"%{escaped}%"))
     if status:
         query = query.filter(PhysicianStatement.status == status.upper())
 

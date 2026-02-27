@@ -9,6 +9,8 @@ Element delimiter: * (asterisk)
 Sub-element delimiter: : (colon)
 """
 
+import os
+
 from datetime import datetime, date
 
 
@@ -313,7 +315,7 @@ def parse_835(raw_text, filename="unknown"):
 def parse_835_file(filepath, filename=None):
     """Parse an 835 file from disk. Returns parsed result dict."""
     if filename is None:
-        filename = filepath.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        filename = os.path.basename(filepath)
 
     with open(filepath, "r", encoding="utf-8", errors="replace") as f:
         raw_text = f.read()

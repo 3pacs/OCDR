@@ -47,6 +47,9 @@ def create_app(config_class=Config, **config_overrides):
     app.register_blueprint(import_bp, url_prefix="/api/import")
     app.register_blueprint(vendor_bp, url_prefix="/api/vendor")
 
+    from app.analytics.post_import import analysis_bp
+    app.register_blueprint(analysis_bp, url_prefix="/api")
+
     # ── Error handlers ──────────────────────────────────────────
     @app.errorhandler(404)
     def not_found(e):

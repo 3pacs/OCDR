@@ -166,7 +166,7 @@ def revenue_by_modality():
 def underpayments():
     """Underpaid claims list."""
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     carrier = request.args.get("carrier")
     modality = request.args.get("modality")
 
@@ -285,7 +285,7 @@ def filing_deadline_alerts():
 def denials():
     """Denial queue."""
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     carrier = request.args.get("carrier")
     modality = request.args.get("modality")
 
@@ -514,7 +514,7 @@ def schedule_stats():
 def schedule_list():
     """Paginated schedule records with filters and sorting."""
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     modality_group = request.args.get("modality_group")  # mri or ct_pet
     time_range = request.args.get("time_range")  # past, future, all
     status_filter = request.args.get("status")
@@ -747,6 +747,12 @@ def era_upload():
         if not filename:
             continue
 
+        # Validate file extension
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_ERA_EXTENSIONS:
+            results.append({"filename": filename, "error": f"Invalid extension '{ext}'. Allowed: {', '.join(sorted(ALLOWED_ERA_EXTENSIONS))}"})
+            continue
+
         # Save to disk
         filepath = os.path.join(upload_dir, filename)
         f.save(filepath)
@@ -880,14 +886,14 @@ def era_upload():
 def era_payments():
     """List all ERA payments with pagination and sorting."""
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     payer = request.args.get("payer")
     sort_by = request.args.get("sort", "")
     sort_dir = request.args.get("dir", "asc")
 
     query = EraPayment.query
     if payer:
-        query = query.filter(EraPayment.payer_name.ilike(f"%{payer}%"))
+        query = query.filter(EraPayment.payer_name.ilike(f"%{_escape_like(payer)}%"))
 
     sort_cols = {
         "filename": EraPayment.filename,
@@ -958,7 +964,7 @@ def era_claim_details(claim_id):
 def era_claims():
     """List all ERA claim lines with pagination, filters, and sorting."""
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     patient = request.args.get("patient")
     status = request.args.get("status")
     payment_id = request.args.get("payment_id", type=int)
@@ -967,9 +973,9 @@ def era_claims():
 
     query = EraClaimLine.query
     if patient:
-        query = query.filter(EraClaimLine.patient_name_835.ilike(f"%{patient}%"))
+        query = query.filter(EraClaimLine.patient_name_835.ilike(f"%{_escape_like(patient)}%"))
     if status:
-        query = query.filter(EraClaimLine.claim_status.ilike(f"%{status}%"))
+        query = query.filter(EraClaimLine.claim_status.ilike(f"%{_escape_like(status)}%"))
     if payment_id:
         query = query.filter(EraClaimLine.era_payment_id == payment_id)
 
@@ -1083,6 +1089,9 @@ def import_excel():
         return jsonify({"error": "No file selected"}), 400
 
     filename = secure_filename(f.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ALLOWED_SPREADSHEET_EXTENSIONS:
+        return jsonify({"error": f"Invalid file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_SPREADSHEET_EXTENSIONS))}"}), 400
     upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "excel")
     os.makedirs(upload_dir, exist_ok=True)
     filepath = os.path.join(upload_dir, filename)
@@ -1119,6 +1128,9 @@ def import_csv_endpoint():
         return jsonify({"error": "No file selected"}), 400
 
     filename = secure_filename(f.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in {".csv"}:
+        return jsonify({"error": f"Invalid file type '{ext}'. Only .csv files accepted."}), 400
     upload_dir = os.path.join(current_app.config.get("UPLOAD_FOLDER", "uploads"), "csv")
     os.makedirs(upload_dir, exist_ok=True)
     filepath = os.path.join(upload_dir, filename)
@@ -1492,7 +1504,7 @@ def match_results():
     from app.matching.match_engine import get_match_results
     status = request.args.get("status")
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     return jsonify(get_match_results(status_filter=status, page=page, per_page=per_page))
 
 
@@ -1524,7 +1536,7 @@ def denial_queue():
     status = request.args.get("status")
     sort_by = request.args.get("sort", "recoverability")
     page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 50, type=int)
+    per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     return jsonify(get_denial_queue(
         carrier=carrier, modality=modality, status_filter=status,
         sort_by=sort_by, page=page, per_page=per_page,
@@ -1872,7 +1884,7 @@ def admin_payer_upsert():
     code = request.json.get("code")
     if not code:
         return jsonify({"error": "code required"}), 400
-    payer = Payer.query.get(code)
+    payer = db.session.get(Payer, code)
     if not payer:
         payer = Payer(code=code)
         db.session.add(payer)
