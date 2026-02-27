@@ -34,6 +34,7 @@ app/
     validation.py      # Shared: date parsing, modality/carrier normalization, dedup
     column_learner.py  # SM-08: learned column mappings
     normalization_learner.py # SM-09: learned modality/carrier normalizations
+    topaz_importer.py    # Legacy Topaz (1980s) flat-file data extraction
   parser/
     era_835_parser.py  # ANSI X12 835 EDI parser
   analytics/
@@ -138,6 +139,47 @@ python run.py              # Development server on http://localhost:5000
 gunicorn -w 4 "app:create_app()"  # Production
 pytest tests/ -x -q        # Run tests (stop on first failure)
 ```
+
+---
+
+## AUTONOMY RULES
+
+### Safe to Do Without Asking
+- Read any file in the repo or mounted drives
+- Run tests (`pytest tests/ -x -q`)
+- Edit code to fix bugs or implement requested features
+- Create/update MEMORY.md and LEARNINGS.md
+- Run `git status`, `git diff`, `git log`
+- Search the web for documentation or error messages
+
+### Must Ask First
+- Deleting files or database tables
+- Force-pushing or deleting git branches
+- Changing database schema on production DB (ocdr.db)
+- Any action that costs money (API calls to paid services)
+- Modifying security-sensitive code (auth, encryption, PHI handling)
+- Publishing, deploying, or exposing anything to a network
+
+### After Every Session
+- Update MEMORY.md with key decisions and state changes
+- Update LEARNINGS.md if any mistakes were made or lessons learned
+- Commit work to the feature branch
+
+### After Every Mistake
+1. Fix the immediate issue
+2. Write the lesson to LEARNINGS.md with the pattern that caused it
+3. Write a rule that prevents recurrence
+4. Making the same mistake twice is unacceptable
+
+---
+
+## SESSION CONTEXT FILES
+
+| File | Purpose | Update Frequency |
+|------|---------|------------------|
+| MEMORY.md | Curated project state, environment, key decisions | Every session |
+| LEARNINGS.md | Persistent lessons and anti-pattern rules | After mistakes/corrections |
+| CLAUDE.md | Agent instructions and project rules | Rarely (stable) |
 
 ---
 
