@@ -53,15 +53,42 @@ class PurviewConnector(BaseConnector):
         self._browser = self._playwright.chromium.launch(
             headless=self.headless,
             downloads_path=self.download_dir,
+            args=[
+                '--ignore-certificate-errors',
+            ],
         )
         context = self._browser.new_context(ignore_https_errors=True)
         self._page = context.new_page()
 
         logger.info(f'Navigating to Purview login at {portal_url}...')
-        self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
+        try:
+            self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
+        except Exception as e:
+            if 'timeout' in str(e).lower():
+                logger.warning('Purview networkidle timed out, retrying with domcontentloaded...')
+                self._page.goto(portal_url, wait_until='domcontentloaded', timeout=30000)
+            else:
+                raise
 
-        # Purview uses various form layouts depending on version
+        # Purview (Ambra Health) is a React SPA — the login form renders
+        # after JavaScript execution.  Wait for a password field to appear
+        # as a reliable signal that the form has mounted.
+        try:
+            self._page.wait_for_selector(
+                'input[type="password"]', state='visible', timeout=15000
+            )
+        except Exception:
+            logger.warning('Purview: password field did not appear within 15s, proceeding anyway')
+
+        # Purview / Ambra Health uses "login" as the field name, not "username".
+        # Include both Ambra-specific and generic selectors.
         username_selectors = [
+            # Ambra Health / Purview specific
+            'input[name="login"]',
+            'input[name="signin"]',
+            'input[id="login"]',
+            'input[id="signin"]',
+            # Generic selectors
             'input[name="username"]',
             'input[name="email"]',
             'input[type="email"]',
@@ -69,6 +96,9 @@ class PurviewConnector(BaseConnector):
             '#email',
             'input[placeholder*="username" i]',
             'input[placeholder*="email" i]',
+            'input[placeholder*="login" i]',
+            # Last resort: first visible text input that is not password
+            'input[type="text"]:not([type="password"])',
         ]
 
         password_selectors = [
@@ -84,6 +114,9 @@ class PurviewConnector(BaseConnector):
             'button:has-text("Log In")',
             'button:has-text("Login")',
             'button:has-text("Sign In")',
+            'button:has-text("Sign in")',
+            # Ambra-specific
+            'button.btn-primary',
         ]
 
         try:
@@ -95,11 +128,13 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.fill(username)
                         filled_user = True
+                        logger.info(f'Filled username via {sel}')
                         break
                 except Exception:
                     continue
 
             if not filled_user:
+                self._log_page_debug_info('username')
                 self._last_login_error = 'Purview login: could not find username field'
                 logger.error(self._last_login_error)
                 return False
@@ -112,11 +147,13 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.fill(password)
                         filled_pass = True
+                        logger.info(f'Filled password via {sel}')
                         break
                 except Exception:
                     continue
 
             if not filled_pass:
+                self._log_page_debug_info('password')
                 self._last_login_error = 'Purview login: could not find password field'
                 logger.error(self._last_login_error)
                 return False
@@ -129,6 +166,7 @@ class PurviewConnector(BaseConnector):
                     if el and el.is_visible():
                         el.click()
                         submitted = True
+                        logger.info(f'Clicked submit via {sel}')
                         break
                 except Exception:
                     continue
@@ -169,6 +207,37 @@ class PurviewConnector(BaseConnector):
         self._authenticated = True
         logger.info('Purview login successful.')
         return True
+
+    def _log_page_debug_info(self, field_type):
+        """Log page state for debugging when selectors fail."""
+        try:
+            url = self._page.url
+            title = self._page.title()
+            # Count visible input elements
+            inputs = self._page.query_selector_all('input')
+            visible_inputs = []
+            for inp in inputs:
+                try:
+                    if inp.is_visible():
+                        attrs = {}
+                        for attr in ['type', 'name', 'id', 'placeholder', 'class']:
+                            val = inp.get_attribute(attr)
+                            if val:
+                                attrs[attr] = val
+                        visible_inputs.append(attrs)
+                except Exception:
+                    continue
+            logger.error(
+                f'Purview debug ({field_type} not found): '
+                f'url={url}, title={title}, '
+                f'visible_inputs={json.dumps(visible_inputs)}'
+            )
+            # Also log a snippet of the page HTML for further diagnosis
+            body_html = self._page.inner_html('body')
+            if body_html:
+                logger.debug(f'Purview page body (first 2000 chars): {body_html[:2000]}')
+        except Exception as e:
+            logger.error(f'Purview debug info collection failed: {e}')
 
     def download_files(self, date_from=None, date_to=None):
         """Download available reports and study data from Purview.

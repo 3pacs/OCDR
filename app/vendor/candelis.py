@@ -49,16 +49,29 @@ class CandelisConnector(BaseConnector):
         portal_url = kwargs.get('portal_url') or self.portal_url
 
         self._playwright = sync_playwright().start()
+        # Local RIS servers often use outdated TLS (1.0/1.1) and weak ciphers
+        # that modern Chromium rejects by default
         self._browser = self._playwright.chromium.launch(
             headless=self.headless,
             downloads_path=self.download_dir,
+            args=[
+                '--ssl-version-min=tls1',
+                '--ignore-certificate-errors',
+            ],
         )
-        # Local RIS servers often have self-signed or outdated TLS certs
         context = self._browser.new_context(ignore_https_errors=True)
         self._page = context.new_page()
 
         logger.info(f'Navigating to Candelis login at {portal_url}...')
-        self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
+        try:
+            self._page.goto(portal_url, wait_until='networkidle', timeout=30000)
+        except Exception as e:
+            # If networkidle times out, try with domcontentloaded
+            if 'timeout' in str(e).lower():
+                logger.warning('Candelis networkidle timed out, retrying with domcontentloaded...')
+                self._page.goto(portal_url, wait_until='domcontentloaded', timeout=30000)
+            else:
+                raise
 
         # Candelis RadSuite uses various login form layouts
         # Try common selectors for username/password fields

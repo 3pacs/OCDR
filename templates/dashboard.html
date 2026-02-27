@@ -4,24 +4,29 @@
 
 {% block content %}
 <!-- Welcome Banner (shown when no data) -->
-<div class="welcome-banner" id="welcome-banner" style="display:none;">
-    <h2>Welcome to OCDR</h2>
-    <p>Your billing reconciliation system is ready. Start by importing your data, then watch your dashboard come to life.</p>
-    <div class="welcome-steps">
-        <a href="/import" class="welcome-step">
-            <div class="step-number">1</div>
-            <div class="step-title">Import Data</div>
-            <div class="step-desc">Upload Excel, CSV, or 835 files</div>
+<div class="onboarding-cta" id="welcome-banner" style="display:none;">
+    <h5><i class="bi bi-heart-pulse-fill text-accent-blue me-2"></i>Welcome to OCDR</h5>
+    <p>Your billing reconciliation system is ready. Get started by bringing in your data.</p>
+    <div class="step-cards">
+        <a href="/vendor-connections" class="step-card">
+            <i class="bi bi-plug-fill text-accent-blue"></i>
+            <div class="step-label">1. Connect Vendors</div>
+            <div class="step-desc">Link Candelis RIS and Purview PACS</div>
         </a>
-        <a href="/admin" class="welcome-step">
-            <div class="step-number">2</div>
-            <div class="step-title">Configure</div>
+        <a href="/import" class="step-card">
+            <i class="bi bi-cloud-upload-fill text-accent-purple"></i>
+            <div class="step-label">2. Import Data</div>
+            <div class="step-desc">Upload billing, 835, or schedule files</div>
+        </a>
+        <a href="/admin" class="step-card">
+            <i class="bi bi-gear-fill text-accent-green"></i>
+            <div class="step-label">3. Configure</div>
             <div class="step-desc">Set up payers and fee schedules</div>
         </a>
-        <a href="/match-review" class="welcome-step">
-            <div class="step-number">3</div>
-            <div class="step-title">Match Claims</div>
-            <div class="step-desc">Auto-match 835 to billing records</div>
+        <a href="/match-review" class="step-card">
+            <i class="bi bi-link-45deg text-accent-yellow"></i>
+            <div class="step-label">4. Match Claims</div>
+            <div class="step-desc">Auto-match 835 EOBs to billing</div>
         </a>
     </div>
 </div>
@@ -29,7 +34,7 @@
 <!-- KPI Cards Row -->
 <div class="row g-3 mb-4" id="kpi-row-1">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue clickable" onclick="window.location='/import'">
+        <div class="kpi-card kpi-revenue clickable" onclick="window.location='/import'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Sum of all primary + secondary payments collected across all billing records">
             <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Revenue</div>
@@ -39,7 +44,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-danger clickable" onclick="window.location='/denials'">
+        <div class="kpi-card kpi-danger clickable" onclick="window.location='/denials'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims where total payment is $0 — includes denials, pending claims, and unbilled items">
             <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Unpaid / Denied</div>
@@ -49,7 +54,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-warning clickable" onclick="window.location='/underpayments'">
+        <div class="kpi-card kpi-warning clickable" onclick="window.location='/underpayments'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Dollar gap between what carriers paid vs expected rates from your fee schedule. Requires fee schedule setup.">
             <div class="kpi-icon"><i class="bi bi-arrow-down-circle-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Underpayment Gap</div>
@@ -59,7 +64,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-alert clickable" onclick="window.location='/filing-deadlines'">
+        <div class="kpi-card kpi-alert clickable" onclick="window.location='/filing-deadlines'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims approaching or past carrier filing deadlines. Configure deadlines under System Admin > Payers.">
             <div class="kpi-icon"><i class="bi bi-alarm-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Filing Deadline Alerts</div>
@@ -73,7 +78,7 @@
 <!-- Secondary row of KPI cards -->
 <div class="row g-3 mb-4" id="kpi-row-2">
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-info clickable" onclick="window.location='/secondary'">
+        <div class="kpi-card kpi-info clickable" onclick="window.location='/secondary'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims where the carrier expects secondary insurance. Track these for additional reimbursement.">
             <div class="kpi-icon"><i class="bi bi-layers-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Secondary Follow-Up</div>
@@ -83,7 +88,7 @@
         </div>
     </div>
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-payer clickable" onclick="window.location='/payers'">
+        <div class="kpi-card kpi-payer clickable" onclick="window.location='/payers'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Carriers whose monthly revenue dropped significantly vs historical average. Investigate declining reimbursements.">
             <div class="kpi-icon"><i class="bi bi-building-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Payer Alerts</div>
@@ -93,7 +98,7 @@
         </div>
     </div>
     <div class="col-xl-4 col-md-6">
-        <div class="kpi-card kpi-physician clickable" onclick="window.location='/physicians'">
+        <div class="kpi-card kpi-physician clickable" onclick="window.location='/physicians'" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Referring physician with the highest total billing revenue. Click to see the full physician rankings.">
             <div class="kpi-icon"><i class="bi bi-person-badge-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Top Physicians</div>

@@ -1039,3 +1039,134 @@ body {
 .insight-item:last-child {
     border-bottom: none !important;
 }
+
+/* ── Bootstrap Tooltip Dark Theme ────────────────────────────── */
+
+.tooltip-inner {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    padding: 0.5rem 0.75rem;
+    max-width: 300px;
+    text-align: left;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.bs-tooltip-auto .tooltip-arrow::before,
+.bs-tooltip-top .tooltip-arrow::before {
+    border-top-color: var(--border-color);
+}
+.bs-tooltip-bottom .tooltip-arrow::before {
+    border-bottom-color: var(--border-color);
+}
+.bs-tooltip-start .tooltip-arrow::before {
+    border-left-color: var(--border-color);
+}
+.bs-tooltip-end .tooltip-arrow::before {
+    border-right-color: var(--border-color);
+}
+
+/* ── Status Badge Classes (consistent colors) ────────────────── */
+
+.status-primary   { background: rgba(52,211,153,0.15); color: #34d399; }
+.status-secondary { background: rgba(99,179,237,0.15); color: #63b3ed; }
+.status-denied    { background: rgba(248,113,113,0.15); color: #f87171; }
+.status-warning   { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.status-reversal  { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.status-scheduled { background: rgba(99,179,237,0.15); color: #63b3ed; }
+.status-completed { background: rgba(52,211,153,0.15); color: #34d399; }
+.status-cancelled { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.status-noshow    { background: rgba(248,113,113,0.15); color: #f87171; }
+
+/* ── Data Help Icons ─────────────────────────────────────────── */
+
+.help-icon {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    cursor: help;
+    margin-left: 4px;
+    vertical-align: super;
+}
+
+/* ── Improved Table Column Headers ───────────────────────────── */
+
+th[data-bs-toggle="tooltip"] {
+    cursor: help;
+    border-bottom: 1px dashed var(--text-muted);
+}
+
+/* ── Filter Bar Clear Button ─────────────────────────────────── */
+
+.btn-clear-filters {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    color: var(--text-muted);
+    border-color: var(--border-color);
+}
+
+.btn-clear-filters:hover {
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+}
+
+/* ── Onboarding Call-to-Action ───────────────────────────────── */
+
+.onboarding-cta {
+    background: linear-gradient(135deg, rgba(99,179,237,0.08), rgba(167,139,250,0.08));
+    border: 1px dashed var(--border-color);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.onboarding-cta h5 {
+    margin-bottom: 0.5rem;
+}
+
+.onboarding-cta p {
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+}
+
+.onboarding-cta .step-cards {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.onboarding-cta .step-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    min-width: 160px;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+}
+
+.onboarding-cta .step-card:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-blue);
+    transform: translateY(-2px);
+}
+
+.onboarding-cta .step-card i {
+    font-size: 1.5rem;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.onboarding-cta .step-card .step-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.onboarding-cta .step-card .step-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}

@@ -27,21 +27,30 @@
     </div>
     <div class="col-lg-4">
         <div class="data-card padded">
-            <h6 class="fw-semibold mb-3">Quick Questions</h6>
+            <h6 class="fw-semibold mb-3"><i class="bi bi-lightning-charge-fill text-accent-yellow me-1"></i>Quick Questions</h6>
             <div class="d-grid gap-2">
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What is our total revenue this month?')">Total revenue this month</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which carrier pays the most?')">Top paying carrier</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('How many denials do we have?')">Denial count</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What are the top denial reason codes?')">Top denial codes</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show revenue by modality')">Revenue by modality</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which physicians refer the most?')">Top referring physicians</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Are there any upcoming filing deadlines?')">Filing deadlines</button>
-                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show underpayment summary')">Underpayment check</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What is our total revenue this month?')"><i class="bi bi-currency-dollar me-1 text-accent-green"></i>Total revenue this month</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which carrier pays the most?')"><i class="bi bi-building me-1 text-accent-blue"></i>Top paying carrier</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('How many denials do we have?')"><i class="bi bi-x-octagon me-1 text-accent-red"></i>Denial count</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What are the top denial reason codes?')"><i class="bi bi-bar-chart me-1 text-accent-yellow"></i>Top denial codes</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show revenue by modality')"><i class="bi bi-pie-chart me-1 text-accent-purple"></i>Revenue by modality</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which physicians refer the most?')"><i class="bi bi-person-badge me-1 text-accent-blue"></i>Top referring physicians</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show upcoming schedule for this week')"><i class="bi bi-calendar3 me-1 text-accent-green"></i>This week's schedule</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show underpayment summary')"><i class="bi bi-arrow-down-circle me-1 text-accent-yellow"></i>Underpayment check</button>
             </div>
         </div>
         <div class="data-card padded mt-3">
-            <h6 class="fw-semibold mb-2">LLM Status</h6>
+            <h6 class="fw-semibold mb-2"><i class="bi bi-robot me-1"></i>LLM Status</h6>
             <div id="llm-status" class="text-muted small">Checking...</div>
+        </div>
+        <div class="data-card padded mt-3">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Tips</h6>
+            <ul class="text-muted small mb-0 ps-3">
+                <li class="mb-1">Ask about billing, payments, schedules, denials, or carriers</li>
+                <li class="mb-1">Claude translates your question into a structured database query</li>
+                <li class="mb-1">No patient data is sent to the API — only query structure</li>
+                <li>Results come from your local database only</li>
+            </ul>
         </div>
     </div>
 </div>

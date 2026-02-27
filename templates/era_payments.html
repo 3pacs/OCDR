@@ -40,7 +40,7 @@
 <!-- KPI Cards -->
 <div class="row g-3 mb-4">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-info">
+        <div class="kpi-card kpi-info" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Number of 835 ERA (Electronic Remittance Advice) files that have been uploaded and parsed.">
             <div class="kpi-icon"><i class="bi bi-file-earmark-medical-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">ERA Files Parsed</div>
@@ -50,7 +50,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue">
+        <div class="kpi-card kpi-revenue" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Total dollars paid by carriers across all parsed 835 files. Compare against billed amounts to find discrepancies.">
             <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total ERA Paid</div>
@@ -60,7 +60,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-danger">
+        <div class="kpi-card kpi-danger" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Claims with DENIED status in 835 data. These need to be reviewed for appeal or write-off.">
             <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Denied Claims</div>
@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-warning">
+        <div class="kpi-card kpi-warning" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Total CAS (Claim Adjustment Segment) amounts — the difference between billed and paid due to contractual obligations, patient responsibility, or other adjustments.">
             <div class="kpi-icon"><i class="bi bi-arrow-left-right"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Adjustments</div>
@@ -127,13 +127,13 @@
                 <table class="table table-dark table-striped table-hover mb-0">
                     <thead>
                         <tr>
-                            <th>File</th>
+                            <th data-bs-toggle="tooltip" title="835 EDI filename — click a row to filter claim lines for that file">File</th>
                             <th>Payer</th>
-                            <th>Check/EFT</th>
-                            <th>Method</th>
-                            <th>Amount</th>
+                            <th data-bs-toggle="tooltip" title="Check number or EFT trace number from the remittance">Check/EFT</th>
+                            <th data-bs-toggle="tooltip" data-bs-html="true" title="Payment method:<br>CHK = Paper check<br>ACH = Electronic transfer<br>FWT = Federal wire<br>NON = Non-payment (zero-pay remittance)">Method</th>
+                            <th data-bs-toggle="tooltip" title="Total payment amount on this remittance">Amount</th>
                             <th>Date</th>
-                            <th>Claims</th>
+                            <th data-bs-toggle="tooltip" title="Number of individual claim lines in this 835 file">Claims</th>
                         </tr>
                     </thead>
                     <tbody id="payment-tbody">
@@ -154,7 +154,10 @@
         <option value="DENIED">Denied</option>
         <option value="REVERSAL">Reversal</option>
     </select>
-    <input type="text" class="form-control" id="filter-patient" placeholder="Search patient..." onkeyup="debounceSearch()" style="max-width:250px">
+    <input type="text" class="form-control" id="filter-patient" placeholder="Search patient name..." onkeyup="debounceSearch()" style="max-width:250px">
+    <button class="btn btn-sm btn-outline-secondary btn-clear-filters" onclick="clearEraFilters()" data-bs-toggle="tooltip" title="Reset all filters and show all claims">
+        <i class="bi bi-funnel"></i> Clear
+    </button>
 </div>
 
 <div class="data-card">
@@ -166,16 +169,16 @@
         <table class="table table-dark table-striped table-hover mb-0">
             <thead>
                 <tr>
-                    <th>Claim ID</th>
+                    <th data-bs-toggle="tooltip" title="Unique claim identifier from the 835 file">Claim ID</th>
                     <th>Patient</th>
                     <th>Service Date</th>
-                    <th>CPT</th>
-                    <th>Billed</th>
-                    <th>Paid</th>
-                    <th>Adj Group</th>
-                    <th>Adj Reason</th>
-                    <th>Adj Amount</th>
-                    <th>Status</th>
+                    <th data-bs-toggle="tooltip" title="CPT/HCPCS procedure code identifying the service performed">CPT</th>
+                    <th data-bs-toggle="tooltip" title="Amount originally billed to the carrier">Billed</th>
+                    <th data-bs-toggle="tooltip" title="Amount actually paid by the carrier">Paid</th>
+                    <th data-bs-toggle="tooltip" data-bs-html="true" title="CAS Group Code:<br>CO = Contractual Obligation<br>CR = Correction/Reversal<br>OA = Other Adjustment<br>PI = Payer Initiated<br>PR = Patient Responsibility">Adj Group <i class="bi bi-info-circle help-icon"></i></th>
+                    <th data-bs-toggle="tooltip" data-bs-html="true" title="CAS Reason Code — explains WHY the adjustment was made.<br>Common: 1=Deductible, 2=Coinsurance, 3=Copay,<br>29=Filing limit expired, 45=Exceeds usual rate,<br>50=Non-covered, 197=No precertification">Adj Reason <i class="bi bi-info-circle help-icon"></i></th>
+                    <th data-bs-toggle="tooltip" title="Dollar amount of the CAS adjustment — the difference between billed and paid">Adj Amount</th>
+                    <th data-bs-toggle="tooltip" data-bs-html="true" title="Claim processing status:<br>PROCESSED PRIMARY = Paid as primary<br>PROCESSED SECONDARY = Paid as secondary<br>DENIED = Claim denied<br>REVERSAL = Prior payment reversed">Status</th>
                 </tr>
             </thead>
             <tbody id="claims-tbody">
@@ -561,6 +564,14 @@ function debounceSearch() {
     clearTimeout(searchTimeout);
     activePaymentId = null;
     searchTimeout = setTimeout(() => { claimsPage = 1; loadClaims(); }, 300);
+}
+
+function clearEraFilters() {
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-patient').value = '';
+    activePaymentId = null;
+    claimsPage = 1;
+    loadClaims();
 }
 
 function claimStatusBadge(status) {

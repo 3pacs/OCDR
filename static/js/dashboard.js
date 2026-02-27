@@ -103,9 +103,72 @@ if (typeof Chart !== 'undefined') {
     Chart.defaults.plugins.legend.labels.boxWidth = 12;
 }
 
+// ── Bootstrap Tooltip Initialization ─────────────────────────
+
+function initTooltips() {
+    if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
+        var tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        tooltipEls.forEach(function(el) {
+            new bootstrap.Tooltip(el, {
+                trigger: 'hover',
+                placement: el.getAttribute('data-bs-placement') || 'top',
+                html: el.hasAttribute('data-bs-html'),
+            });
+        });
+    }
+}
+
+// ── CAS Code Descriptions ───────────────────────────────────
+
+var CAS_GROUP_CODES = {
+    CO: 'Contractual Obligation — provider write-off per contract',
+    CR: 'Correction/Reversal — prior claim correction',
+    OA: 'Other Adjustment — not classified elsewhere',
+    PI: 'Payer Initiated — payer-imposed reduction',
+    PR: 'Patient Responsibility — patient owes this amount',
+};
+
+var CAS_COMMON_REASONS = {
+    '1': 'Deductible',
+    '2': 'Coinsurance',
+    '3': 'Copayment',
+    '4': 'Procedure code inconsistent with modifier',
+    '5': 'Procedure code inconsistent with place of service',
+    '16': 'Missing information',
+    '18': 'Duplicate claim/service',
+    '22': 'Care may be covered by another payer',
+    '23': 'Charges exceed fee schedule',
+    '24': 'Charges covered under capitation',
+    '26': 'Expenses incurred prior to coverage',
+    '27': 'Expenses incurred after coverage ended',
+    '29': 'Time limit for filing has expired',
+    '31': 'Non-covered service (patient liability)',
+    '45': 'Charges exceed usual & customary',
+    '50': 'Non-covered service (not patient liability)',
+    '96': 'Non-covered charge(s)',
+    '97': 'Payment adjusted — not authorized',
+    '109': 'Not covered by this payer/contractor',
+    '119': 'Benefit maximum reached',
+    '197': 'Precertification/authorization absent',
+    '204': 'Service not covered in this setting',
+    '236': 'Level of care not covered',
+    '242': 'Service not covered — plan limitation',
+};
+
+function getCasGroupTooltip(code) {
+    if (!code) return '';
+    return CAS_GROUP_CODES[code] || 'Adjustment group: ' + code;
+}
+
+function getCasReasonTooltip(code) {
+    if (!code) return '';
+    return CAS_COMMON_REASONS[code] || 'Reason code: ' + code;
+}
+
 // ── Auto-update timestamp ────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', function() {
-    const el = document.getElementById('last-updated');
+    var el = document.getElementById('last-updated');
     if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    initTooltips();
 });

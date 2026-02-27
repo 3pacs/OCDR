@@ -19,7 +19,7 @@
 <!-- KPI Cards -->
 <div class="row g-3 mb-4">
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-info">
+        <div class="kpi-card kpi-info" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Total patient appointments imported from schedule files. Includes past and future dates.">
             <div class="kpi-icon"><i class="bi bi-calendar3"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Total Scheduled</div>
@@ -29,7 +29,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-payer">
+        <div class="kpi-card kpi-payer" data-bs-toggle="tooltip" data-bs-placement="bottom" title="MRI and Open MRI appointments (modality codes HMRI and OPEN).">
             <div class="kpi-icon"><i class="bi bi-magnet-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">MRI Scans</div>
@@ -39,7 +39,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-physician">
+        <div class="kpi-card kpi-physician" data-bs-toggle="tooltip" data-bs-placement="bottom" title="CT, PET, and PET/CT scan appointments combined.">
             <div class="kpi-icon"><i class="bi bi-radioactive"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">CT / PET Scans</div>
@@ -49,7 +49,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="kpi-card kpi-revenue">
+        <div class="kpi-card kpi-revenue" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Appointments marked as completed. Sub-counts show cancellations and no-shows.">
             <div class="kpi-icon"><i class="bi bi-check-circle-fill"></i></div>
             <div class="kpi-body">
                 <div class="kpi-label">Completed</div>
@@ -127,8 +127,11 @@
         <option value="CANCELLED">Cancelled</option>
         <option value="NO_SHOW">No Show</option>
     </select>
-    <input type="date" class="form-control" id="filter-start" onchange="loadTable()" style="max-width:170px" title="Start date">
-    <input type="date" class="form-control" id="filter-end" onchange="loadTable()" style="max-width:170px" title="End date">
+    <input type="date" class="form-control" id="filter-start" onchange="loadTable()" style="max-width:170px" title="Start date" data-bs-toggle="tooltip" data-bs-placement="bottom">
+    <input type="date" class="form-control" id="filter-end" onchange="loadTable()" style="max-width:170px" title="End date" data-bs-toggle="tooltip" data-bs-placement="bottom">
+    <button class="btn btn-sm btn-outline-secondary btn-clear-filters" onclick="clearScheduleFilters()" data-bs-toggle="tooltip" title="Reset all filters">
+        <i class="bi bi-funnel"></i> Clear
+    </button>
 </div>
 
 <div class="data-card">
@@ -140,14 +143,14 @@
         <table class="table table-dark table-striped table-hover mb-0">
             <thead>
                 <tr>
-                    <th>Date</th>
-                    <th>Time</th>
+                    <th data-bs-toggle="tooltip" title="Appointment date">Date</th>
+                    <th data-bs-toggle="tooltip" title="Scheduled time of day">Time</th>
                     <th>Patient</th>
-                    <th>Modality</th>
-                    <th>Scan Type</th>
-                    <th>Doctor</th>
-                    <th>Insurance</th>
-                    <th>Status</th>
+                    <th data-bs-toggle="tooltip" title="Imaging type: HMRI=MRI, CT, PET, OPEN=Open MRI, DX=X-Ray, BONE=Bone Scan">Modality</th>
+                    <th data-bs-toggle="tooltip" title="Specific body region being scanned (e.g., BRAIN, CERVICAL, CHEST)">Scan Type</th>
+                    <th data-bs-toggle="tooltip" title="Ordering/referring physician">Doctor</th>
+                    <th data-bs-toggle="tooltip" title="Patient's insurance carrier">Insurance</th>
+                    <th data-bs-toggle="tooltip" title="SCHEDULED=Upcoming, COMPLETED=Done, CANCELLED=Cancelled, NO_SHOW=Patient did not show">Status</th>
                 </tr>
             </thead>
             <tbody id="schedule-tbody">
@@ -487,6 +490,16 @@ async function loadTable() {
 function changePage(delta) {
     currentPage += delta;
     if (currentPage < 1) currentPage = 1;
+    loadTable();
+}
+
+function clearScheduleFilters() {
+    document.getElementById('filter-modality').value = '';
+    document.getElementById('filter-time').value = '';
+    document.getElementById('filter-status').value = '';
+    document.getElementById('filter-start').value = '';
+    document.getElementById('filter-end').value = '';
+    currentPage = 1;
     loadTable();
 }
 
