@@ -8,6 +8,12 @@ async function fetchJSON(url) {
     return resp.json();
 }
 
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 function formatCurrency(val) {
     if (val == null) return '$0';
     if (Math.abs(val) >= 1000000) {

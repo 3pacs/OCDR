@@ -299,7 +299,7 @@ function unlockStore() {
 function markVendorConfigured(vendor, username) {
     var badge = document.getElementById('badge-' + vendor);
     if (badge) {
-        badge.textContent = 'Connected (' + escapeHtml(username) + ')';
+        badge.textContent = 'Connected (' + username + ')';
         badge.className = 'badge bg-success-subtle text-success-emphasis';
     }
     var syncBtn = document.getElementById('btn-sync-' + vendor);
@@ -553,12 +553,18 @@ function updateSyncUI(data) {
         var logCard = document.getElementById('error-log-card');
         logCard.style.display = '';
         var logDiv = document.getElementById('sync-error-log');
-        logDiv.innerHTML = data.errors.map(function(e) {
-            return '<div class="d-flex gap-2 py-1 border-bottom border-secondary small">'
-                + '<i class="bi bi-exclamation-circle text-accent-yellow"></i>'
-                + '<span>' + escapeHtml(e) + '</span>'
-                + '</div>';
-        }).join('');
+        logDiv.innerHTML = '';
+        data.errors.forEach(function(e) {
+            var row = document.createElement('div');
+            row.className = 'd-flex gap-2 py-1 border-bottom border-secondary small';
+            var icon = document.createElement('i');
+            icon.className = 'bi bi-exclamation-circle text-accent-yellow';
+            var span = document.createElement('span');
+            span.textContent = e;
+            row.appendChild(icon);
+            row.appendChild(span);
+            logDiv.appendChild(row);
+        });
     }
 }
 
