@@ -49,3 +49,15 @@ class Config:
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     # If not set, auto-generated per session (logs won't survive restarts without a stable key)
     PHI_ENCRYPTION_KEY = os.environ.get("PHI_ENCRYPTION_KEY", "")
+
+    # Authentication enforcement (set to "true" in production)
+    # When False, @auth_required and @admin_required are no-ops
+    AUTH_ENFORCEMENT = os.environ.get("AUTH_ENFORCEMENT", "").lower() in ("true", "1", "yes")
+
+    # Rate limiting (requests per window)
+    RATE_LIMIT_WRITE = os.environ.get("RATE_LIMIT_WRITE", "30/minute")
+    RATE_LIMIT_READ = os.environ.get("RATE_LIMIT_READ", "120/minute")
+
+    # Auto-backup settings
+    BACKUP_RETENTION_DAYS = int(os.environ.get("BACKUP_RETENTION_DAYS", "30"))
+    BACKUP_MAX_COUNT = int(os.environ.get("BACKUP_MAX_COUNT", "50"))

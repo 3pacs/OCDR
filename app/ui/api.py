@@ -34,6 +34,7 @@ def _escape_like(value):
 
 @api_bp.route("/health")
 def health():
+    """Comprehensive health check: DB, backups, disk, auth, rate limiting."""
     record_count = BillingRecord.query.count()
     try:
         db_path = db.engine.url.database
@@ -41,15 +42,49 @@ def health():
     except Exception:
         db_size = 0
 
-    # Enhanced health: check backup age, disk space
     backup_info = _get_backup_info()
+
+    # Disk space check
+    disk_info = _get_disk_info()
+
+    # Check WAL mode
+    wal_mode = None
+    try:
+        from sqlalchemy import text
+        result = db.session.execute(text("PRAGMA journal_mode"))
+        wal_mode = result.scalar()
+    except Exception:
+        pass
+
+    # Count tables and check schema
+    table_count = 0
+    try:
+        from sqlalchemy import inspect as sa_inspect
+        inspector = sa_inspect(db.engine)
+        table_count = len(inspector.get_table_names())
+    except Exception:
+        pass
+
+    # Auth status
+    from flask import current_app
+    auth_enforced = current_app.config.get("AUTH_ENFORCEMENT", False)
+
+    # ERA + schedule counts for completeness
+    era_count = EraPayment.query.count()
+    schedule_count = ScheduleRecord.query.count()
 
     return jsonify({
         "status": "healthy",
         "db_size_bytes": db_size,
         "record_count": record_count,
+        "era_count": era_count,
+        "schedule_count": schedule_count,
+        "table_count": table_count,
+        "journal_mode": wal_mode,
+        "auth_enforced": auth_enforced,
         "timestamp": datetime.now(UTC).isoformat(),
         "backup": backup_info,
+        "disk": disk_info,
     })
 
 
@@ -1872,6 +1907,18 @@ def backup_history():
     return jsonify(get_backup_history(backup_dir))
 
 
+@api_bp.route("/backup/verify/<path:filename>")
+def backup_verify(filename):
+    """Verify a specific backup's integrity."""
+    from app.infra.backup_manager import verify_backup as _verify
+    from flask import current_app
+    backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
+    backup_path = os.path.join(backup_dir, filename)
+    if not os.path.exists(backup_path):
+        return jsonify({"error": "Backup not found"}), 404
+    return jsonify(_verify(backup_path))
+
+
 # ══════════════════════════════════════════════════════════════════
 #  Admin: Payers & Fee Schedule
 # ══════════════════════════════════════════════════════════════════
@@ -2703,7 +2750,15 @@ def auth_me():
 @api_bp.route("/admin/users")
 def admin_users():
     """List all user accounts (admin only)."""
+    from app.infra.auth import admin_required as _admin_check
     from app.models import User
+
+    # Admin check (manual — can't stack decorators on blueprint routes easily)
+    check = _admin_check(lambda: None)
+    result = check()
+    if result is not None:
+        return result
+
     users = User.query.all()
     return jsonify([{
         "id": u.id,
@@ -2716,8 +2771,14 @@ def admin_users():
 
 @api_bp.route("/admin/users", methods=["POST"])
 def admin_create_user():
-    """Create a new user account."""
+    """Create a new user account (admin only)."""
+    from app.infra.auth import admin_required as _admin_check
     from app.models import User
+
+    check = _admin_check(lambda: None)
+    result = check()
+    if result is not None:
+        return result
 
     body = request.get_json() or {}
     username = body.get("username")
@@ -3101,6 +3162,66 @@ def set_patient_topaz_id(patient_name):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Topaz Legacy Data Endpoints
+# ══════════════════════════════════════════════════════════════════
+
+@api_bp.route("/topaz/summary")
+def topaz_summary():
+    """Get summary of Topaz sample files without full analysis."""
+    from app.import_engine.topaz_importer import get_topaz_summary
+    dir_path = request.args.get("path", "topaz_samples")
+    if not os.path.isabs(dir_path):
+        dir_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), dir_path)
+    result = get_topaz_summary(dir_path)
+    return jsonify(result)
+
+
+@api_bp.route("/topaz/analyze")
+def topaz_analyze():
+    """Analyze Topaz files — classify + detect structure."""
+    from app.import_engine.topaz_importer import analyze_topaz_directory
+    dir_path = request.args.get("path", "topaz_samples")
+    if not os.path.isabs(dir_path):
+        dir_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), dir_path)
+    category = request.args.get("category")
+    results = analyze_topaz_directory(dir_path)
+    if category:
+        results = [r for r in results if r.get("classification", {}).get("category") == category]
+    return jsonify({"files": results, "total": len(results)})
+
+
+@api_bp.route("/topaz/file/<path:filename>")
+def topaz_file_detail(filename):
+    """Analyze a single Topaz file in detail (structure + hex dump + sample)."""
+    from app.import_engine.topaz_importer import (
+        analyze_file, classify_file, hex_dump, detect_field_boundaries
+    )
+    dir_path = request.args.get("path", "topaz_samples")
+    if not os.path.isabs(dir_path):
+        dir_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), dir_path)
+    file_path = os.path.join(dir_path, filename)
+
+    if not os.path.isfile(file_path):
+        return jsonify({"error": f"File not found: {filename}"}), 404
+
+    analysis = analyze_file(file_path)
+    classification = classify_file(filename)
+    analysis["classification"] = classification
+
+    # Add hex dump for format investigation
+    analysis["hex_dump"] = hex_dump(file_path, num_bytes=512)
+
+    # Add field boundary detection for fixed-width files
+    if analysis.get("likely_fixed_width") and analysis.get("sample_lines"):
+        boundaries = detect_field_boundaries(
+            analysis["sample_lines"], analysis.get("record_length")
+        )
+        analysis["detected_boundaries"] = boundaries
+
+    return jsonify(analysis)
+
+
+# ══════════════════════════════════════════════════════════════════
 #  AI Log Communication Endpoints
 # ══════════════════════════════════════════════════════════════════
 
@@ -3232,3 +3353,17 @@ def _get_backup_info():
         }
     except Exception:
         return {"last_backup": None, "backup_count": 0}
+
+
+def _get_disk_info():
+    """Get disk space information for health check."""
+    try:
+        usage = shutil.disk_usage("/")
+        return {
+            "total_gb": round(usage.total / (1024**3), 1),
+            "used_gb": round(usage.used / (1024**3), 1),
+            "free_gb": round(usage.free / (1024**3), 1),
+            "used_percent": round(usage.used / usage.total * 100, 1),
+        }
+    except Exception:
+        return None

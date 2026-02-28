@@ -84,6 +84,9 @@ def create_app(config_class=Config, **config_overrides):
     # ── SQLite WAL mode for concurrent reads during writes ──
     _enable_wal_mode(app)
 
+    # ── Rate limiting ────────────────────────────────────────
+    _init_rate_limiting(app)
+
     # ── Ensure required directories ────────────────────────────
     with app.app_context():
         _ensure_directories(app)
@@ -93,6 +96,7 @@ def create_app(config_class=Config, **config_overrides):
         _seed_lookup_tables()
         _ensure_default_admin()
         _init_ai_logs(app)
+        _auto_backup_on_startup(app)
 
     return app
 
@@ -284,6 +288,52 @@ def _init_ai_logs(app):
         app.logger.info("AI communication logs initialized")
     except Exception as e:
         app.logger.debug(f"AI log init skipped: {e}")
+
+
+def _init_rate_limiting(app):
+    """Install global rate limiting."""
+    try:
+        from app.infra.rate_limiter import init_rate_limiting
+        init_rate_limiting(
+            app,
+            default_write_rate=app.config.get("RATE_LIMIT_WRITE", "30/minute"),
+            default_read_rate=app.config.get("RATE_LIMIT_READ", "120/minute"),
+        )
+        app.logger.info("Rate limiting initialized")
+    except Exception as e:
+        app.logger.debug(f"Rate limiting init skipped: {e}")
+
+
+def _auto_backup_on_startup(app):
+    """Run an automatic backup on startup if last backup is >24h old."""
+    try:
+        from app.infra.backup_manager import run_backup, get_backup_history
+        backup_dir = app.config.get("BACKUP_FOLDER", "backup")
+        history = get_backup_history(backup_dir)
+
+        # Check if we need a backup (no backups or last one >24h ago)
+        need_backup = True
+        if history["backups"]:
+            from datetime import datetime as dt
+            last_modified = history["backups"][0].get("modified", "")
+            try:
+                last_dt = dt.fromisoformat(last_modified)
+                age_hours = (dt.utcnow() - last_dt).total_seconds() / 3600
+                if age_hours < 24:
+                    need_backup = False
+            except (ValueError, TypeError):
+                pass
+
+        if need_backup:
+            result = run_backup(app=app)
+            if "error" not in result:
+                app.logger.info(f"Auto-backup created: {result.get('filename')}")
+            else:
+                app.logger.debug(f"Auto-backup skipped: {result.get('error')}")
+        else:
+            app.logger.debug("Auto-backup: recent backup exists, skipping")
+    except Exception as e:
+        app.logger.debug(f"Auto-backup skipped: {e}")
 
 
 def _ensure_default_admin():

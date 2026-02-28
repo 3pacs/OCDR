@@ -1,6 +1,6 @@
 """Topaz Legacy Data Importer.
 
-Imports data from the Topaz system (bespoke 1980s DOS software).
+Imports data from the Topaz system (bespoke .NET application, originally DOS-era).
 Topaz stores data as flat text files in X:\\tpzservr\\.
 
 The file format is unknown and must be reverse-engineered from sample data.
@@ -11,11 +11,23 @@ Known characteristics:
   - Dates: probably MM/DD/YY or MMDDYY (2-digit years)
   - No headers: raw data, positional fields
 
+Known file naming patterns (from directory listing):
+  - Monthly data: MON1YYYY / MON2YYYY (e.g. JAN12025, FEB22026)
+    MON = 3-letter month, 1/2 = sequence or half-month, YYYY = year
+  - Lookup tables: patnt, doclst, inslst, reflst, cptlst, dxtlst, poslst
+  - Patient data: PtNote, PtNote2, PtEMG, PtHosp, PtPOS, PtRMK, PtSec, PtStmnt, PtTrack2
+  - Schedule: schdlx2, SchdlDiv
+  - Daily files: daily1, daily2, daily3
+  - Requisitions: req1 through req34
+  - System files: BASIC14.EXE, RUN14.EXE, T_REPAIR.EXE
+  - Config: *.WN8, *.mcl, *.mcr
+
 Workflow:
-  1. analyze_file()    — Detect encoding, record length, field boundaries
-  2. detect_fields()   — Map byte positions to semantic fields (name, DOB, etc.)
-  3. extract_records() — Parse file into dicts using detected field map
-  4. import_records()  — Insert into OCDR database tables
+  1. classify_file()   — Categorize by naming convention
+  2. analyze_file()    — Detect encoding, record length, field boundaries
+  3. detect_fields()   — Map byte positions to semantic fields (name, DOB, etc.)
+  4. extract_records() — Parse file into dicts using detected field map
+  5. import_records()  — Insert into OCDR database tables
 """
 
 import os
@@ -23,6 +35,210 @@ import re
 from collections import Counter
 
 from app.import_engine.validation import parse_date, normalize_modality
+
+
+# ── File classification ─────────────────────────────────────────
+
+# Month abbreviations for matching monthly data files
+_MONTHS = {
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+}
+
+# Known Topaz file categories and their patterns
+TOPAZ_FILE_CATEGORIES = {
+    "monthly_billing": {
+        "description": "Monthly billing/transaction data",
+        "importance": "high",
+        "pattern": "MON[12]YYYY (e.g. JAN12025)",
+    },
+    "patient_master": {
+        "description": "Patient demographics and master records",
+        "importance": "high",
+        "files": ["patnt"],
+    },
+    "doctor_list": {
+        "description": "Physician/doctor reference list",
+        "importance": "medium",
+        "files": ["doclst"],
+    },
+    "insurance_list": {
+        "description": "Insurance carrier reference list",
+        "importance": "high",
+        "files": ["inslst", "ins", "ins4"],
+    },
+    "referring_list": {
+        "description": "Referring physician list",
+        "importance": "medium",
+        "files": ["reflst"],
+    },
+    "cpt_list": {
+        "description": "CPT/procedure code list",
+        "importance": "high",
+        "files": ["cptlst"],
+    },
+    "diagnosis_list": {
+        "description": "Diagnosis code list",
+        "importance": "medium",
+        "files": ["dxtlst"],
+    },
+    "pos_list": {
+        "description": "Place of service list",
+        "importance": "low",
+        "files": ["poslst"],
+    },
+    "patient_notes": {
+        "description": "Patient clinical/admin notes",
+        "importance": "medium",
+        "files": ["PtNote", "PtNote2", "PtEMG", "PtHosp", "PtPOS",
+                  "PtRMK", "PtSec", "PtStmnt", "PtTrack2"],
+    },
+    "schedule": {
+        "description": "Appointment schedule data",
+        "importance": "medium",
+        "files": ["schdlx2", "SchdlDiv"],
+    },
+    "daily": {
+        "description": "Daily transaction/activity logs",
+        "importance": "medium",
+        "prefix": "daily",
+    },
+    "requisitions": {
+        "description": "Requisition/order forms",
+        "importance": "low",
+        "prefix": "req",
+    },
+    "records": {
+        "description": "General record files",
+        "importance": "medium",
+        "files": ["rec"],
+    },
+    "kin": {
+        "description": "Next of kin / emergency contacts",
+        "importance": "low",
+        "files": ["KIN"],
+    },
+    "word_processing": {
+        "description": "Word processing templates",
+        "importance": "low",
+        "prefix": "WP",
+    },
+    "display_config": {
+        "description": "Display color/config files",
+        "importance": "skip",
+        "prefix": "clr",
+    },
+    "level_config": {
+        "description": "Access level configuration",
+        "importance": "low",
+        "prefix": "Level_",
+    },
+    "system_executable": {
+        "description": "System executable (skip)",
+        "importance": "skip",
+        "extensions": [".EXE", ".exe"],
+    },
+    "system_config": {
+        "description": "System configuration (skip)",
+        "importance": "skip",
+        "extensions": [".WN8", ".mcl", ".mcr", ".wn8"],
+    },
+}
+
+
+def classify_file(filename):
+    """Classify a Topaz file by its naming convention.
+
+    Returns dict with:
+        category (str), description (str), importance (str),
+        is_monthly (bool), month (str or None), year (int or None),
+        sequence (int or None)
+    """
+    basename = os.path.basename(filename)
+    name_upper = basename.upper()
+
+    # Check for system files by extension
+    _, ext = os.path.splitext(basename)
+    if ext:
+        for cat, info in TOPAZ_FILE_CATEGORIES.items():
+            if "extensions" in info and ext in info["extensions"]:
+                return {
+                    "category": cat,
+                    "description": info["description"],
+                    "importance": info["importance"],
+                    "is_monthly": False,
+                    "month": None,
+                    "year": None,
+                    "sequence": None,
+                }
+
+    # Check monthly billing pattern: MON[12]YYYY
+    m = re.match(r"^([A-Z]{3})([12])(\d{4})$", name_upper)
+    if m and m.group(1) in _MONTHS:
+        month_str, seq, year_str = m.group(1), int(m.group(2)), int(m.group(3))
+        if 1980 <= year_str <= 2099:
+            return {
+                "category": "monthly_billing",
+                "description": TOPAZ_FILE_CATEGORIES["monthly_billing"]["description"],
+                "importance": "high",
+                "is_monthly": True,
+                "month": month_str,
+                "year": year_str,
+                "sequence": seq,
+            }
+
+    # Check exact filename matches (case-insensitive)
+    for cat, info in TOPAZ_FILE_CATEGORIES.items():
+        if "files" in info:
+            for known in info["files"]:
+                if basename == known or name_upper == known.upper():
+                    return {
+                        "category": cat,
+                        "description": info["description"],
+                        "importance": info["importance"],
+                        "is_monthly": False,
+                        "month": None,
+                        "year": None,
+                        "sequence": None,
+                    }
+
+    # Check prefix matches
+    for cat, info in TOPAZ_FILE_CATEGORIES.items():
+        if "prefix" in info:
+            prefix = info["prefix"]
+            if basename.startswith(prefix) or name_upper.startswith(prefix.upper()):
+                return {
+                    "category": cat,
+                    "description": info["description"],
+                    "importance": info["importance"],
+                    "is_monthly": False,
+                    "month": None,
+                    "year": None,
+                    "sequence": None,
+                }
+
+    # Skip hidden files
+    if basename.startswith("."):
+        return {
+            "category": "hidden",
+            "description": "Hidden file (skip)",
+            "importance": "skip",
+            "is_monthly": False,
+            "month": None,
+            "year": None,
+            "sequence": None,
+        }
+
+    # Unknown
+    return {
+        "category": "unknown",
+        "description": "Unrecognized file — needs manual review",
+        "importance": "unknown",
+        "is_monthly": False,
+        "month": None,
+        "year": None,
+        "sequence": None,
+    }
 
 
 # ── Encoding detection ───────────────────────────────────────────
@@ -285,25 +501,114 @@ def hex_dump(file_path, num_bytes=512):
 def analyze_topaz_directory(dir_path):
     """Scan a directory of Topaz files and return analysis of each.
 
-    Returns list of analysis dicts sorted by file size (largest first).
+    Classifies files by naming convention and analyzes structure.
+    Returns list of analysis dicts sorted by importance then file size.
     """
     results = []
     if not os.path.isdir(dir_path):
         return results
 
+    importance_order = {"high": 0, "medium": 1, "low": 2, "unknown": 3, "skip": 4}
+
     for fname in os.listdir(dir_path):
         fpath = os.path.join(dir_path, fname)
-        if os.path.isfile(fpath):
-            try:
-                info = analyze_file(fpath)
-                info["filename"] = fname
-                results.append(info)
-            except Exception as e:
-                results.append({
-                    "filename": fname,
-                    "error": str(e),
-                    "file_size": os.path.getsize(fpath),
-                })
+        if not os.path.isfile(fpath):
+            continue
 
-    results.sort(key=lambda x: x.get("file_size", 0), reverse=True)
+        # Classify by name
+        classification = classify_file(fname)
+
+        # Skip system/config files for structural analysis
+        if classification["importance"] == "skip":
+            results.append({
+                "filename": fname,
+                "file_size": os.path.getsize(fpath),
+                "classification": classification,
+                "skipped": True,
+            })
+            continue
+
+        try:
+            info = analyze_file(fpath)
+            info["filename"] = fname
+            info["classification"] = classification
+            results.append(info)
+        except Exception as e:
+            results.append({
+                "filename": fname,
+                "error": str(e),
+                "file_size": os.path.getsize(fpath),
+                "classification": classification,
+            })
+
+    results.sort(key=lambda x: (
+        importance_order.get(x.get("classification", {}).get("importance", "unknown"), 3),
+        -(x.get("file_size", 0)),
+    ))
     return results
+
+
+def get_topaz_summary(dir_path):
+    """Get a high-level summary of Topaz files without full analysis.
+
+    Returns category counts, monthly file date ranges, and import priority.
+    """
+    if not os.path.isdir(dir_path):
+        return {"error": "Directory not found", "path": dir_path}
+
+    categories = Counter()
+    monthly_files = []
+    total_size = 0
+    file_count = 0
+
+    for fname in os.listdir(dir_path):
+        fpath = os.path.join(dir_path, fname)
+        if not os.path.isfile(fpath):
+            continue
+
+        file_count += 1
+        fsize = os.path.getsize(fpath)
+        total_size += fsize
+
+        classification = classify_file(fname)
+        categories[classification["category"]] += 1
+
+        if classification["is_monthly"]:
+            monthly_files.append({
+                "filename": fname,
+                "month": classification["month"],
+                "year": classification["year"],
+                "sequence": classification["sequence"],
+                "size": fsize,
+            })
+
+    # Sort monthly files chronologically
+    monthly_files.sort(key=lambda x: (x["year"], _MONTHS_LIST.index(x["month"])
+                                      if x["month"] in _MONTHS_LIST else 0,
+                                      x["sequence"]))
+
+    date_range = None
+    if monthly_files:
+        first = monthly_files[0]
+        last = monthly_files[-1]
+        date_range = {
+            "earliest": f"{first['month']} {first['year']}",
+            "latest": f"{last['month']} {last['year']}",
+            "total_months": len(monthly_files),
+        }
+
+    return {
+        "path": dir_path,
+        "file_count": file_count,
+        "total_size_bytes": total_size,
+        "categories": dict(categories),
+        "monthly_date_range": date_range,
+        "monthly_files": monthly_files,
+        "high_priority": [cat for cat, info in TOPAZ_FILE_CATEGORIES.items()
+                         if info["importance"] == "high"],
+    }
+
+
+# Ordered month list for sorting
+_MONTHS_LIST = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
