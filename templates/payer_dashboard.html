@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Payer Monitor{% endblock %}
+{% block page_title %}Payer Contract Monitor{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-graph-down-arrow"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Critical Alerts</div>
+                <div class="kpi-value text-accent-red" id="stat-critical">—</div>
+                <div class="kpi-sub">Revenue drop &gt; 50%</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Warning Alerts</div>
+                <div class="kpi-value text-accent-yellow" id="stat-warnings">—</div>
+                <div class="kpi-sub">Revenue drop &gt; 25%</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-building-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Carriers</div>
+                <div class="kpi-value" id="stat-carriers">—</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Revenue trend chart per carrier -->
+<div class="chart-card mb-4">
+    <div class="chart-header"><h6 class="mb-0 fw-semibold">Monthly Revenue by Top Carriers</h6></div>
+    <div class="chart-body" style="min-height:350px"><canvas id="payerTrendChart"></canvas></div>
+</div>
+
+<!-- Alerts table -->
+<div class="data-card mb-4">
+    <div class="card-header"><h6 class="mb-0 fw-semibold">Active Payer Alerts</h6></div>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Carrier</th>
+                    <th>Severity</th>
+                    <th>Revenue Change</th>
+                    <th>Volume Change</th>
+                    <th>Current Revenue</th>
+                    <th>Prior Avg Revenue</th>
+                </tr>
+            </thead>
+            <tbody id="alert-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/payer-monitor');
+
+    const critical = data.alerts.filter(a => a.severity === 'critical').length;
+    const warnings = data.alerts.filter(a => a.severity === 'warning').length;
+    document.getElementById('stat-critical').textContent = critical;
+    document.getElementById('stat-warnings').textContent = warnings;
+    document.getElementById('stat-carriers').textContent = Object.keys(data.carrier_data).length;
+
+    // Top 6 carriers by total revenue
+    const carrierTotals = {};
+    Object.entries(data.carrier_data).forEach(([carrier, months]) => {
+        carrierTotals[carrier] = months.reduce((s, m) => s + m.revenue, 0);
+    });
+    const topCarriers = Object.entries(carrierTotals).sort((a,b) => b[1] - a[1]).slice(0, 6).map(e => e[0]);
+
+    // Build datasets
+    const allMonths = new Set();
+    topCarriers.forEach(c => data.carrier_data[c].forEach(m => allMonths.add(m.month)));
+    const months = [...allMonths].sort();
+
+    const colors = ['#63b3ed','#a78bfa','#f472b6','#34d399','#fbbf24','#fb923c'];
+    const datasets = topCarriers.map((carrier, i) => {
+        const monthMap = {};
+        data.carrier_data[carrier].forEach(m => { monthMap[m.month] = m.revenue; });
+        return {
+            label: carrier,
+            data: months.map(m => monthMap[m] || 0),
+            borderColor: colors[i],
+            backgroundColor: 'transparent',
+            tension: 0.4,
+            borderWidth: 2,
+            pointRadius: 1,
+        };
+    });
+
+    new Chart(document.getElementById('payerTrendChart'), {
+        type: 'line',
+        data: { labels: months, datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: { legend: { position: 'top', labels: { color: '#94a3b8', boxWidth: 12, padding: 16 } }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + formatCurrency(ctx.raw) } } },
+            scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { ticks: { callback: v => '$'+(v/1000)+'K' } } }
+        }
+    });
+
+    // Alerts table
+    const tbody = document.getElementById('alert-table');
+    if (data.alerts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No active alerts</td></tr>';
+    } else {
+        tbody.innerHTML = data.alerts.map(a => `
+            <tr>
+                <td class="fw-semibold">${a.carrier}</td>
+                <td><span class="badge bg-${a.severity === 'critical' ? 'danger' : 'warning'}-subtle text-${a.severity === 'critical' ? 'danger' : 'warning'}-emphasis">${a.severity.toUpperCase()}</span></td>
+                <td class="text-accent-red fw-semibold">${a.revenue_change_pct.toFixed(1)}%</td>
+                <td class="${a.volume_change_pct < -25 ? 'text-accent-red' : ''}">${a.volume_change_pct.toFixed(1)}%</td>
+                <td>${formatCurrency(a.current_revenue)}</td>
+                <td>${formatCurrency(a.prior_avg_revenue)}</td>
+            </tr>
+        `).join('');
+    }
+});
+</script>
+{% endblock %}

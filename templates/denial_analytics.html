@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Denial Analytics{% endblock %}
+{% block page_title %}Denial Reason Code Analytics{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-xl-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Top Reason Codes by Frequency</h6></div>
+            <div class="chart-body"><canvas id="freqChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Top Reason Codes by Amount</h6></div>
+            <div class="chart-body"><canvas id="amountChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-xl-8">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Pareto Analysis (80/20 Rule)</h6></div>
+            <div class="chart-body"><canvas id="paretoChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">By Adjustment Group</h6></div>
+            <div class="chart-body chart-body-doughnut"><canvas id="groupChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- Trend -->
+<div class="row g-3 mb-4">
+    <div class="col-12">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Denial Trend by Month</h6></div>
+            <div class="chart-body"><canvas id="trendChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- Detail Table -->
+<div class="data-card">
+    <div class="card-header"><h6 class="mb-0 fw-semibold">Reason Code Reference</h6></div>
+    <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead><tr><th>Code</th><th>Description</th><th>Count</th><th>Total Amount</th></tr></thead>
+            <tbody id="ref-tbody"><tr><td colspan="4" class="text-center text-muted py-4">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', loadAll);
+
+async function loadAll() {
+    const [analytics, pareto, trend] = await Promise.all([
+        fetchJSON('/api/denial-analytics'), fetchJSON('/api/denial-analytics/pareto'), fetchJSON('/api/denial-analytics/trend'),
+    ]);
+
+    const colors = ['#63b3ed','#a78bfa','#f472b6','#34d399','#fbbf24','#fb923c','#f87171','#38bdf8','#c084fc','#4ade80'];
+
+    // Frequency chart
+    const freq = analytics.by_frequency || [];
+    if (freq.length) {
+        new Chart(document.getElementById('freqChart'), {
+            type: 'bar',
+            data: { labels: freq.map(d => d.reason_code), datasets: [{ data: freq.map(d => d.count), backgroundColor: colors, borderRadius: 6 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => freq[ctx.dataIndex].description + ': ' + ctx.raw } } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#94a3b8' } } }
+            }
+        });
+    }
+
+    // Amount chart
+    const amt = analytics.by_amount || [];
+    if (amt.length) {
+        new Chart(document.getElementById('amountChart'), {
+            type: 'bar',
+            data: { labels: amt.map(d => d.reason_code), datasets: [{ data: amt.map(d => d.total_amount), backgroundColor: colors, borderRadius: 6 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => amt[ctx.dataIndex].description + ': ' + formatCurrency(ctx.raw) } } },
+                scales: { x: { ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' } }, y: { ticks: { color: '#94a3b8' } } }
+            }
+        });
+    }
+
+    // Pareto
+    const p = pareto.pareto || [];
+    if (p.length) {
+        new Chart(document.getElementById('paretoChart'), {
+            type: 'bar',
+            data: { labels: p.map(d => d.reason_code), datasets: [
+                { label: 'Amount', data: p.map(d => d.amount), backgroundColor: '#63b3ed', borderRadius: 6, yAxisID: 'y' },
+                { label: 'Cumulative %', data: p.map(d => d.cumulative_pct), borderColor: '#f87171', type: 'line', tension: 0.4, pointRadius: 3, yAxisID: 'y1' },
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#63b3ed', callback: v => '$' + (v/1000).toFixed(0) + 'K' } }, y1: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { color: '#f87171', callback: v => v + '%' } } }
+            }
+        });
+    }
+
+    // Group doughnut
+    const grp = analytics.by_group || [];
+    if (grp.length) {
+        const grpColors = { CO: '#63b3ed', PR: '#f87171', OA: '#fbbf24', PI: '#a78bfa', CR: '#34d399' };
+        new Chart(document.getElementById('groupChart'), {
+            type: 'doughnut',
+            data: { labels: grp.map(d => d.group_code), datasets: [{ data: grp.map(d => d.count), backgroundColor: grp.map(d => grpColors[d.group_code] || '#94a3b8'), borderWidth: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', usePointStyle: true } } } }
+        });
+    }
+
+    // Trend
+    if (trend.length) {
+        new Chart(document.getElementById('trendChart'), {
+            type: 'line',
+            data: { labels: trend.map(d => d.month), datasets: [
+                { label: 'CO', data: trend.map(d => d.CO), borderColor: '#63b3ed', tension: 0.4, fill: false },
+                { label: 'PR', data: trend.map(d => d.PR), borderColor: '#f87171', tension: 0.4, fill: false },
+                { label: 'OA', data: trend.map(d => d.OA), borderColor: '#fbbf24', tension: 0.4, fill: false },
+                { label: 'Total', data: trend.map(d => d.total), borderColor: '#94a3b8', borderDash: [5,5], tension: 0.4, fill: false },
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#64748b' } } }
+            }
+        });
+    }
+
+    // Ref table
+    document.getElementById('ref-tbody').innerHTML = freq.map(d => `<tr>
+        <td><code>${d.reason_code}</code></td><td>${d.description}</td>
+        <td>${d.count}</td><td>${formatCurrency(d.total_amount)}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="text-center text-muted">No data — upload 835 files first</td></tr>';
+}
+</script>
+{% endblock %}

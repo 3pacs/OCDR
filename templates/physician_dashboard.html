@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Physicians{% endblock %}
+{% block page_title %}Referring Physician Analytics{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Top 10 Physicians by Revenue</h6></div>
+            <div class="chart-body" style="min-height:350px"><canvas id="physicianChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Revenue Share (Top 10)</h6></div>
+            <div class="chart-body chart-body-doughnut"><canvas id="physicianPieChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Physician Rankings</h6>
+        <span class="text-muted small">Top 30 by revenue</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Physician</th>
+                    <th>Revenue</th>
+                    <th>Claims</th>
+                    <th>Avg Payment</th>
+                    <th>% of Total</th>
+                    <th>Share</th>
+                </tr>
+            </thead>
+            <tbody id="physician-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/physicians?limit=30');
+    const top10 = data.slice(0, 10);
+    const colors = ['#63b3ed','#a78bfa','#f472b6','#34d399','#fbbf24','#fb923c','#38bdf8','#c084fc','#f87171','#4ade80'];
+
+    // Bar chart
+    new Chart(document.getElementById('physicianChart'), {
+        type: 'bar',
+        data: {
+            labels: top10.map(d => d.name.length > 20 ? d.name.substring(0,20)+'...' : d.name),
+            datasets: [{ data: top10.map(d => d.revenue), backgroundColor: colors, borderRadius: 6 }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => formatCurrency(ctx.raw) + ' (' + top10[ctx.dataIndex].claim_count + ' claims)' } } },
+            scales: { x: { ticks: { callback: v => '$'+(v/1000)+'K' } }, y: { ticks: { font: { weight: 500 } } } }
+        }
+    });
+
+    // Pie chart
+    new Chart(document.getElementById('physicianPieChart'), {
+        type: 'doughnut',
+        data: {
+            labels: top10.map(d => d.name),
+            datasets: [{ data: top10.map(d => d.revenue), backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', usePointStyle: true, padding: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => ctx.label + ': ' + formatCurrency(ctx.raw) + ' (' + top10[ctx.dataIndex].pct_of_total + '%)' } } } }
+    });
+
+    // Table
+    const tbody = document.getElementById('physician-table');
+    tbody.innerHTML = data.map((r, i) => `
+        <tr>
+            <td class="text-muted">${i + 1}</td>
+            <td class="fw-semibold">${r.name}</td>
+            <td class="text-accent-green fw-semibold">${formatCurrency(r.revenue)}</td>
+            <td>${formatNumber(r.claim_count)}</td>
+            <td>$${r.avg_payment.toFixed(2)}</td>
+            <td>${r.pct_of_total}%</td>
+            <td>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress-thin flex-grow-1" style="width:80px">
+                        <div class="bar bg-gradient-blue" style="width:${Math.min(100, r.pct_of_total * 3)}%"></div>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+});
+</script>
+{% endblock %}

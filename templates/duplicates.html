@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Duplicates{% endblock %}
+{% block page_title %}Duplicate Claim Detector{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-files"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Potential Duplicates</div>
+                <div class="kpi-value" id="stat-count">—</div>
+                <div class="kpi-sub">C.A.P exceptions excluded</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-info-circle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Detection Rule</div>
+                <div class="kpi-value" style="font-size:1rem">Patient + Date + Scan + Modality</div>
+                <div class="kpi-sub">Same combination appearing more than once</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="data-card">
+    <div class="card-header"><h6 class="mb-0 fw-semibold">Duplicate Groups</h6></div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Service Date</th>
+                    <th>Scan Type</th>
+                    <th>Modality</th>
+                    <th>Occurrences</th>
+                </tr>
+            </thead>
+            <tbody id="dup-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/duplicates');
+
+    document.getElementById('stat-count').textContent = formatNumber(data.total);
+
+    const tbody = document.getElementById('dup-table');
+    if (data.items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state"><i class="bi bi-check-circle"></i>No duplicate claims detected</td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.items.map(r => `
+        <tr>
+            <td class="fw-medium">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.scan_type}</td>
+            <td><span class="badge bg-primary-subtle text-primary-emphasis">${r.modality}</span></td>
+            <td><span class="badge bg-warning-subtle text-warning-emphasis">${r.count}x</span></td>
+        </tr>
+    `).join('');
+});
+</script>
+{% endblock %}

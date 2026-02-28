@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}PSMA PET Tracking{% endblock %}
+{% block page_title %}PSMA PET Tracking{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-radioactive"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">PSMA Scans</div>
+                <div class="kpi-value" id="kpi-count">—</div>
+                <div class="kpi-sub">total volume</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">PSMA Revenue</div>
+                <div class="kpi-value" id="kpi-revenue">—</div>
+                <div class="kpi-sub" id="kpi-avg-sub">avg per scan</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Premium vs Standard</div>
+                <div class="kpi-value" id="kpi-premium">—</div>
+                <div class="kpi-sub">per scan premium</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-clipboard2-pulse-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Standard PET</div>
+                <div class="kpi-value" id="kpi-std-count">—</div>
+                <div class="kpi-sub" id="kpi-std-avg-sub">avg per scan</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">PSMA Volume by Year</h6></div>
+            <div class="chart-body"><canvas id="yearChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Top Referring Physicians</h6></div>
+            <div class="chart-body"><canvas id="physChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- Carrier Table -->
+<div class="data-card">
+    <div class="card-header"><h6 class="mb-0 fw-semibold">PSMA Reimbursement by Carrier</h6></div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead><tr><th>Carrier</th><th>Count</th><th>Revenue</th><th>Avg Payment</th></tr></thead>
+            <tbody id="carrier-tbody"><tr><td colspan="4" class="text-center text-muted py-4">Loading...</td></tr></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', loadAll);
+
+async function loadAll() {
+    const [summary, byYear, byPhys, byCarrier] = await Promise.all([
+        fetchJSON('/api/psma'), fetchJSON('/api/psma/by-year'),
+        fetchJSON('/api/psma/by-physician'), fetchJSON('/api/psma/by-carrier'),
+    ]);
+
+    document.getElementById('kpi-count').textContent = formatNumber(summary.psma.count);
+    document.getElementById('kpi-revenue').textContent = formatCurrency(summary.psma.revenue);
+    document.getElementById('kpi-avg-sub').textContent = formatCurrency(summary.psma.avg_reimbursement) + ' avg';
+    document.getElementById('kpi-premium').textContent = formatCurrency(summary.premium_per_scan);
+    document.getElementById('kpi-std-count').textContent = formatNumber(summary.standard_pet.count);
+    document.getElementById('kpi-std-avg-sub').textContent = formatCurrency(summary.standard_pet.avg_reimbursement) + ' avg';
+
+    // Year chart
+    if (byYear.length) {
+        new Chart(document.getElementById('yearChart'), {
+            type: 'bar',
+            data: { labels: byYear.map(d => d.year), datasets: [
+                { label: 'Scans', data: byYear.map(d => d.count), backgroundColor: '#a78bfa', borderRadius: 6, yAxisID: 'y' },
+                { label: 'Revenue', data: byYear.map(d => d.revenue), borderColor: '#34d399', type: 'line', tension: 0.4, yAxisID: 'y1', pointRadius: 4 },
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#a78bfa' } }, y1: { position: 'right', grid: { display: false }, ticks: { color: '#34d399', callback: v => '$' + (v/1000).toFixed(0) + 'K' } } }
+            }
+        });
+    }
+
+    // Physician chart
+    if (byPhys.length) {
+        new Chart(document.getElementById('physChart'), {
+            type: 'bar',
+            data: { labels: byPhys.map(d => d.physician), datasets: [{ data: byPhys.map(d => d.count), backgroundColor: '#63b3ed', borderRadius: 6 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#94a3b8' } } }
+            }
+        });
+    }
+
+    // Carrier table
+    const tbody = document.getElementById('carrier-tbody');
+    tbody.innerHTML = byCarrier.map(c => `<tr>
+        <td class="fw-semibold">${c.carrier}</td><td>${c.count}</td>
+        <td class="text-accent-green">${formatCurrency(c.revenue)}</td>
+        <td>${formatCurrency(c.avg_payment)}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="text-center text-muted">No PSMA data</td></tr>';
+}
+</script>
+{% endblock %}

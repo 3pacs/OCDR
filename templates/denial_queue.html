@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Denial Queue{% endblock %}
+{% block page_title %}Denial Tracking & Appeal Queue{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Denied</div>
+                <div class="kpi-value" id="kpi-total">—</div>
+                <div class="kpi-sub">$0 payment claims</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Recoverable Value</div>
+                <div class="kpi-value" id="kpi-recoverable">—</div>
+                <div class="kpi-sub">weighted by age</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-send-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Appealed</div>
+                <div class="kpi-value" id="kpi-appealed">—</div>
+                <div class="kpi-sub">in progress</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-check2-all"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Resolved</div>
+                <div class="kpi-value" id="kpi-resolved">—</div>
+                <div class="kpi-sub">recovered</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="filter-bar">
+    <select class="form-select" id="filter-carrier" onchange="loadQueue()">
+        <option value="">All Carriers</option>
+    </select>
+    <select class="form-select" id="filter-status" onchange="loadQueue()">
+        <option value="">All Statuses</option>
+        <option value="DENIED">Denied</option>
+        <option value="APPEALED">Appealed</option>
+        <option value="RESOLVED">Resolved</option>
+        <option value="WRITTEN_OFF">Written Off</option>
+    </select>
+    <select class="form-select" id="filter-sort" onchange="loadQueue()">
+        <option value="recoverability">By Recoverability</option>
+        <option value="amount">By Amount</option>
+        <option value="age">By Age (newest)</option>
+    </select>
+    <button class="btn btn-sm btn-outline-warning" onclick="bulkAppeal()">
+        <i class="bi bi-send me-1"></i>Bulk Appeal Selected
+    </button>
+</div>
+
+<!-- Denial Table -->
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Denial Queue</h6>
+        <span class="text-muted small" id="queue-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="select-all" onchange="toggleAll(this)"></th>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Carrier</th>
+                    <th>Modality</th>
+                    <th>Est. Value</th>
+                    <th>Recovery Score</th>
+                    <th>Days Old</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="queue-tbody">
+                <tr><td colspan="10" class="text-center text-muted py-4">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex justify-content-between align-items-center p-3">
+        <button class="btn btn-sm btn-outline-light" id="btn-prev" onclick="changePage(-1)" disabled>&laquo; Prev</button>
+        <span class="text-muted small" id="page-info"></span>
+        <button class="btn btn-sm btn-outline-light" id="btn-next" onclick="changePage(1)" disabled>Next &raquo;</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPage = 1;
+const perPage = 50;
+let selectedIds = new Set();
+
+document.addEventListener('DOMContentLoaded', () => { loadCarriers(); loadQueue(); });
+
+async function loadCarriers() {
+    const data = await fetchJSON('/api/dashboard/revenue-by-carrier');
+    const sel = document.getElementById('filter-carrier');
+    data.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.carrier; opt.textContent = c.carrier;
+        sel.appendChild(opt);
+    });
+}
+
+async function loadQueue() {
+    const carrier = document.getElementById('filter-carrier').value;
+    const status = document.getElementById('filter-status').value;
+    const sort = document.getElementById('filter-sort').value;
+    let url = `/api/denials/queue?page=${currentPage}&per_page=${perPage}&sort=${sort}`;
+    if (carrier) url += '&carrier=' + encodeURIComponent(carrier);
+    if (status) url += '&status=' + status;
+
+    const data = await fetchJSON(url);
+    renderQueue(data);
+
+    const summary = data.summary || {};
+    const byStatus = summary.by_status || {};
+    document.getElementById('kpi-total').textContent = formatNumber(summary.total_denied || data.total);
+    document.getElementById('kpi-recoverable').textContent = formatCurrency(summary.total_recoverable || 0);
+    document.getElementById('kpi-appealed').textContent = formatNumber(byStatus.APPEALED || 0);
+    document.getElementById('kpi-resolved').textContent = formatNumber((byStatus.RESOLVED || 0) + (byStatus.WRITTEN_OFF || 0));
+}
+
+function renderQueue(data) {
+    const tbody = document.getElementById('queue-tbody');
+    document.getElementById('queue-count').textContent = formatNumber(data.total) + ' claims';
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-5"><div class="empty-state"><i class="bi bi-clipboard-check"></i><p>No denied claims in the queue. Import billing data to find denials.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.items.map(r => {
+        const score = r.recoverability_score || 0;
+        const scoreColor = score > 500 ? 'text-accent-green' : score > 200 ? 'text-warning' : 'text-accent-red';
+        return `<tr>
+            <td><input type="checkbox" value="${r.id}" onchange="toggleSelect(${r.id}, this.checked)"></td>
+            <td class="fw-semibold">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.insurance_carrier}</td>
+            <td>${r.modality}</td>
+            <td class="fw-semibold">${formatCurrency(r.estimated_value || 0)}</td>
+            <td class="${scoreColor} fw-semibold">${formatCurrency(score)}</td>
+            <td>${r.days_old}d</td>
+            <td>${statusBadge(r.denial_status)}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-warning me-1" onclick="appealOne(${r.id})" title="Appeal"><i class="bi bi-send"></i></button>
+                <button class="btn btn-sm btn-outline-success" onclick="resolveOne(${r.id})" title="Resolve"><i class="bi bi-check-lg"></i></button>
+            </td>
+        </tr>`;
+    }).join('');
+    document.getElementById('page-info').textContent = 'Page ' + data.page + ' of ' + Math.max(data.pages, 1);
+    document.getElementById('btn-prev').disabled = currentPage <= 1;
+    document.getElementById('btn-next').disabled = currentPage >= data.pages;
+}
+
+function statusBadge(s) {
+    const map = { DENIED:'background:rgba(248,113,113,0.15);color:#f87171', APPEALED:'background:rgba(251,191,36,0.15);color:#fbbf24', RESOLVED:'background:rgba(52,211,153,0.15);color:#34d399', WRITTEN_OFF:'background:rgba(148,163,184,0.15);color:#94a3b8' };
+    return `<span class="badge-status" style="${map[s] || ''}">${s || 'DENIED'}</span>`;
+}
+
+function toggleAll(cb) { document.querySelectorAll('#queue-tbody input[type=checkbox]').forEach(c => { c.checked = cb.checked; toggleSelect(parseInt(c.value), cb.checked); }); }
+function toggleSelect(id, checked) { checked ? selectedIds.add(id) : selectedIds.delete(id); }
+
+async function appealOne(id) {
+    await fetch(`/api/denials/${id}/appeal`, { method:'POST' });
+    showToast('Claim appealed', 'success');
+    loadQueue();
+}
+async function resolveOne(id) {
+    await fetch(`/api/denials/${id}/resolve`, { method:'POST', headers:{'Content-Type':'application/json'}, body:'{"resolution":"RESOLVED"}' });
+    showToast('Claim resolved', 'success');
+    loadQueue();
+}
+async function bulkAppeal() {
+    if (!selectedIds.size) { showToast('Select claims first', 'warning'); return; }
+    await fetch('/api/denials/bulk-appeal', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ids: [...selectedIds]}) });
+    showToast(selectedIds.size + ' claims appealed', 'success');
+    selectedIds.clear();
+    loadQueue();
+}
+function changePage(d) { currentPage = Math.max(1, currentPage + d); loadQueue(); }
+</script>
+{% endblock %}

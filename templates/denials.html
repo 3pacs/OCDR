@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Denials{% endblock %}
+{% block page_title %}Denial Tracking & Appeal Queue{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-x-octagon-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Denied</div>
+                <div class="kpi-value" id="stat-total">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-hourglass-split"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Pending Appeal</div>
+                <div class="kpi-value" id="stat-pending">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-cash-stack"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Estimated Recoverable</div>
+                <div class="kpi-value" id="stat-recoverable">—</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3 mb-4">
+    <div class="col-lg-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Denials by Reason Code</h6></div>
+            <div class="chart-body"><canvas id="denialReasonChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Denials by Carrier</h6></div>
+            <div class="chart-body"><canvas id="denialCarrierChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Appeal Priority Queue</h6>
+        <span class="text-muted small">Sorted by recoverability score</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Carrier</th>
+                    <th>Modality</th>
+                    <th>Est. Value</th>
+                    <th>Days Old</th>
+                    <th>Reason</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                </tr>
+            </thead>
+            <tbody id="denial-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/denials?per_page=200');
+
+    document.getElementById('stat-total').textContent = formatNumber(data.total);
+
+    const pending = data.items.filter(d => d.denial_status === 'DENIED').length;
+    document.getElementById('stat-pending').textContent = formatNumber(pending);
+
+    const recoverable = data.items.reduce((s, d) => s + d.recoverability_score, 0);
+    document.getElementById('stat-recoverable').textContent = formatCurrency(recoverable);
+
+    // Reason code breakdown
+    const reasons = {};
+    data.items.forEach(d => {
+        const r = d.denial_reason_code || 'Unknown';
+        reasons[r] = (reasons[r] || 0) + 1;
+    });
+    const reasonLabels = Object.keys(reasons).sort((a,b) => reasons[b] - reasons[a]);
+    const colors = ['#f87171','#fb923c','#fbbf24','#34d399','#63b3ed','#a78bfa','#f472b6'];
+
+    new Chart(document.getElementById('denialReasonChart'), {
+        type: 'bar',
+        data: {
+            labels: reasonLabels,
+            datasets: [{ data: reasonLabels.map(r => reasons[r]), backgroundColor: colors, borderRadius: 6 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+
+    // Carrier breakdown
+    const carriers = {};
+    data.items.forEach(d => { carriers[d.insurance_carrier] = (carriers[d.insurance_carrier] || 0) + 1; });
+    const cLabels = Object.keys(carriers).sort((a,b) => carriers[b] - carriers[a]).slice(0, 8);
+
+    new Chart(document.getElementById('denialCarrierChart'), {
+        type: 'doughnut',
+        data: {
+            labels: cLabels,
+            datasets: [{ data: cLabels.map(c => carriers[c]), backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', usePointStyle: true, padding: 16 } } } }
+    });
+
+    // Table sorted by recoverability
+    const sorted = data.items.sort((a, b) => b.recoverability_score - a.recoverability_score);
+    const tbody = document.getElementById('denial-table');
+    if (!sorted.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center py-5"><div class="empty-state"><i class="bi bi-shield-check"></i><p>No denied claims found. Import billing data to see denials.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = sorted.slice(0, 100).map(r => `
+        <tr>
+            <td class="fw-medium">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.insurance_carrier}</td>
+            <td><span class="badge bg-primary-subtle text-primary-emphasis">${r.modality}</span></td>
+            <td class="fw-semibold">${formatCurrency(r.estimated_value)}</td>
+            <td>${r.days_old}d</td>
+            <td><code>${r.denial_reason_code || '—'}</code></td>
+            <td>${statusBadge(r.denial_status)}</td>
+            <td>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress-thin flex-grow-1" style="width:50px">
+                        <div class="bar ${r.recoverability_score > r.estimated_value * 0.5 ? 'bg-gradient-green' : 'bg-gradient-red'}" style="width:${Math.min(100, r.recoverability_score / r.estimated_value * 100)}%"></div>
+                    </div>
+                    <span class="small">${formatCurrency(r.recoverability_score)}</span>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+});
+</script>
+{% endblock %}
