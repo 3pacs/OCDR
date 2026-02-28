@@ -59,6 +59,13 @@
                 </a>
             </li>
 
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.aging_page' %}active{% endif %}" href="/aging">
+                    <i class="bi bi-hourglass-split"></i>
+                    <span>Claims Aging</span>
+                </a>
+            </li>
+
             <li class="nav-section-label">835 ERA</li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'ui.era_payments_page' %}active{% endif %}" href="/era-payments">
@@ -96,6 +103,12 @@
                 <a class="nav-link {% if request.endpoint == 'ui.schedule_page' %}active{% endif %}" href="/schedule">
                     <i class="bi bi-calendar3"></i>
                     <span>Schedule Viewer</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.schedule_calendar_page' %}active{% endif %}" href="/schedules">
+                    <i class="bi bi-calendar-week-fill"></i>
+                    <span>Calendar View</span>
                 </a>
             </li>
 
@@ -150,6 +163,14 @@
                 <a class="nav-link {% if request.endpoint == 'ui.smart_matching_page' %}active{% endif %}" href="/smart-matching">
                     <i class="bi bi-stars"></i>
                     <span>Learning Analytics</span>
+                </a>
+            </li>
+
+            <li class="nav-section-label">AI Assistant</li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.chat_page' %}active{% endif %}" href="/chat">
+                    <i class="bi bi-chat-dots-fill"></i>
+                    <span>Chat with Data</span>
                 </a>
             </li>
 

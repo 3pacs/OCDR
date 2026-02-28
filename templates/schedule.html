@@ -11,9 +11,24 @@
         <code class="small text-muted" id="import-folder-path">—</code>
         <span class="badge bg-info-subtle text-info-emphasis small" id="pending-files-badge" style="display:none;"></span>
     </div>
+    <button class="btn btn-sm btn-outline-info me-1" onclick="document.getElementById('ocr-upload-input').click()">
+        <i class="bi bi-filetype-pdf me-1"></i> OCR Import
+    </button>
+    <input type="file" id="ocr-upload-input" accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx,.xls,.txt" multiple style="display:none" onchange="handleOcrUpload(this.files)">
     <button class="btn btn-sm btn-outline-light" id="btn-import" disabled onclick="runImport()">
         <i class="bi bi-cloud-upload me-1"></i> Import Files
     </button>
+</div>
+
+<!-- OCR Upload Progress -->
+<div id="ocr-progress" class="mb-3" style="display:none">
+    <div class="data-card padded">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="fw-semibold mb-0"><i class="bi bi-eye me-1"></i>OCR Import Progress</h6>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('ocr-progress').style.display='none'"><i class="bi bi-x"></i></button>
+        </div>
+        <div id="ocr-progress-body"></div>
+    </div>
 </div>
 
 <!-- KPI Cards (clickable to filter table) -->
@@ -141,7 +156,10 @@
 <div class="data-card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h6 class="mb-0 fw-semibold">Schedule Records</h6>
-        <span class="text-muted small" id="table-count"></span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-muted small" id="table-count"></span>
+            <button class="btn btn-sm btn-outline-success" onclick="openAddEntry()"><i class="bi bi-plus-lg me-1"></i>Add</button>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-dark table-striped table-hover mb-0" id="schedule-table">
@@ -155,6 +173,7 @@
                     <th data-sort="doctor" data-bs-toggle="tooltip" title="Ordering/referring physician">Doctor</th>
                     <th data-sort="insurance" data-bs-toggle="tooltip" title="Patient's insurance carrier">Insurance</th>
                     <th data-sort="status" data-bs-toggle="tooltip" title="SCHEDULED=Upcoming, COMPLETED=Done, CANCELLED=Cancelled, NO_SHOW=Patient did not show">Status</th>
+                    <th style="width:40px"></th>
                 </tr>
             </thead>
             <tbody id="schedule-tbody">
@@ -478,7 +497,7 @@ async function loadTable() {
     const tbody = document.getElementById('schedule-tbody');
 
     if (data.items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><i class="bi bi-calendar-x fs-3 d-block mb-2"></i>No schedule records found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4"><i class="bi bi-calendar-x fs-3 d-block mb-2"></i>No schedule records found</td></tr>';
     } else {
         tbody.innerHTML = data.items.map(r => `
             <tr>
@@ -490,6 +509,7 @@ async function loadTable() {
                 <td>${escapeHtml(r.referring_doctor || '—')}</td>
                 <td>${escapeHtml(r.insurance_carrier || '—')}</td>
                 <td>${schedStatusBadge(r.status)}</td>
+                <td><button class="btn btn-sm btn-link p-0" onclick="editScheduleEntry(${r.id})" title="Edit"><i class="bi bi-pencil-square"></i></button></td>
             </tr>
         `).join('');
     }
@@ -543,6 +563,156 @@ function filterFromKpi(modality, status) {
     loadTable();
     // Scroll to the table
     document.getElementById('schedule-table').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ── OCR File Upload ──────────────────────────────────── */
+async function handleOcrUpload(files) {
+    if (!files || files.length === 0) return;
+    const progressDiv = document.getElementById('ocr-progress');
+    const progressBody = document.getElementById('ocr-progress-body');
+    progressDiv.style.display = '';
+    progressBody.innerHTML = '';
+
+    for (const file of files) {
+        const fileId = 'upload-' + Date.now() + '-' + Math.random().toString(36).slice(2,6);
+        progressBody.insertAdjacentHTML('beforeend',
+            `<div id="${fileId}" class="d-flex align-items-center gap-2 mb-2">
+                <span class="spinner-border spinner-border-sm text-info"></span>
+                <span class="small">${escapeHtml(file.name)}</span>
+                <span class="small text-muted ms-auto" id="${fileId}-status">Uploading...</span>
+            </div>`);
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const resp = await fetch('/api/import/smart', { method: 'POST', body: formData });
+            const data = await resp.json();
+            const statusEl = document.getElementById(fileId + '-status');
+            const rowEl = document.getElementById(fileId);
+
+            if (data.error) {
+                statusEl.textContent = 'Error: ' + data.error;
+                statusEl.className = 'small text-danger ms-auto';
+                rowEl.querySelector('.spinner-border').className = 'bi bi-x-circle text-danger';
+            } else {
+                const count = data.records_imported || data.imported || data.matched || 0;
+                statusEl.textContent = count + ' records imported';
+                statusEl.className = 'small text-success ms-auto';
+                rowEl.querySelector('.spinner-border').className = 'bi bi-check-circle-fill text-success';
+            }
+        } catch (e) {
+            const statusEl = document.getElementById(fileId + '-status');
+            statusEl.textContent = 'Failed: ' + e.message;
+            statusEl.className = 'small text-danger ms-auto';
+        }
+    }
+
+    // Refresh schedule data after import
+    loadAll();
+    document.getElementById('ocr-upload-input').value = '';
+}
+
+/* ── Inline Edit Schedule Entry ───────────────────────── */
+async function editScheduleEntry(id) {
+    try {
+        const data = await fetchJSON('/api/import/schedule/entries/' + id);
+        if (data.error) { showToast(data.error, 'error'); return; }
+        const e = data;
+        let html = '<form id="edit-sched-form">';
+        html += '<input type="hidden" name="id" value="' + id + '">';
+        html += '<div class="row g-2 mb-2">';
+        html += '<div class="col-md-6"><label class="form-label small">Patient Name</label><input type="text" class="form-control form-control-sm" name="patient_name" value="' + escapeHtml(e.patient_name || '') + '"></div>';
+        html += '<div class="col-md-3"><label class="form-label small">Date</label><input type="date" class="form-control form-control-sm" name="scheduled_date" value="' + (e.scheduled_date || '') + '"></div>';
+        html += '<div class="col-md-3"><label class="form-label small">Time</label><input type="text" class="form-control form-control-sm" name="scheduled_time" value="' + escapeHtml(e.scheduled_time || '') + '"></div>';
+        html += '</div><div class="row g-2 mb-2">';
+        html += '<div class="col-md-3"><label class="form-label small">Modality</label><select class="form-select form-select-sm" name="modality"><option value="">--</option>';
+        for (const m of ['HMRI','CT','PET','OPEN','DX','BONE','GH']) {
+            html += '<option value="' + m + '"' + (e.modality === m ? ' selected' : '') + '>' + m + '</option>';
+        }
+        html += '</select></div>';
+        html += '<div class="col-md-3"><label class="form-label small">Scan Type</label><input type="text" class="form-control form-control-sm" name="scan_type" value="' + escapeHtml(e.scan_type || '') + '"></div>';
+        html += '<div class="col-md-3"><label class="form-label small">Doctor</label><input type="text" class="form-control form-control-sm" name="referring_doctor" value="' + escapeHtml(e.referring_doctor || '') + '"></div>';
+        html += '<div class="col-md-3"><label class="form-label small">Insurance</label><input type="text" class="form-control form-control-sm" name="insurance_carrier" value="' + escapeHtml(e.insurance_carrier || '') + '"></div>';
+        html += '</div><div class="row g-2 mb-2">';
+        html += '<div class="col-md-3"><label class="form-label small">Status</label><select class="form-select form-select-sm" name="status">';
+        for (const s of ['SCHEDULED','COMPLETED','CANCELLED','NO_SHOW']) {
+            html += '<option value="' + s + '"' + (e.status === s ? ' selected' : '') + '>' + s + '</option>';
+        }
+        html += '</select></div>';
+        html += '<div class="col-md-9"><label class="form-label small">Notes</label><input type="text" class="form-control form-control-sm" name="notes" value="' + escapeHtml(e.notes || '') + '"></div>';
+        html += '</div>';
+        html += '<div class="text-end mt-2"><button type="submit" class="btn btn-sm btn-primary">Save</button> <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteScheduleEntry(' + id + ')">Delete</button></div>';
+        html += '</form>';
+        showExpandModal('Edit Schedule Entry #' + id, html);
+        document.getElementById('edit-sched-form').addEventListener('submit', async function(ev) {
+            ev.preventDefault();
+            const fd = new FormData(this);
+            const body = {};
+            fd.forEach((v, k) => { if (k !== 'id') body[k] = v; });
+            try {
+                const resp = await fetch('/api/import/schedule/entries/' + id, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body),
+                });
+                const result = await resp.json();
+                if (result.error) { showToast(result.error, 'error'); return; }
+                closeExpandModal();
+                loadTable();
+                showToast('Entry updated', 'success');
+            } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
+        });
+    } catch (e) { showToast('Load failed: ' + e.message, 'error'); }
+}
+
+async function deleteScheduleEntry(id) {
+    if (!confirm('Delete this schedule entry?')) return;
+    try {
+        await fetch('/api/import/schedule/entries/' + id, { method: 'DELETE' });
+        closeExpandModal();
+        loadTable();
+        showToast('Entry deleted', 'info');
+    } catch (e) { showToast('Delete failed', 'error'); }
+}
+
+/* ── Add New Entry ────────────────────────────────────── */
+function openAddEntry() {
+    let html = '<form id="add-sched-form">';
+    html += '<div class="row g-2 mb-2">';
+    html += '<div class="col-md-6"><label class="form-label small">Patient Name</label><input type="text" class="form-control form-control-sm" name="patient_name" required></div>';
+    html += '<div class="col-md-3"><label class="form-label small">Date</label><input type="date" class="form-control form-control-sm" name="scheduled_date" required value="' + new Date().toISOString().slice(0,10) + '"></div>';
+    html += '<div class="col-md-3"><label class="form-label small">Time</label><input type="text" class="form-control form-control-sm" name="scheduled_time" placeholder="09:00"></div>';
+    html += '</div><div class="row g-2 mb-2">';
+    html += '<div class="col-md-3"><label class="form-label small">Modality</label><select class="form-select form-select-sm" name="modality"><option value="">--</option>';
+    for (const m of ['HMRI','CT','PET','OPEN','DX','BONE','GH']) html += '<option value="' + m + '">' + m + '</option>';
+    html += '</select></div>';
+    html += '<div class="col-md-3"><label class="form-label small">Scan Type</label><input type="text" class="form-control form-control-sm" name="scan_type"></div>';
+    html += '<div class="col-md-3"><label class="form-label small">Doctor</label><input type="text" class="form-control form-control-sm" name="referring_doctor"></div>';
+    html += '<div class="col-md-3"><label class="form-label small">Insurance</label><input type="text" class="form-control form-control-sm" name="insurance_carrier"></div>';
+    html += '</div>';
+    html += '<div class="text-end mt-2"><button type="submit" class="btn btn-sm btn-primary">Add Entry</button></div>';
+    html += '</form>';
+    showExpandModal('Add Schedule Entry', html);
+    document.getElementById('add-sched-form').addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        const fd = new FormData(this);
+        const body = {};
+        fd.forEach((v, k) => body[k] = v);
+        body.status = 'SCHEDULED';
+        try {
+            const resp = await fetch('/api/import/schedule/entries', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            const result = await resp.json();
+            if (result.error) { showToast(result.error, 'error'); return; }
+            closeExpandModal();
+            loadAll();
+            showToast('Entry added', 'success');
+        } catch (e) { showToast('Add failed: ' + e.message, 'error'); }
+    });
 }
 
 /* ── Patient name click → expand profile ──────────────── */

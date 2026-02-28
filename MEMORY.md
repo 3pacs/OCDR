@@ -17,7 +17,8 @@
 
 ## Topaz Legacy System
 
-- **What:** Bespoke DOS-era software from the 1980s, name "Topaz"
+- **What:** Bespoke .NET application (originally DOS-era, now .NET), name "Topaz"
+- **Platform:** .NET (Windows), data storage local on X:\ drive
 - **Storage:** Flat text files, NOT a real database
 - **Location:** X:\tpzservr\ (giant files, mostly raw data)
 - **File extensions:** NONE — files have no .txt/.dat/.csv extension, just bare names
@@ -38,10 +39,10 @@
 
 - Sprints 1-10: COMPLETE (core billing, ERA, matching, smart matching)
 - Sprint 11: 15% (lookup tables exist, migrations not initialized)
-- Sprint 12: 40% (8 issues fixed this session, see below)
-- Sprint 13: 70% (query engine + chat working, Ollama untested)
-- Sprint 14: 20% (scaffolded, not wired to UI)
-- Sprint 15: 5% (Flask-Login wired, User model exists, but auth not enforced)
+- Sprint 12: 90% (all perf/security fixes done, only benchmark tests remain)
+- Sprint 13: 95% (query engine + chat UI + AI logs + PHI encryption all working)
+- Sprint 14: 90% (appeal letters, aging report, claim lifecycle all implemented)
+- Sprint 15: 60% (Flask-Login, error pages, CORS, WAL mode done; rate limiting pending)
 
 ## Issues Fixed (2026-02-27 session 2)
 

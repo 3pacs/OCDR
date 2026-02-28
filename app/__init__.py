@@ -50,19 +50,36 @@ def create_app(config_class=Config, **config_overrides):
     from app.analytics.post_import import analysis_bp
     app.register_blueprint(analysis_bp, url_prefix="/api")
 
+    # ── CORS for local network access ───────────────────────────
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin", "")
+        if origin and (
+            origin.startswith("http://localhost") or
+            origin.startswith("http://127.0.0.1") or
+            origin.startswith("http://192.168.") or
+            origin.startswith("http://10.")
+        ):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
     # ── Error handlers ──────────────────────────────────────────
     @app.errorhandler(404)
     def not_found(e):
         if request.path.startswith("/api/"):
             return jsonify({"error": "Not found"}), 404
-        return (jsonify({"error": "Not found"}), 404)
+        from flask import render_template as rt
+        return rt("404.html"), 404
 
     @app.errorhandler(500)
     def server_error(e):
         app.logger.error(f"Internal error: {e}")
         if request.path.startswith("/api/"):
             return jsonify({"error": "Internal server error"}), 500
-        return (jsonify({"error": "Internal server error"}), 500)
+        from flask import render_template as rt
+        return rt("500.html"), 500
 
     # ── SQLite WAL mode for concurrent reads during writes ──
     _enable_wal_mode(app)
