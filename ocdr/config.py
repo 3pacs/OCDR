@@ -1,5 +1,6 @@
 """Central configuration for OCDR. All paths, payer config, and fee schedule."""
 
+import sys
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
@@ -7,11 +8,22 @@ from decimal import Decimal
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Detect PyInstaller bundle
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Running as a PyInstaller .exe
+    #   BASE_DIR   = folder containing the .exe  (user data lives here)
+    #   BUNDLE_DIR = temp extraction dir          (bundled resources live here)
+    BASE_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    # Running as normal Python
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    BUNDLE_DIR = BASE_DIR
+
 DATA_DIR = BASE_DIR / "data"
 IMPORT_DIR = DATA_DIR / "import"
 EXPORT_DIR = DATA_DIR / "export"
-TEMPLATE_DIR = BASE_DIR / "templates"
+TEMPLATE_DIR = BUNDLE_DIR / "templates"
 
 OCMRI_PATH = DATA_DIR / "OCMRI.xlsx"
 OCMRI_SHEET = "Current"
