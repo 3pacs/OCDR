@@ -34,6 +34,10 @@ EDI_835_DIR = IMPORT_DIR / "835"
 CANDELIS_DIR = IMPORT_DIR / "candelis"
 SCHEDULE_DIR = IMPORT_DIR / "schedules"
 
+DECISION_DIR = DATA_DIR / "decisions"
+DECISION_HISTORY_PATH = DECISION_DIR / "decisions.jsonl"
+PENDING_DIR = DATA_DIR / "pending"
+
 # ---------------------------------------------------------------------------
 # Excel serial date epoch  (accounts for Lotus 1-2-3 leap-year bug)
 # ---------------------------------------------------------------------------

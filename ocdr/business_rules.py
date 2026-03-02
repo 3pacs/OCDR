@@ -12,6 +12,7 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 
 from ocdr.config import get_expected_rate, get_payer, UNDERPAYMENT_THRESHOLD
+from ocdr.cpt_map import are_body_parts_equivalent
 
 
 # ── BR-01  C.A.P Exception ────────────────────────────────────────────────
@@ -159,12 +160,15 @@ def compute_match_score(billing: dict, era_claim: dict) -> dict:
     if modality_match < 1.0:
         mismatches.append(f"Modality mismatch: '{bm}' vs '{em}'")
 
-    # ── Body part / scan type match ──
+    # ── Body part / scan type match (with synonym support) ──
     bs = billing.get("scan_type", "")
     es = era_claim.get("scan_type", "")
     if bs and es:
-        body_sim = SequenceMatcher(None, bs, es).ratio()
-        body_match = 1.0 if body_sim >= 0.8 else body_sim
+        if are_body_parts_equivalent(bs, es):
+            body_match = 1.0
+        else:
+            body_sim = SequenceMatcher(None, bs, es).ratio()
+            body_match = 1.0 if body_sim >= 0.8 else body_sim
     else:
         body_match = 0.0  # missing data → can't confirm
     if body_match < 1.0:

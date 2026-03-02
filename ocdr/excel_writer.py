@@ -352,6 +352,84 @@ def _apply_format(cell, field: str) -> None:
         pass
 
 
+def write_payment_applied(output_path: str | Path,
+                           approved_records: list[dict]) -> Path:
+    """Write approved payments in OCMRI A-V format + payment metadata columns.
+
+    Staff copies confirmed rows from this workbook into OCMRI.xlsx.
+    Columns M/N/O (primary/secondary/total) are filled from the 835 data.
+    Extra columns beyond V provide 835 audit trail info.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Approved Payments"
+
+    # Standard OCMRI columns (A-V) + payment audit columns
+    ocmri_headers = [COLUMN_MAP[i] for i in range(1, 23)]
+    extra_headers = [
+        "claim_id", "check_eft_number", "payer_835", "payment_date",
+        "payment_method", "cpt_codes", "claim_billed", "claim_status",
+        "match_score", "approval_timestamp",
+    ]
+    all_headers = ocmri_headers + extra_headers
+
+    for col_idx, header in enumerate(all_headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = HEADER_FONT_WHITE
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_idx, record in enumerate(approved_records, start=2):
+        # Standard OCMRI columns
+        for col_num in range(1, 23):
+            field = COLUMN_MAP[col_num]
+            value = _format_cell_value(record.get(field), field)
+            cell = ws.cell(row=row_idx, column=col_num, value=value)
+            _apply_format(cell, field)
+
+        # Payment audit columns
+        extra_start = 23
+        ws.cell(row=row_idx, column=extra_start,
+                value=record.get("claim_id", ""))
+        ws.cell(row=row_idx, column=extra_start + 1,
+                value=record.get("check_eft_number", ""))
+        ws.cell(row=row_idx, column=extra_start + 2,
+                value=record.get("payer_835", ""))
+        pd = record.get("payment_date")
+        ws.cell(row=row_idx, column=extra_start + 3,
+                value=pd.strftime("%m/%d/%Y") if pd else "")
+        ws.cell(row=row_idx, column=extra_start + 4,
+                value=record.get("payment_method", ""))
+        ws.cell(row=row_idx, column=extra_start + 5,
+                value=record.get("cpt_codes", ""))
+        billed_cell = ws.cell(row=row_idx, column=extra_start + 6,
+                               value=float(record.get("claim_billed", 0) or 0))
+        billed_cell.number_format = CURRENCY_FMT
+        ws.cell(row=row_idx, column=extra_start + 7,
+                value=record.get("claim_status", ""))
+        score_cell = ws.cell(row=row_idx, column=extra_start + 8,
+                              value=record.get("match_score", 0))
+        score_cell.number_format = '0.00'
+        ws.cell(row=row_idx, column=extra_start + 9,
+                value=record.get("approval_timestamp", ""))
+
+    _finalize_sheet(ws, len(all_headers))
+    wb.save(str(path))
+    wb.close()
+
+    logger.log_decision(
+        "excel_write_payment_applied",
+        {"output": str(path)},
+        {"rows": len(approved_records)},
+        flags=[],
+        reasoning=f"Wrote {len(approved_records)} approved payment records.",
+    )
+    return path
+
+
 def _to_writable(value: Any) -> Any:
     """Convert any value to something openpyxl can write."""
     if value is None:

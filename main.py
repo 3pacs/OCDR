@@ -9,6 +9,8 @@ Usage:
   python main.py merge-purview --input physicians.csv --staging staging.xlsx
   python main.py merge-schedule --schedule schedule.csv --candelis candelis.txt --output merged.xlsx
   python main.py reconcile --ocmri OCMRI.xlsx --era-folder ./import/835/ --output reconciliation.xlsx
+  python main.py apply-835 --input payment.835 --ocmri OCMRI.xlsx --output applied.xlsx
+  python main.py report --type summary
 """
 
 import argparse
@@ -17,7 +19,7 @@ from pathlib import Path
 
 from ocdr.config import (
     OCMRI_PATH, RECONCILIATION_PATH, EDI_835_DIR,
-    EXPORT_DIR, DATA_DIR,
+    EXPORT_DIR, DATA_DIR, DECISION_DIR, PENDING_DIR,
 )
 
 
@@ -109,6 +111,47 @@ def cmd_merge_schedule(args):
     write_import_staging(output, merged)
     print(f"Merged {len(schedule_records)} schedule + {len(candelis_records)} "
           f"Candelis → {len(merged)} records → {output}")
+
+
+def cmd_apply_835(args):
+    """Interactive 835 payment approval."""
+    from ocdr.approval import run_approval_session
+
+    output = run_approval_session(
+        era_file=args.input,
+        ocmri_path=args.ocmri,
+        output_path=args.output,
+        resume_path=args.resume,
+        auto_accept=args.auto_accept,
+    )
+    if output:
+        print(f"Payment workbook written to: {output}")
+
+
+def cmd_report(args):
+    """Generate smart reports."""
+    report_type = args.type
+
+    if report_type == "summary":
+        from ocdr.smart_reports import report_summary
+        report_summary()
+
+    elif report_type == "payer":
+        from ocdr.smart_reports import report_payer
+        report_payer()
+
+    elif report_type == "learning":
+        from ocdr.smart_reports import report_learning
+        report_learning()
+
+    elif report_type == "aging":
+        from ocdr.smart_reports import report_aging
+        from ocdr.excel_reader import read_ocmri
+
+        ocmri_path = args.ocmri or str(OCMRI_PATH)
+        billing_records = read_ocmri(ocmri_path)
+        print(f"Read {len(billing_records)} billing records from {ocmri_path}")
+        report_aging(billing_records)
 
 
 def cmd_reconcile(args):
@@ -206,6 +249,31 @@ def main():
                    help="Output merged staging .xlsx path")
     p.set_defaults(func=cmd_merge_schedule)
 
+    # ── apply-835 ──
+    p = subparsers.add_parser("apply-835",
+                               help="Interactive 835 payment approval")
+    p.add_argument("--input", "-i", required=True,
+                   help="Path to 835 file")
+    p.add_argument("--ocmri",
+                   help="Path to OCMRI.xlsx (default: data/OCMRI.xlsx)")
+    p.add_argument("--output", "-o",
+                   help="Output payment-applied .xlsx path")
+    p.add_argument("--resume",
+                   help="Resume a previous session from saved state file")
+    p.add_argument("--auto-accept", action="store_true",
+                   help="Auto-approve all AUTO_ACCEPT matches without prompting")
+    p.set_defaults(func=cmd_apply_835)
+
+    # ── report ──
+    p = subparsers.add_parser("report",
+                               help="Generate smart reports")
+    p.add_argument("--type", "-t", required=True,
+                   choices=["summary", "payer", "learning", "aging"],
+                   help="Report type to generate")
+    p.add_argument("--ocmri",
+                   help="Path to OCMRI.xlsx (required for aging report)")
+    p.set_defaults(func=cmd_report)
+
     # ── reconcile ──
     p = subparsers.add_parser("reconcile",
                                help="Generate reconciliation workbook")
@@ -225,6 +293,8 @@ def main():
     # Ensure output directories exist
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DECISION_DIR.mkdir(parents=True, exist_ok=True)
+    PENDING_DIR.mkdir(parents=True, exist_ok=True)
 
     args.func(args)
 
