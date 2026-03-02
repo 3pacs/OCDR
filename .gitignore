@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# PyInstaller build artifacts
+build/
+dist/
+
+# Runtime data (created by the app)
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/
