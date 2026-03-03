@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from flask import Flask, jsonify
 from app.extensions import db
-from app.config import Config
+from app.config import Config, BUNDLE_DIR
 
 _start_time = time.time()
 
@@ -26,8 +26,8 @@ class _JSONProvider(Flask.json_provider_class):
 
 def create_app(config_class=Config):
     app = Flask(__name__,
-                template_folder='../templates',
-                static_folder='../static')
+                template_folder=str(BUNDLE_DIR / 'templates'),
+                static_folder=str(BUNDLE_DIR / 'static'))
     app.config.from_object(config_class)
     app.json_provider_class = _JSONProvider
     app.json = _JSONProvider(app)
