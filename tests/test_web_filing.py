@@ -91,12 +91,22 @@ def test_list_filing_deadlines(client, app):
 
 
 def test_filing_deadlines_status_filter(client, app):
-    """GET /api/filing-deadlines?status=PAST_DEADLINE filters."""
+    """GET /api/filing-deadlines?status=PAST_DEADLINE filters in SQL before pagination."""
     _insert_deadline_records(app)
     resp = client.get('/api/filing-deadlines?status=PAST_DEADLINE')
     data = resp.get_json()
+    assert data['total'] == 1  # Only PAST_DEADLINE records in total count
     for item in data['items']:
         assert item['filing_status'] == 'PAST_DEADLINE'
+
+
+def test_filing_deadlines_carrier_filter(client, app):
+    """GET /api/filing-deadlines?carrier= filters by carrier."""
+    _insert_deadline_records(app)
+    resp = client.get('/api/filing-deadlines?carrier=INS')
+    data = resp.get_json()
+    for item in data['items']:
+        assert item['insurance_carrier'] == 'INS'
 
 
 def test_filing_alerts(client, app):

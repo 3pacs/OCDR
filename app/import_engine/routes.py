@@ -11,16 +11,13 @@ from werkzeug.utils import secure_filename
 from app.import_engine import bp
 from app.extensions import db
 from app.models import BillingRecord
+from app.utils import allowed_file
 
 from ocdr.excel_reader import read_ocmri
 from ocdr.config import get_payer, get_expected_rate
 
 
-ALLOWED_EXTENSIONS = {'.xlsx', '.xls'}
-
-
-def _allowed_file(filename):
-    return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+EXCEL_EXTENSIONS = {'.xlsx', '.xls'}
 
 
 def _dict_to_billing_record(d: dict) -> BillingRecord:
@@ -38,8 +35,8 @@ def _dict_to_billing_record(d: dict) -> BillingRecord:
     # Compute expected rate for underpayment detection
     expected = get_expected_rate(modality, carrier or 'DEFAULT', is_psma, gado)
     total = d.get('total_payment', Decimal('0')) or Decimal('0')
-    if expected and expected > 0 and total > 0:
-        pct = float(total / expected)
+    if expected and expected > 0:
+        pct = float(total / expected) if total > 0 else 0.0
         variance = total - expected
     else:
         pct = None
@@ -77,14 +74,25 @@ def _dict_to_billing_record(d: dict) -> BillingRecord:
     )
 
 
-def _is_duplicate(d: dict) -> bool:
-    """Check if a record already exists by dedup key."""
-    return BillingRecord.query.filter_by(
-        patient_name=d.get('patient_name', ''),
-        service_date=d.get('service_date'),
-        scan_type=d.get('scan_type', ''),
-        modality=d.get('modality', ''),
-    ).first() is not None
+def _load_existing_keys():
+    """Load all existing dedup keys into a set for O(1) lookups."""
+    rows = BillingRecord.query.with_entities(
+        BillingRecord.patient_name,
+        BillingRecord.service_date,
+        BillingRecord.scan_type,
+        BillingRecord.modality,
+    ).all()
+    return {(r.patient_name, r.service_date, r.scan_type, r.modality) for r in rows}
+
+
+def _make_dedup_key(d: dict):
+    """Build the dedup key tuple from a record dict."""
+    return (
+        d.get('patient_name', ''),
+        d.get('service_date'),
+        d.get('scan_type', ''),
+        d.get('modality', ''),
+    )
 
 
 @bp.route('/import/excel', methods=['POST'])
@@ -96,7 +104,7 @@ def import_excel():
         return jsonify({'error': 'No file provided'}), 400
 
     file = request.files['file']
-    if not file.filename or not _allowed_file(file.filename):
+    if not file.filename or not allowed_file(file.filename, EXCEL_EXTENSIONS):
         return jsonify({'error': 'Invalid file type. Accepted: .xlsx, .xls'}), 400
 
     filename = secure_filename(file.filename)
@@ -107,7 +115,15 @@ def import_excel():
     try:
         records = read_ocmri(filepath)
     except Exception as e:
+        # Clean up the uploaded file on parse failure
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
         return jsonify({'error': f'Failed to read Excel file: {str(e)}'}), 422
+
+    # Load existing keys once for O(1) dedup instead of O(n) queries
+    existing_keys = _load_existing_keys()
 
     imported = 0
     skipped = 0
@@ -117,12 +133,14 @@ def import_excel():
 
     for i, d in enumerate(records):
         try:
-            if _is_duplicate(d):
+            key = _make_dedup_key(d)
+            if key in existing_keys:
                 skipped += 1
                 continue
 
             record = _dict_to_billing_record(d)
             batch.append(record)
+            existing_keys.add(key)  # Prevent intra-batch duplicates
 
             if len(batch) >= batch_size:
                 db.session.add_all(batch)
@@ -138,7 +156,11 @@ def import_excel():
         db.session.flush()
         imported += len(batch)
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
 
     duration_ms = round((time.time() - start) * 1000)
     return jsonify({
@@ -165,5 +187,6 @@ def import_status():
     return jsonify({
         'total_records': total,
         'latest_import': latest.isoformat() if latest else None,
+        'has_data': total > 0,
         'by_source': {src or 'unknown': cnt for src, cnt in source_counts},
     })

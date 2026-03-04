@@ -4,9 +4,8 @@ import os
 import shutil
 import hashlib
 from datetime import datetime
-from collections import defaultdict
 
-from flask import request, jsonify, current_app
+from flask import jsonify, current_app
 
 from app.infra import bp
 
@@ -27,7 +26,7 @@ def _get_db_path():
 
 
 def _list_backups():
-    """Return sorted list of backup file dicts."""
+    """Return list of backup file dicts, sorted newest-first."""
     backup_dir = current_app.config.get('BACKUP_DIR', 'data/backups')
     if not os.path.isdir(backup_dir):
         return []
@@ -55,7 +54,12 @@ def _list_backups():
 
 
 def _apply_retention(backup_dir):
-    """Apply retention policy: keep 7 daily, 4 weekly, 12 monthly."""
+    """Apply retention policy: keep 7 daily, 4 weekly, 12 monthly.
+
+    Backups are sorted newest-first from _list_backups(). For each tier,
+    the first (newest) backup per time bucket is kept. Then we keep the
+    N most recent buckets per tier.
+    """
     backups = _list_backups()
     if not backups:
         return
@@ -65,6 +69,7 @@ def _apply_retention(backup_dir):
     weekly = {}
     monthly = {}
 
+    # Backups are newest-first, so first seen per bucket = newest in that bucket
     for b in backups:
         ts = datetime.fromisoformat(b['timestamp'])
         day_key = ts.strftime('%Y-%m-%d')
@@ -78,16 +83,12 @@ def _apply_retention(backup_dir):
         if month_key not in monthly:
             monthly[month_key] = b['filename']
 
-    # Keep N most recent of each tier
-    daily_keep = list(daily.values())[:7]
-    weekly_keep = list(weekly.values())[:4]
-    monthly_keep = list(monthly.values())[:12]
+    # Keep the N most recent buckets (dict preserves insertion order,
+    # and backups are newest-first, so slicing [:N] gives newest N)
+    keep.update(list(daily.values())[:7])
+    keep.update(list(weekly.values())[:4])
+    keep.update(list(monthly.values())[:12])
 
-    keep.update(daily_keep)
-    keep.update(weekly_keep)
-    keep.update(monthly_keep)
-
-    # Delete backups not in keep set
     for b in backups:
         if b['filename'] not in keep:
             try:
@@ -110,7 +111,11 @@ def run_backup():
     backup_name = f'ocdr_{timestamp}.db'
     backup_path = os.path.join(backup_dir, backup_name)
 
-    shutil.copy2(db_path, backup_path)
+    try:
+        shutil.copy2(db_path, backup_path)
+    except Exception as e:
+        return jsonify({'error': f'Backup failed: {str(e)}'}), 500
+
     sha = _sha256(backup_path)
     size = os.path.getsize(backup_path)
 
@@ -122,7 +127,7 @@ def run_backup():
         'size_bytes': size,
         'sha256': sha,
         'timestamp': datetime.now().isoformat(),
-    })
+    }), 201
 
 
 @bp.route('/backup/status', methods=['GET'])

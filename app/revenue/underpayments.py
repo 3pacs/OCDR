@@ -1,29 +1,32 @@
 """Underpayment detection API routes (F-05)."""
 
-from decimal import Decimal
-
 from flask import request, jsonify
 
 from app.revenue import bp
 from app.extensions import db
 from app.models import BillingRecord
+from app.utils import parse_pagination, paginate_query
 
 from ocdr.config import UNDERPAYMENT_THRESHOLD
+
+
+def _underpayment_filters(threshold):
+    """Return the standard filter conditions for underpaid records."""
+    return [
+        BillingRecord.total_payment > 0,
+        BillingRecord.expected_rate.isnot(None),
+        BillingRecord.expected_rate > 0,
+        BillingRecord.pct_of_expected < threshold,
+    ]
 
 
 @bp.route('/underpayments', methods=['GET'])
 def list_underpayments():
     """Paginated list of underpaid billing records."""
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
+    page, per_page = parse_pagination()
     threshold = request.args.get('threshold', float(UNDERPAYMENT_THRESHOLD), type=float)
 
-    query = BillingRecord.query.filter(
-        BillingRecord.total_payment > 0,
-        BillingRecord.expected_rate.isnot(None),
-        BillingRecord.expected_rate > 0,
-        BillingRecord.pct_of_expected < threshold,
-    )
+    query = BillingRecord.query.filter(*_underpayment_filters(threshold))
 
     carrier = request.args.get('carrier')
     if carrier:
@@ -33,40 +36,33 @@ def list_underpayments():
     if modality:
         query = query.filter(BillingRecord.modality == modality)
 
-    query = query.order_by(BillingRecord.variance.asc())
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    date_from = request.args.get('date_from')
+    if date_from:
+        query = query.filter(BillingRecord.service_date >= date_from)
 
-    return jsonify({
-        'items': [r.to_dict() for r in pagination.items],
-        'total': pagination.total,
-        'page': pagination.page,
-        'per_page': pagination.per_page,
-        'pages': pagination.pages,
-        'threshold': threshold,
-    })
+    date_to = request.args.get('date_to')
+    if date_to:
+        query = query.filter(BillingRecord.service_date <= date_to)
+
+    query = query.order_by(BillingRecord.variance.asc())
+    result = paginate_query(query, page, per_page)
+    result['threshold'] = threshold
+    return jsonify(result)
 
 
 @bp.route('/underpayments/summary', methods=['GET'])
 def underpayment_summary():
     """Aggregate underpayment statistics."""
     threshold = request.args.get('threshold', float(UNDERPAYMENT_THRESHOLD), type=float)
+    filters = _underpayment_filters(threshold)
 
-    base = BillingRecord.query.filter(
-        BillingRecord.total_payment > 0,
-        BillingRecord.expected_rate.isnot(None),
-        BillingRecord.expected_rate > 0,
-        BillingRecord.pct_of_expected < threshold,
-    )
+    total_flagged = BillingRecord.query.filter(*filters).count()
 
-    total_flagged = base.count()
-    total_variance = db.session.query(
-        db.func.sum(BillingRecord.variance)
-    ).filter(
-        BillingRecord.total_payment > 0,
-        BillingRecord.expected_rate.isnot(None),
-        BillingRecord.expected_rate > 0,
-        BillingRecord.pct_of_expected < threshold,
-    ).scalar() or 0
+    total_variance = (
+        db.session.query(db.func.sum(BillingRecord.variance))
+        .filter(*filters)
+        .scalar()
+    ) or 0
 
     by_carrier = (
         db.session.query(
@@ -74,12 +70,7 @@ def underpayment_summary():
             db.func.count(),
             db.func.sum(BillingRecord.variance),
         )
-        .filter(
-            BillingRecord.total_payment > 0,
-            BillingRecord.expected_rate.isnot(None),
-            BillingRecord.expected_rate > 0,
-            BillingRecord.pct_of_expected < threshold,
-        )
+        .filter(*filters)
         .group_by(BillingRecord.insurance_carrier)
         .all()
     )
@@ -90,12 +81,7 @@ def underpayment_summary():
             db.func.count(),
             db.func.sum(BillingRecord.variance),
         )
-        .filter(
-            BillingRecord.total_payment > 0,
-            BillingRecord.expected_rate.isnot(None),
-            BillingRecord.expected_rate > 0,
-            BillingRecord.pct_of_expected < threshold,
-        )
+        .filter(*filters)
         .group_by(BillingRecord.modality)
         .all()
     )

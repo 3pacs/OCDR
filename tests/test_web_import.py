@@ -155,3 +155,5 @@ def test_import_status(client, app):
     data = resp.get_json()
     assert 'total_records' in data
     assert 'by_source' in data
+    assert 'has_data' in data
+    assert data['has_data'] is False  # No imports yet

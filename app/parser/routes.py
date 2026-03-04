@@ -1,7 +1,6 @@
 """835 ERA parser API routes (F-02)."""
 
 import os
-from datetime import datetime
 
 from flask import request, jsonify, current_app
 from werkzeug.utils import secure_filename
@@ -9,15 +8,12 @@ from werkzeug.utils import secure_filename
 from app.parser import bp
 from app.extensions import db
 from app.models import EraPayment, EraClaimLine
+from app.utils import allowed_file, parse_pagination, paginate_query
 
 from ocdr.era_835_parser import parse_835_file, parse_835_folder
 
 
-ALLOWED_EXTENSIONS = {'.835', '.edi'}
-
-
-def _allowed_file(filename):
-    return os.path.splitext(filename)[1].lower() in ALLOWED_EXTENSIONS
+ERA_EXTENSIONS = {'.835', '.edi'}
 
 
 def _store_parsed_835(parsed: dict) -> EraPayment:
@@ -76,6 +72,7 @@ def import_835():
     files_parsed = 0
     claims_found = 0
     total_payment = 0.0
+    parse_errors = []
 
     # Option 1: File upload
     if request.files:
@@ -83,7 +80,7 @@ def import_835():
             file = request.files[key]
             if not file.filename:
                 continue
-            if not _allowed_file(file.filename):
+            if not allowed_file(file.filename, ERA_EXTENSIONS):
                 continue
 
             filename = secure_filename(file.filename)
@@ -91,8 +88,17 @@ def import_835():
             filepath = os.path.join(upload_dir, filename)
             file.save(filepath)
 
-            parsed = parse_835_file(filepath)
-            era = _store_parsed_835(parsed)
+            try:
+                parsed = parse_835_file(filepath)
+            except Exception as e:
+                parse_errors.append({'file': filename, 'error': str(e)})
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass
+                continue
+
+            _store_parsed_835(parsed)
             files_parsed += 1
             claims_found += len(parsed.get('claims', []))
             total_payment += float(parsed.get('payment', {}).get('amount', 0))
@@ -100,33 +106,46 @@ def import_835():
     # Option 2: Folder path in JSON body
     elif request.is_json:
         data = request.get_json()
-        folder_path = data.get('folder_path', '')
+        if not data:
+            return jsonify({'error': 'Empty JSON body'}), 400
+        folder_path = data.get('folder_path', '').strip()
         if not folder_path or not os.path.isdir(folder_path):
             return jsonify({'error': 'Invalid or missing folder_path'}), 400
 
-        parsed_list = parse_835_folder(folder_path)
+        try:
+            parsed_list = parse_835_folder(folder_path)
+        except Exception as e:
+            return jsonify({'error': f'Failed to parse 835 folder: {str(e)}'}), 422
+
         for parsed in parsed_list:
-            era = _store_parsed_835(parsed)
+            _store_parsed_835(parsed)
             files_parsed += 1
             claims_found += len(parsed.get('claims', []))
             total_payment += float(parsed.get('payment', {}).get('amount', 0))
     else:
         return jsonify({'error': 'Provide file upload(s) or JSON body with folder_path'}), 400
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
 
-    return jsonify({
+    result = {
         'files_parsed': files_parsed,
         'claims_found': claims_found,
         'payments_total': round(total_payment, 2),
-    })
+    }
+    if parse_errors:
+        result['parse_errors'] = parse_errors
+
+    return jsonify(result)
 
 
 @bp.route('/era/payments', methods=['GET'])
 def list_era_payments():
     """Paginated list of ERA payments with optional filters."""
-    page = request.args.get('page', 1, type=int)
-    per_page = min(request.args.get('per_page', 50, type=int), 200)
+    page, per_page = parse_pagination()
 
     query = EraPayment.query
 
@@ -143,21 +162,15 @@ def list_era_payments():
         query = query.filter(EraPayment.payment_date <= date_to)
 
     query = query.order_by(EraPayment.parsed_at.desc())
-    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-
-    return jsonify({
-        'items': [p.to_dict() for p in pagination.items],
-        'total': pagination.total,
-        'page': pagination.page,
-        'per_page': pagination.per_page,
-        'pages': pagination.pages,
-    })
+    return jsonify(paginate_query(query, page, per_page))
 
 
 @bp.route('/era/claims/<int:claim_id>', methods=['GET'])
 def get_claim_detail(claim_id):
     """Return a single ERA claim line with parent payment info."""
-    claim = EraClaimLine.query.get_or_404(claim_id)
+    claim = db.session.get(EraClaimLine, claim_id)
+    if claim is None:
+        return jsonify({'error': 'Claim not found'}), 404
     result = claim.to_dict()
     result['payment'] = claim.era_payment.to_dict()
     return jsonify(result)

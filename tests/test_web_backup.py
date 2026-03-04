@@ -52,7 +52,7 @@ def test_backup_full_cycle(tmp_path):
 
     # Run backup
     resp = client.post('/api/backup/run')
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     data = resp.get_json()
     assert 'backup_path' in data
     assert 'sha256' in data
