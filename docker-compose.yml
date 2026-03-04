@@ -1,0 +1,77 @@
+version: "3.8"
+
+services:
+  # PostgreSQL - Production application database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ocmri-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ocmri}
+      POSTGRES_USER: ${POSTGRES_USER:-ocmri}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ocmri_secret}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ocmri}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Backend - FastAPI application
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ocmri-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-ocmri}:${POSTGRES_PASSWORD:-ocmri_secret}@postgres:5432/${POSTGRES_DB:-ocmri}
+      - DATABASE_URL_SYNC=postgresql://${POSTGRES_USER:-ocmri}:${POSTGRES_PASSWORD:-ocmri_secret}@postgres:5432/${POSTGRES_DB:-ocmri}
+      - DUCKDB_PATH=/app/data/duckdb/analytics.duckdb
+      - DATA_DIR=/app/data
+      - EXCEL_DIR=/app/data/excel
+      - EOBS_DIR=/app/data/eobs
+      - SCHEDULES_DIR=/app/data/schedules
+      - PAYMENTS_DIR=/app/data/payments
+      - PROCESSED_DIR=/app/data/processed
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      uvicorn backend.app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+
+  # Frontend - React application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ocmri-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      - REACT_APP_API_URL=http://localhost:${BACKEND_PORT:-8000}
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
