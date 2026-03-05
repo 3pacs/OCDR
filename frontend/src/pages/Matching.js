@@ -469,6 +469,152 @@ function FileVerifier() {
   );
 }
 
+function IntegrityCheck() {
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const runCheck = async () => {
+    setChecking(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.get("/matching/crosswalk/integrity", { timeout: 120000 });
+      setResult(res.data);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <Card className="border-0 shadow-sm mb-4">
+      <Card.Body>
+        <div className="d-flex align-items-center justify-content-between mb-2">
+          <Card.Title className="mb-0">Crosswalk Integrity Check</Card.Title>
+          <Button variant="outline-warning" size="sm" onClick={runCheck} disabled={checking}>
+            {checking ? <><Spinner size="sm" className="me-1" />Checking...</> : "Run Integrity Check"}
+          </Button>
+        </div>
+        <p className="text-muted small mb-3">
+          Audits all matched claims and crosswalk pairs for inconsistencies:
+          conflicting ID mappings, patient name mismatches, and date discrepancies.
+        </p>
+
+        {error && <Alert variant="danger" className="small">{error}</Alert>}
+
+        {result && (
+          <>
+            <Alert variant={result.status === "clean" ? "success" : "warning"} className="small">
+              {result.status === "clean"
+                ? <><strong>Clean!</strong> No integrity issues found across {result.total_crosswalk_pairs} crosswalk pairs and {result.total_matched_claims} matched claims.</>
+                : <><strong>{result.issues_found} issues found</strong> across {result.total_crosswalk_pairs} crosswalk pairs and {result.total_matched_claims} matched claims.</>
+              }
+            </Alert>
+
+            {result.summary && result.issues_found > 0 && (
+              <Row className="g-2 mb-3">
+                <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{result.summary.jacket_conflicts}</div><small>Jacket ID Conflicts</small></div></Col>
+                <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{result.summary.topaz_conflicts}</div><small>Topaz ID Conflicts</small></div></Col>
+                <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-warning">{result.summary.name_mismatches}</div><small>Name Mismatches</small></div></Col>
+                <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-warning">{result.summary.date_mismatches}</div><small>Date Mismatches</small></div></Col>
+              </Row>
+            )}
+
+            {result.conflicting_jacket_to_topaz?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold text-danger">
+                  Jacket ID Conflicts &mdash; same Jacket ID maps to multiple Topaz IDs
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Jacket ID</th><th>Topaz IDs</th><th>Patient(s)</th><th>Records</th></tr></thead>
+                  <tbody>
+                    {result.conflicting_jacket_to_topaz.map((c, i) => (
+                      <tr key={i}>
+                        <td><code>{c.jacket_id}</code></td>
+                        <td>{c.topaz_ids.map(t => <Badge key={t} bg="danger" className="me-1">{t}</Badge>)}</td>
+                        <td>{c.patient_names.join(", ")}</td>
+                        <td>{c.record_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.conflicting_topaz_to_jacket?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold text-danger">
+                  Topaz ID Conflicts &mdash; same Topaz ID maps to multiple Jacket IDs
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Topaz ID</th><th>Jacket IDs</th><th>Patient(s)</th><th>Records</th></tr></thead>
+                  <tbody>
+                    {result.conflicting_topaz_to_jacket.map((c, i) => (
+                      <tr key={i}>
+                        <td><code>{c.topaz_id}</code></td>
+                        <td>{c.jacket_ids.map(j => <Badge key={j} bg="danger" className="me-1">{j}</Badge>)}</td>
+                        <td>{c.patient_names.join(", ")}</td>
+                        <td>{c.record_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.name_mismatches?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold text-warning">
+                  Name Mismatches &mdash; matched claims where ERA and billing patient names differ significantly
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Claim ID</th><th>ERA Patient</th><th>Billing Patient</th><th>Similarity</th><th>Confidence</th><th>Jacket ID</th></tr></thead>
+                  <tbody>
+                    {result.name_mismatches.map((m, i) => (
+                      <tr key={i}>
+                        <td><code>{m.claim_id}</code></td>
+                        <td>{m.era_patient}</td>
+                        <td>{m.billing_patient}</td>
+                        <td><Badge bg={m.name_similarity < 50 ? "danger" : "warning"}>{m.name_similarity}%</Badge></td>
+                        <td>{m.confidence ? `${(m.confidence * 100).toFixed(0)}%` : "--"}</td>
+                        <td>{m.jacket_id || "--"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.date_mismatches?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold text-warning">
+                  Date Mismatches &mdash; matched claims with service dates more than 3 days apart
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Claim ID</th><th>ERA Date</th><th>Billing Date</th><th>Days Apart</th><th>Patient</th></tr></thead>
+                  <tbody>
+                    {result.date_mismatches.map((m, i) => (
+                      <tr key={i}>
+                        <td><code>{m.claim_id}</code></td>
+                        <td>{m.era_date}</td>
+                        <td>{m.billing_date}</td>
+                        <td><Badge bg="warning">{m.days_apart}</Badge></td>
+                        <td>{m.era_patient}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
 function CrosswalkTab() {
   const [stats, setStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -507,6 +653,7 @@ function CrosswalkTab() {
 
   return (
     <>
+      <IntegrityCheck />
       <FileVerifier />
       <TopazUpload onImported={loadData} />
 

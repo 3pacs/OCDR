@@ -92,6 +92,153 @@ async def crosswalk_propagate(
     return await propagate_topaz_ids(db, offset=body.offset)
 
 
+@router.get("/crosswalk/integrity")
+async def crosswalk_integrity_check(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Audit crosswalk data for inconsistencies.
+
+    Checks:
+    1. Same patient_id with different topaz_ids (conflicting mappings)
+    2. Same topaz_id assigned to different patient_ids
+    3. Matched ERA claims where patient name doesn't corroborate
+    4. Records where topaz_id was learned from matching but name similarity is low
+    """
+    from sqlalchemy import select, func, distinct
+    from rapidfuzz import fuzz
+    from backend.app.models.era import ERAClaimLine
+
+    # 1. Conflicting mappings: same patient_id → multiple topaz_ids
+    result = await db.execute(
+        select(
+            BillingRecord.patient_id,
+            BillingRecord.topaz_id,
+            BillingRecord.patient_name,
+        ).where(
+            BillingRecord.patient_id.is_not(None),
+            BillingRecord.topaz_id.is_not(None),
+        ).order_by(BillingRecord.patient_id)
+    )
+    all_pairs = result.all()
+
+    # Group by patient_id
+    by_jacket = {}
+    for pid, tid, pname in all_pairs:
+        key = str(pid).strip()
+        by_jacket.setdefault(key, []).append({
+            "topaz_id": str(tid).strip(),
+            "patient_name": pname,
+        })
+
+    # Find conflicting jacket→topaz mappings
+    conflicting_jacket = []
+    for jacket_id, entries in by_jacket.items():
+        unique_topaz = set(e["topaz_id"] for e in entries)
+        if len(unique_topaz) > 1:
+            conflicting_jacket.append({
+                "jacket_id": jacket_id,
+                "topaz_ids": list(unique_topaz),
+                "patient_names": list(set(e["patient_name"] for e in entries)),
+                "record_count": len(entries),
+            })
+
+    # 2. Same topaz_id → multiple patient_ids
+    by_topaz = {}
+    for pid, tid, pname in all_pairs:
+        key = str(tid).strip()
+        by_topaz.setdefault(key, []).append({
+            "patient_id": str(pid).strip(),
+            "patient_name": pname,
+        })
+
+    conflicting_topaz = []
+    for topaz_id, entries in by_topaz.items():
+        unique_jackets = set(e["patient_id"] for e in entries)
+        if len(unique_jackets) > 1:
+            conflicting_topaz.append({
+                "topaz_id": topaz_id,
+                "jacket_ids": list(unique_jackets),
+                "patient_names": list(set(e["patient_name"] for e in entries)),
+                "record_count": len(entries),
+            })
+
+    # 3. Matched claims: verify name corroboration
+    matched_result = await db.execute(
+        select(
+            ERAClaimLine.claim_id,
+            ERAClaimLine.patient_name_835,
+            ERAClaimLine.service_date_835,
+            ERAClaimLine.match_confidence,
+            BillingRecord.patient_name,
+            BillingRecord.patient_id,
+            BillingRecord.topaz_id,
+            BillingRecord.service_date,
+        )
+        .join(BillingRecord, ERAClaimLine.matched_billing_id == BillingRecord.id)
+        .where(ERAClaimLine.matched_billing_id.is_not(None))
+    )
+    matched_rows = matched_result.all()
+
+    name_mismatches = []
+    date_mismatches = []
+    for (claim_id, era_name, era_date, confidence,
+         billing_name, jacket_id, topaz_id, billing_date) in matched_rows:
+        # Name check
+        n1 = (era_name or "").upper().strip()
+        n2 = (billing_name or "").upper().strip()
+        if n1 and n2:
+            name_score = fuzz.token_sort_ratio(n1, n2)
+            if name_score < 70:
+                name_mismatches.append({
+                    "claim_id": claim_id,
+                    "era_patient": era_name,
+                    "billing_patient": billing_name,
+                    "name_similarity": name_score,
+                    "confidence": float(confidence) if confidence else None,
+                    "jacket_id": str(jacket_id) if jacket_id else None,
+                    "topaz_id": topaz_id,
+                })
+        # Date check
+        if era_date and billing_date and era_date != billing_date:
+            delta = abs((era_date - billing_date).days)
+            if delta > 3:
+                date_mismatches.append({
+                    "claim_id": claim_id,
+                    "era_date": str(era_date),
+                    "billing_date": str(billing_date),
+                    "days_apart": delta,
+                    "era_patient": era_name,
+                    "billing_patient": billing_name,
+                    "confidence": float(confidence) if confidence else None,
+                })
+
+    total_matched = len(matched_rows)
+    issues_found = (
+        len(conflicting_jacket) +
+        len(conflicting_topaz) +
+        len(name_mismatches) +
+        len(date_mismatches)
+    )
+
+    return {
+        "status": "clean" if issues_found == 0 else "issues_found",
+        "total_crosswalk_pairs": len(all_pairs),
+        "total_matched_claims": total_matched,
+        "issues_found": issues_found,
+        "conflicting_jacket_to_topaz": conflicting_jacket[:50],
+        "conflicting_topaz_to_jacket": conflicting_topaz[:50],
+        "name_mismatches": name_mismatches[:50],
+        "date_mismatches": date_mismatches[:50],
+        "summary": {
+            "jacket_conflicts": len(conflicting_jacket),
+            "topaz_conflicts": len(conflicting_topaz),
+            "name_mismatches": len(name_mismatches),
+            "date_mismatches": len(date_mismatches),
+        },
+    }
+
+
 # --- Topaz Export Crosswalk ---
 
 @router.post("/crosswalk/import-topaz")

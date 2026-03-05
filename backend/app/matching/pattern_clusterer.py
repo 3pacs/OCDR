@@ -306,6 +306,7 @@ async def apply_topaz_crosswalk(
     applied = 0
     skipped_already_set = 0
     skipped_no_match = 0
+    skipped_name_mismatch = 0
     name_matched = 0
     updated_ids = set()
 
@@ -318,15 +319,31 @@ async def apply_topaz_crosswalk(
             skipped_no_match += 1
             continue
 
-        # Strategy 1: Direct chart_number match
+        # Strategy 1: Chart_number match WITH name corroboration
         if chart_num:
             candidates = by_chart_number.get(chart_num, [])
-            for br in candidates:
-                if br.id in updated_ids:
-                    continue
-                br.topaz_id = topaz_id
-                updated_ids.add(br.id)
-                applied += 1
+            if candidates and patient_name:
+                # Cross-verify: chart_number matched, now confirm name similarity
+                name_upper = patient_name.upper().strip()
+                for br in candidates:
+                    if br.id in updated_ids:
+                        continue
+                    br_name = br.patient_name.upper().strip() if br.patient_name else ""
+                    name_score = fuzz.token_sort_ratio(name_upper, br_name) if br_name else 0
+                    if name_score >= 70:
+                        br.topaz_id = topaz_id
+                        updated_ids.add(br.id)
+                        applied += 1
+                    else:
+                        skipped_name_mismatch += 1
+            elif candidates:
+                # No name to cross-check — accept chart_number match
+                for br in candidates:
+                    if br.id in updated_ids:
+                        continue
+                    br.topaz_id = topaz_id
+                    updated_ids.add(br.id)
+                    applied += 1
 
         # Strategy 2: Name-based match if no chart_number or chart didn't match
         if chart_num not in by_chart_number and patient_name:
@@ -360,7 +377,8 @@ async def apply_topaz_crosswalk(
 
     logger.info(
         f"Topaz crosswalk: applied {applied} ({name_matched} by name), "
-        f"skipped {skipped_no_match} (no topaz_id)"
+        f"skipped {skipped_no_match} (no topaz_id), "
+        f"skipped {skipped_name_mismatch} (name mismatch)"
     )
 
     return {
@@ -371,4 +389,5 @@ async def apply_topaz_crosswalk(
         "by_name_match": name_matched,
         "records_needing_topaz": len(records_missing_topaz),
         "skipped_no_topaz_id": skipped_no_match,
+        "skipped_name_mismatch": skipped_name_mismatch,
     }

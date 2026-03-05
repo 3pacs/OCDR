@@ -132,20 +132,31 @@ def _match_single_claim(
 ):
     """Run 6-pass matching for a single claim. Returns (billing_record, confidence, pass_name) or (None, 0, None)."""
 
-    # Pass 0: Topaz ID crosswalk match
+    # Pass 0: Topaz ID crosswalk match (with name corroboration)
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
         candidates = billing_by_topaz_id.get(topaz_key, [])
-        if len(candidates) == 1:
-            return candidates[0], 0.99, "pass_0_topaz_id"
-        if len(candidates) > 1 and claim_date:
-            date_matches = [c for c in candidates if c.service_date == claim_date]
-            if len(date_matches) == 1:
-                return date_matches[0], 0.99, "pass_0_topaz_id"
-            if len(date_matches) > 1 and claim_paid:
-                for br in date_matches:
-                    if br.total_payment and abs(float(br.total_payment) - claim_paid) < 0.01:
-                        return br, 0.99, "pass_0_topaz_id"
+        if candidates and claim_name:
+            # Require name corroboration — a matching topaz_id PLUS
+            # patient name similarity prevents wrong-ID assignments
+            best_br = None
+            best_score = 0
+            for c in candidates:
+                norm = billing_norm_names.get(c.id, "")
+                name_score = fuzz.token_sort_ratio(claim_name, norm) if norm else 0
+                # Also boost if date matches
+                date_match = (c.service_date == claim_date) if claim_date else False
+                combined = name_score + (10 if date_match else 0)
+                if combined > best_score:
+                    best_score = combined
+                    best_br = c
+            # Accept if name is at least loosely similar (>=70) or date+name combined
+            if best_br and best_score >= 70:
+                return best_br, 0.99, "pass_0_topaz_id"
+        elif len(candidates) == 1 and not claim_name:
+            # No name on the claim to cross-check — accept sole ID match
+            # but at lower confidence
+            return candidates[0], 0.90, "pass_0_topaz_id"
 
     # Pass 1: Exact composite (name + date + amount)
     if claim_name and claim_date:
