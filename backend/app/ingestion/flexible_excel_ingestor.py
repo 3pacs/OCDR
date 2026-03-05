@@ -84,6 +84,11 @@ COLUMN_ALIASES = {
         "patient id", "patient_id", "id", "mrn", "medical record",
         "record number", "chart number", "acct", "account",
         "patient number", "patid", "pt id",
+        "jacket id", "jacket", "jacket number", "jacket#", "jacket no",
+    ],
+    "topaz_id": [
+        "topaz id", "topaz_id", "topazid", "topaz", "topaz #",
+        "topaz number", "topaz no", "billing id", "billing_id",
     ],
     "birth_date": [
         "birth date", "birth_date", "dob", "date of birth", "birthdate",
@@ -123,6 +128,8 @@ DATE_FIELDS = {"service_date", "birth_date", "schedule_date"}
 BOOL_FIELDS = {"gado_used", "is_new_patient"}
 # Fields that accept integer values
 INT_FIELDS = {"patient_id"}
+# Fields stored as strings but often numeric in Excel (strip trailing .0)
+NUMERIC_STRING_FIELDS = {"topaz_id"}
 
 
 def _excel_serial_to_date(serial) -> date | None:
@@ -479,6 +486,15 @@ async def import_excel_flexible(
                             record_data[field] = int(float(val))
                         except (ValueError, TypeError):
                             record_data[field] = None
+                    else:
+                        record_data[field] = None
+                elif field in NUMERIC_STRING_FIELDS:
+                    # Stored as string but often numeric in Excel (e.g. 9125.0 → "9125")
+                    if val is not None:
+                        try:
+                            record_data[field] = str(int(float(val)))
+                        except (ValueError, TypeError):
+                            record_data[field] = _clean_text(val)
                     else:
                         record_data[field] = None
                 else:
