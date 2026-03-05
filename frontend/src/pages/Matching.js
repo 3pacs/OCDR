@@ -185,6 +185,137 @@ function UnmatchedTable() {
   );
 }
 
+function TopazUpload({ onImported }) {
+  const [uploading, setUploading] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState(null);
+  const fileRef = React.useRef();
+
+  const handlePreview = async () => {
+    const file = fileRef.current?.files?.[0];
+    if (!file) return;
+    setPreviewing(true);
+    setError(null);
+    setPreview(null);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post("/matching/crosswalk/preview-topaz", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
+      });
+      setPreview(res.data);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.response?.data?.message || err.message);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleImport = async () => {
+    const file = fileRef.current?.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post("/matching/crosswalk/import-topaz", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 300000,
+      });
+      setResult(res.data);
+      if (onImported) onImported();
+    } catch (err) {
+      setError(err.response?.data?.detail || err.response?.data?.message || err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Card className="border-0 shadow-sm mb-4">
+      <Card.Body>
+        <Card.Title>Upload Topaz Export</Card.Title>
+        <p className="text-muted small mb-3">
+          Upload a data export from the Topaz billing server to map Chart Numbers to Topaz IDs.
+          Supports any format &mdash; pipe-delimited, tab, CSV, XML, or extensionless .NET files.
+        </p>
+
+        <div className="d-flex align-items-center gap-2 mb-3">
+          <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 350 }}
+            onChange={() => { setPreview(null); setResult(null); setError(null); }} />
+          <Button variant="outline-secondary" size="sm" onClick={handlePreview}
+            disabled={previewing || uploading}>
+            {previewing ? <><Spinner size="sm" className="me-1" />Previewing...</> : "Preview"}
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleImport}
+            disabled={uploading || previewing}>
+            {uploading ? <><Spinner size="sm" className="me-1" />Importing...</> : "Import & Apply"}
+          </Button>
+        </div>
+
+        {error && <Alert variant="danger" className="small">{error}</Alert>}
+
+        {preview && (
+          <Alert variant="info" className="small">
+            <strong>Preview:</strong> Detected format: <Badge bg="secondary">{preview.format}</Badge>{" "}
+            &mdash; {preview.total_rows} rows found
+            {preview.column_mapping && Object.keys(preview.column_mapping).length > 0 && (
+              <span> &mdash; Mapped: {Object.entries(preview.column_mapping).map(([k, v]) =>
+                <Badge key={k} bg="outline-dark" className="border me-1">{k} &larr; &ldquo;{v}&rdquo;</Badge>
+              )}</span>
+            )}
+            {preview.warnings?.length > 0 && (
+              <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
+            )}
+            {preview.sample_pairs?.length > 0 && (
+              <Table size="sm" className="mt-2 mb-0 small">
+                <thead><tr><th>Chart #</th><th>Topaz ID</th><th>Patient</th></tr></thead>
+                <tbody>
+                  {preview.sample_pairs.slice(0, 5).map((p, i) => (
+                    <tr key={i}>
+                      <td>{p.chart_number || "--"}</td>
+                      <td>{p.topaz_id || "--"}</td>
+                      <td>{p.patient_name || "--"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+          </Alert>
+        )}
+
+        {result && (
+          <Alert variant={result.crosswalk_applied?.applied > 0 ? "success" : "warning"} className="small">
+            {result.status === "no_crosswalk_data" ? (
+              <>{result.message}</>
+            ) : (
+              <>
+                <strong>Import complete!</strong>{" "}
+                {result.total_rows_parsed} rows parsed from <Badge bg="secondary">{result.format}</Badge> file.{" "}
+                {result.crosswalk_applied?.applied > 0
+                  ? <>Applied Topaz ID to <strong>{result.crosswalk_applied.applied}</strong> billing records
+                    ({result.crosswalk_applied.by_chart_number} by chart#, {result.crosswalk_applied.by_name_match} by name).
+                  </>
+                  : "No new records needed updating."
+                }
+                {result.warnings?.length > 0 && (
+                  <div className="mt-1 text-warning">Warnings: {result.warnings.join("; ")}</div>
+                )}
+              </>
+            )}
+          </Alert>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
 function CrosswalkTab() {
   const [stats, setStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -223,9 +354,11 @@ function CrosswalkTab() {
 
   return (
     <>
+      <TopazUpload onImported={loadData} />
+
       <p className="text-muted small mb-3">
-        Chart Number (from OCMRI.xlsx column M) &harr; Topaz ID (from ERA 835 claim_id).
-        The matcher learns this crosswalk from confirmed matches.
+        Chart Number (from OCMRI.xlsx column M) &harr; Topaz ID (from Topaz export or ERA 835 claim_id).
+        Upload a Topaz export above for direct mapping, or the matcher will learn from confirmed matches.
       </p>
 
       {stats && (
