@@ -357,14 +357,14 @@ function CrosswalkTab() {
       <TopazUpload onImported={loadData} />
 
       <p className="text-muted small mb-3">
-        Chart Number (from OCMRI.xlsx column M) &harr; Topaz ID (from Topaz export or ERA 835 claim_id).
-        Upload a Topaz export above for direct mapping, or the matcher will learn from confirmed matches.
+        Jacket ID &harr; Topaz ID mapping from your OCMRI spreadsheet.
+        Both IDs are imported directly &mdash; no offset calculation needed.
       </p>
 
       {stats && (
         <Row className="g-3 mb-4">
           <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold">{stats.total_records?.toLocaleString()}</div><small>Total Records</small></Card></Col>
-          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold">{stats.has_chart_number?.toLocaleString()}</div><small>Have Chart #</small></Card></Col>
+          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold">{stats.has_chart_number?.toLocaleString()}</div><small>Have Jacket ID</small></Card></Col>
           <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold text-success">{stats.has_topaz_id?.toLocaleString()}</div><small>Have Topaz ID</small></Card></Col>
           <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold text-warning">{stats.missing_topaz?.toLocaleString()}</div><small>Missing Topaz ID</small></Card></Col>
         </Row>
@@ -373,47 +373,50 @@ function CrosswalkTab() {
       {analysis && analysis.total_pairs > 0 && (
         <Card className="border-0 shadow-sm mb-4">
           <Card.Body>
-            <Card.Title>Discovered Patterns ({analysis.total_pairs} pairs analyzed)</Card.Title>
-            <Table size="sm" className="small mb-3">
-              <thead><tr><th>Pattern</th><th>Count</th></tr></thead>
-              <tbody>
-                <tr><td>Direct equality</td><td>{analysis.patterns?.direct_equal}</td></tr>
-                <tr><td>Numeric offset</td><td>{analysis.patterns?.numeric_offset_total}</td></tr>
-                <tr><td>String prefix</td><td>{analysis.patterns?.string_prefix}</td></tr>
-                <tr><td>String suffix</td><td>{analysis.patterns?.string_suffix}</td></tr>
-                <tr><td>No pattern found</td><td>{analysis.patterns?.no_pattern}</td></tr>
-              </tbody>
-            </Table>
-
-            {analysis.dominant_offset != null && (
-              <Alert variant="info">
-                <strong>Dominant pattern:</strong> topaz_id = chart_number + {analysis.dominant_offset}{" "}
-                ({analysis.dominant_offset_pct}% of pairs)
-                <Button
-                  variant="outline-primary"
-                  size="sm"
-                  className="ms-3"
-                  disabled={propagating}
-                  onClick={() => propagate(analysis.dominant_offset)}
-                >
-                  {propagating ? "Propagating..." : `Apply offset +${analysis.dominant_offset} to missing records`}
-                </Button>
-              </Alert>
-            )}
-
-            {analysis.patterns?.top_offsets?.length > 1 && (
+            {analysis.mapping_type === "direct" ? (
               <>
-                <strong className="small">All offsets found:</strong>
-                <Table size="sm" className="small mt-1">
-                  <thead><tr><th>Offset</th><th>Count</th><th></th></tr></thead>
+                <Card.Title>
+                  Direct Mapping &mdash; {analysis.total_pairs} Jacket ID / Topaz ID pairs
+                </Card.Title>
+                <Alert variant="success" className="mb-3">
+                  Both IDs are imported from the OCMRI spreadsheet. Each patient&apos;s Jacket ID maps
+                  directly to their Topaz ID &mdash; no numeric offset or formula.
+                  The auto-matcher uses Topaz ID for instant claim matching (Pass 0).
+                </Alert>
+                <Row className="g-3 mb-3">
+                  <Col md={4}><div className="text-center"><div className="fs-5 fw-bold">{analysis.unique_jacket_ids}</div><small className="text-muted">Unique Jacket IDs</small></div></Col>
+                  <Col md={4}><div className="text-center"><div className="fs-5 fw-bold">{analysis.unique_topaz_ids}</div><small className="text-muted">Unique Topaz IDs</small></div></Col>
+                  <Col md={4}><div className="text-center"><div className="fs-5 fw-bold">{analysis.total_pairs}</div><small className="text-muted">Total Pairs</small></div></Col>
+                </Row>
+              </>
+            ) : analysis.mapping_type === "offset" ? (
+              <>
+                <Card.Title>Offset Pattern ({analysis.total_pairs} pairs analyzed)</Card.Title>
+                <Alert variant="info">
+                  <strong>Dominant pattern:</strong> topaz_id = jacket_id + {analysis.dominant_offset}{" "}
+                  ({analysis.dominant_offset_pct}% of pairs)
+                  <Button
+                    variant="outline-primary"
+                    size="sm"
+                    className="ms-3"
+                    disabled={propagating}
+                    onClick={() => propagate(analysis.dominant_offset)}
+                  >
+                    {propagating ? "Propagating..." : `Apply offset +${analysis.dominant_offset} to missing records`}
+                  </Button>
+                </Alert>
+              </>
+            ) : (
+              <>
+                <Card.Title>Crosswalk Analysis ({analysis.total_pairs} pairs)</Card.Title>
+                <Table size="sm" className="small mb-3">
+                  <thead><tr><th>Pattern</th><th>Count</th></tr></thead>
                   <tbody>
-                    {analysis.patterns.top_offsets.map((o, i) => (
-                      <tr key={i}>
-                        <td>chart + {o.offset}</td>
-                        <td>{o.count}</td>
-                        <td><Button size="sm" variant="outline-secondary" onClick={() => propagate(o.offset)}>Apply</Button></td>
-                      </tr>
-                    ))}
+                    <tr><td>Direct equality</td><td>{analysis.patterns?.direct_equal}</td></tr>
+                    <tr><td>Numeric offset</td><td>{analysis.patterns?.numeric_offset_total} ({analysis.patterns?.unique_offsets} unique)</td></tr>
+                    <tr><td>String prefix</td><td>{analysis.patterns?.string_prefix}</td></tr>
+                    <tr><td>String suffix</td><td>{analysis.patterns?.string_suffix}</td></tr>
+                    <tr><td>Independent IDs</td><td>{analysis.patterns?.no_pattern}</td></tr>
                   </tbody>
                 </Table>
               </>
@@ -431,20 +434,15 @@ function CrosswalkTab() {
               <>
                 <strong className="small">Sample crosswalk pairs:</strong>
                 <Table size="sm" className="small mt-1">
-                  <thead><tr><th>Patient</th><th>Chart #</th><th>Topaz ID</th><th>Offset</th></tr></thead>
+                  <thead><tr><th>Patient</th><th>Jacket ID</th><th>Topaz ID</th></tr></thead>
                   <tbody>
-                    {analysis.sample_pairs.slice(0, 10).map((p, i) => {
-                      let offset = "--";
-                      try { offset = parseInt(p.topaz_id) - parseInt(p.chart_number); } catch (e) {}
-                      return (
-                        <tr key={i}>
-                          <td>{p.patient}</td>
-                          <td>{p.chart_number}</td>
-                          <td>{p.topaz_id}</td>
-                          <td>{offset}</td>
-                        </tr>
-                      );
-                    })}
+                    {analysis.sample_pairs.slice(0, 10).map((p, i) => (
+                      <tr key={i}>
+                        <td>{p.patient}</td>
+                        <td>{p.jacket_id}</td>
+                        <td>{p.topaz_id}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </Table>
               </>
@@ -455,8 +453,8 @@ function CrosswalkTab() {
 
       {analysis && analysis.total_pairs === 0 && (
         <Alert variant="info">
-          No crosswalk data yet. Run the auto-matcher first &mdash; it will learn chart# &harr; Topaz ID
-          mappings from name/date/amount matches.
+          No crosswalk data yet. Import your OCMRI spreadsheet &mdash; both the Jacket ID
+          and Topaz ID columns will be mapped automatically.
         </Alert>
       )}
     </>

@@ -30,10 +30,13 @@ logger = logging.getLogger(__name__)
 
 async def analyze_crosswalk(session: AsyncSession) -> dict:
     """
-    Analyze chart_number <-> topaz_id pairs from confirmed matches.
-    Returns discovered patterns and statistics.
+    Analyze Jacket ID (patient_id) <-> Topaz ID pairs.
+
+    If both IDs are populated from the spreadsheet (direct mapping),
+    reports coverage stats. Otherwise falls back to pattern analysis
+    for offset/prefix/suffix relationships.
     """
-    # Get all records that have both chart_number (patient_id) and topaz_id
+    # Get all records that have both Jacket ID (patient_id) and topaz_id
     result = await session.execute(
         select(BillingRecord.patient_id, BillingRecord.topaz_id, BillingRecord.patient_name)
         .where(
@@ -46,18 +49,22 @@ async def analyze_crosswalk(session: AsyncSession) -> dict:
     if not pairs:
         return {
             "status": "no_crosswalk_data",
-            "message": "No billing records have both chart_number and topaz_id. Run the auto-matcher first.",
+            "message": "No billing records have both Jacket ID and Topaz ID. Import your OCMRI spreadsheet — both columns will be mapped automatically.",
             "total_pairs": 0,
         }
 
-    # Deduplicate to unique (chart, topaz) pairs
+    # Deduplicate to unique (jacket_id, topaz_id) pairs
     unique_pairs = {}
-    for chart_num, topaz_id, patient_name in pairs:
-        key = (chart_num, topaz_id)
+    for jacket_id, topaz_id, patient_name in pairs:
+        key = (jacket_id, topaz_id)
         if key not in unique_pairs:
             unique_pairs[key] = patient_name
 
-    # Analyze patterns
+    # Count unique Jacket IDs and Topaz IDs
+    unique_jacket_ids = len({k[0] for k in unique_pairs.keys()})
+    unique_topaz_ids = len({k[1] for k in unique_pairs.keys()})
+
+    # Analyze relationship type
     patterns = {
         "direct_equal": 0,
         "numeric_offset": Counter(),
@@ -68,20 +75,20 @@ async def analyze_crosswalk(session: AsyncSession) -> dict:
 
     offsets = []
 
-    for (chart_num, topaz_id), patient_name in unique_pairs.items():
-        chart_str = str(chart_num).strip()
+    for (jacket_id, topaz_id), patient_name in unique_pairs.items():
+        jacket_str = str(jacket_id).strip()
         topaz_str = str(topaz_id).strip()
 
         # Pattern 1: Direct equality
-        if chart_str == topaz_str:
+        if jacket_str == topaz_str:
             patterns["direct_equal"] += 1
             continue
 
         # Pattern 2: Numeric offset
         try:
-            chart_int = int(chart_str)
+            jacket_int = int(jacket_str)
             topaz_int = int(topaz_str)
-            offset = topaz_int - chart_int
+            offset = topaz_int - jacket_int
             offsets.append(offset)
             patterns["numeric_offset"][offset] += 1
             continue
@@ -89,16 +96,16 @@ async def analyze_crosswalk(session: AsyncSession) -> dict:
             pass
 
         # Pattern 3: Prefix/suffix relationship
-        if topaz_str.startswith(chart_str) or chart_str.startswith(topaz_str):
+        if topaz_str.startswith(jacket_str) or jacket_str.startswith(topaz_str):
             patterns["string_prefix"] += 1
             continue
-        if topaz_str.endswith(chart_str) or chart_str.endswith(topaz_str):
+        if topaz_str.endswith(jacket_str) or jacket_str.endswith(topaz_str):
             patterns["string_suffix"] += 1
             continue
 
         # Pattern 4: Zero-padding equivalence
         try:
-            if int(chart_str) == int(topaz_str):
+            if int(jacket_str) == int(topaz_str):
                 patterns["direct_equal"] += 1
                 continue
         except (ValueError, TypeError):
@@ -114,11 +121,34 @@ async def analyze_crosswalk(session: AsyncSession) -> dict:
 
     total = len(unique_pairs)
 
+    # Determine mapping type:
+    # "direct" = both IDs come from the same spreadsheet (many unique offsets, no dominant pattern)
+    # "offset" = a single consistent offset exists
+    # "mixed" = some pattern but not dominant
+    unique_offset_count = len(patterns["numeric_offset"])
+    has_dominant_offset = (
+        dominant_offset is not None and
+        dominant_offset_count >= total * 0.5
+    )
+
+    if has_dominant_offset:
+        mapping_type = "offset"
+    elif unique_offset_count > total * 0.5 or patterns["no_pattern"] > total * 0.3:
+        mapping_type = "direct"
+    elif patterns["direct_equal"] > total * 0.5:
+        mapping_type = "equal"
+    else:
+        mapping_type = "mixed"
+
     return {
         "total_pairs": total,
+        "unique_jacket_ids": unique_jacket_ids,
+        "unique_topaz_ids": unique_topaz_ids,
+        "mapping_type": mapping_type,
         "patterns": {
             "direct_equal": patterns["direct_equal"],
             "numeric_offset_total": sum(patterns["numeric_offset"].values()),
+            "unique_offsets": unique_offset_count,
             "top_offsets": [
                 {"offset": off, "count": cnt}
                 for off, cnt in patterns["numeric_offset"].most_common(5)
@@ -131,8 +161,8 @@ async def analyze_crosswalk(session: AsyncSession) -> dict:
         "dominant_offset_count": dominant_offset_count,
         "dominant_offset_pct": round(dominant_offset_count / total * 100, 1) if total > 0 and dominant_offset_count > 0 else 0,
         "sample_pairs": [
-            {"chart_number": str(c), "topaz_id": str(t), "patient": n}
-            for (c, t), n in list(unique_pairs.items())[:20]
+            {"jacket_id": str(j), "topaz_id": str(t), "patient": n}
+            for (j, t), n in list(unique_pairs.items())[:20]
         ],
     }
 
