@@ -1,6 +1,25 @@
-"""Payer and fee schedule models."""
+"""Payer and fee schedule models.
 
-from sqlalchemy import Boolean, Integer, Numeric, String
+DATA CLASSIFICATION:
+  SEMI-STATIC: Payer codes, display names, filing deadlines
+    - New payers appear ~1-2x per year
+    - Filing deadlines change when contracts renegotiate
+    - Must be seeded before importing billing data
+
+  SEMI-STATIC: Fee schedule rates
+    - Renegotiated annually per contract
+    - Payer+modality combos are unique
+    - DEFAULT payer_code = fallback when no payer-specific rate
+
+  EXTERNALLY VALIDATABLE:
+    - filing_deadline_days: 30-730 range for real payers, 9999 for self-pay
+    - expected_rate: positive, reasonable range ($50-$50,000)
+    - underpayment_threshold: 0.50-1.00 (50%-100%)
+"""
+
+from sqlalchemy import (
+    Boolean, CheckConstraint, Integer, Numeric, String, UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.session import Base
@@ -15,6 +34,11 @@ class Payer(Base):
     expected_has_secondary: Mapped[bool] = mapped_column(Boolean, default=False)
     alert_threshold_pct: Mapped[float] = mapped_column(Numeric(3, 2), default=0.25)
 
+    __table_args__ = (
+        CheckConstraint("filing_deadline_days > 0", name="ck_payer_deadline_positive"),
+        CheckConstraint("alert_threshold_pct >= 0 AND alert_threshold_pct <= 1", name="ck_payer_threshold_range"),
+    )
+
 
 class FeeSchedule(Base):
     __tablename__ = "fee_schedule"
@@ -24,3 +48,12 @@ class FeeSchedule(Base):
     modality: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     expected_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     underpayment_threshold: Mapped[float] = mapped_column(Numeric(3, 2), default=0.80)
+
+    __table_args__ = (
+        UniqueConstraint("payer_code", "modality", name="uq_fee_schedule_payer_modality"),
+        CheckConstraint("expected_rate > 0", name="ck_fee_rate_positive"),
+        CheckConstraint(
+            "underpayment_threshold >= 0.3 AND underpayment_threshold <= 1.0",
+            name="ck_fee_threshold_range",
+        ),
+    )

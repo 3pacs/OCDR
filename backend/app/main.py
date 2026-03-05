@@ -59,7 +59,44 @@ async def lifespan(app: FastAPI):
                 ))
             except Exception as e:
                 logger.debug(f"Column {table}.{column} widen skipped: {e}")
-    logger.info("Schema migrations applied")
+        # Add check constraints (idempotent — skip if already exists)
+        constraints = [
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_primary_nonneg CHECK (primary_payment >= 0)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_secondary_nonneg CHECK (secondary_payment >= 0)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_total_nonneg CHECK (total_payment >= 0)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_patient_name_len CHECK (length(patient_name) >= 2)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_carrier_len CHECK (length(insurance_carrier) >= 1)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_modality_len CHECK (length(modality) >= 1)",
+            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_date_min CHECK (service_date >= '2010-01-01')",
+            "ALTER TABLE payers ADD CONSTRAINT ck_payer_deadline_positive CHECK (filing_deadline_days > 0)",
+            "ALTER TABLE fee_schedule ADD CONSTRAINT ck_fee_rate_positive CHECK (expected_rate > 0)",
+            "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_claim_status CHECK (claim_status IS NULL OR claim_status IN ('1','2','4','22','23'))",
+            "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_cas_group CHECK (cas_group_code IS NULL OR cas_group_code IN ('CO','CR','OA','PI','PR'))",
+            "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_confidence_range CHECK (match_confidence IS NULL OR (match_confidence >= 0 AND match_confidence <= 1))",
+        ]
+        for sql in constraints:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass  # Constraint already exists
+
+        # Composite indexes for analytics performance
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS ix_billing_carrier_modality ON billing_records (insurance_carrier, modality)",
+            "CREATE INDEX IF NOT EXISTS ix_billing_carrier_payment ON billing_records (insurance_carrier, total_payment)",
+            "CREATE INDEX IF NOT EXISTS ix_billing_denial_lookup ON billing_records (denial_status, appeal_deadline)",
+            "CREATE INDEX IF NOT EXISTS ix_billing_doctor_carrier ON billing_records (referring_doctor, insurance_carrier)",
+            "CREATE INDEX IF NOT EXISTS ix_billing_service_year ON billing_records (service_year, insurance_carrier)",
+            "CREATE INDEX IF NOT EXISTS ix_era_claim_match ON era_claim_lines (patient_name_835, service_date_835)",
+            "CREATE INDEX IF NOT EXISTS ix_era_claim_status_group ON era_claim_lines (claim_status, cas_group_code)",
+        ]
+        for sql in indexes:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                logger.debug(f"Index skipped: {e}")
+
+    logger.info("Schema migrations + constraints applied")
 
     # Seed data on startup
     async with AsyncSessionLocal() as session:

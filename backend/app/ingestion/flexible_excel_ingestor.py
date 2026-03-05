@@ -541,6 +541,14 @@ async def import_excel_flexible(
             # Truncate all string fields to their column max lengths
             _truncate_fields(record_data)
 
+            # Validate before inserting
+            from backend.app.analytics.data_validation import validate_billing_record
+            validation_errors = [v for v in validate_billing_record(record_data) if v.severity == "ERROR"]
+            if validation_errors:
+                logger.warning(f"Row {row_idx} validation: {validation_errors[0].message}")
+                errors += 1
+                continue
+
             batch.append(BillingRecord(**record_data))
             imported += 1
 

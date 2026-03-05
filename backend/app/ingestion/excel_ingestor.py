@@ -206,6 +206,14 @@ async def import_excel(
                 skipped += 1
                 continue
 
+            # Validate before inserting
+            from backend.app.analytics.data_validation import validate_billing_record
+            validation_errors = [v for v in validate_billing_record(parsed) if v.severity == "ERROR"]
+            if validation_errors:
+                logger.warning(f"Row {row_idx} validation failed: {validation_errors[0].message}")
+                errors += 1
+                continue
+
             existing_keys.add(dedup_key)
             batch.append(BillingRecord(**parsed))
             imported += 1
