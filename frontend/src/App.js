@@ -7,6 +7,7 @@ import Import from "./pages/Import";
 import Underpayments from "./pages/Underpayments";
 import FilingDeadlines from "./pages/FilingDeadlines";
 import ERAPayments from "./pages/ERAPayments";
+import Matching from "./pages/Matching";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="import" element={<Import />} />
+          <Route path="matching" element={<Matching />} />
           <Route path="underpayments" element={<Underpayments />} />
           <Route path="filing-deadlines" element={<FilingDeadlines />} />
           <Route path="era-payments" element={<ERAPayments />} />

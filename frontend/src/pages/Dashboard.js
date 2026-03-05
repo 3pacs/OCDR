@@ -27,21 +27,24 @@ function Dashboard() {
   const [health, setHealth] = useState(null);
   const [underpaymentSummary, setUnderpaymentSummary] = useState(null);
   const [filingAlerts, setFilingAlerts] = useState(null);
+  const [matchSummary, setMatchSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [healthRes, underpayRes, filingRes] = await Promise.allSettled([
+        const [healthRes, underpayRes, filingRes, matchRes] = await Promise.allSettled([
           api.get("/import/status"),
           api.get("/underpayments/summary"),
           api.get("/filing-deadlines/alerts"),
+          api.get("/matching/summary"),
         ]);
 
         if (healthRes.status === "fulfilled") setHealth(healthRes.value.data);
         if (underpayRes.status === "fulfilled") setUnderpaymentSummary(underpayRes.value.data);
         if (filingRes.status === "fulfilled") setFilingAlerts(filingRes.value.data);
+        if (matchRes.status === "fulfilled") setMatchSummary(matchRes.value.data);
       } catch (err) {
         setError("Could not connect to backend API");
       } finally {
@@ -103,6 +106,45 @@ function Dashboard() {
           color={(filingAlerts?.past_deadline_count ?? 0) > 0 ? "danger" : "success"}
         />
       </Row>
+
+      {matchSummary && matchSummary.total_era_claims > 0 && (
+        <Row className="g-3 mb-4">
+          <Col md={6}>
+            <Card className="border-0 shadow-sm">
+              <Card.Body>
+                <Card.Title>ERA &harr; Billing Match Rate</Card.Title>
+                <div className="d-flex align-items-center gap-3">
+                  <div className="fs-1 fw-bold" style={{ color: matchSummary.match_rate > 80 ? "#198754" : matchSummary.match_rate > 50 ? "#ffc107" : "#dc3545" }}>
+                    {matchSummary.match_rate}%
+                  </div>
+                  <div>
+                    <div>{matchSummary.matched?.toLocaleString()} matched / {matchSummary.total_era_claims?.toLocaleString()} ERA claims</div>
+                    <div className="text-muted small">{matchSummary.unmatched?.toLocaleString()} unmatched &mdash; {matchSummary.denied_claims} denied</div>
+                    <Link to="/matching" className="small">View details &rarr;</Link>
+                  </div>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+          <Col md={6}>
+            <Card className="border-0 shadow-sm">
+              <Card.Body>
+                <Card.Title>Billing Records Linked</Card.Title>
+                <div className="d-flex align-items-center gap-3">
+                  <div className="fs-1 fw-bold text-primary">{matchSummary.billing_records_linked?.toLocaleString()}</div>
+                  <div>
+                    <div>records linked to ERA payment data</div>
+                    <div className="text-muted small">
+                      {health?.total_records ? `${Math.round(matchSummary.billing_records_linked / health.total_records * 100)}% of ${health.total_records.toLocaleString()} total` : ""}
+                    </div>
+                    <Link to="/matching" className="small">Run matcher &rarr;</Link>
+                  </div>
+                </div>
+              </Card.Body>
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       {underpaymentSummary?.by_carrier?.length > 0 && (
         <Card className="border-0 shadow-sm mb-4">

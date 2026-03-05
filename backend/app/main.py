@@ -114,8 +114,10 @@ from backend.app.api.routes.import_routes import router as import_router
 from backend.app.api.routes.era_routes import router as era_router
 from backend.app.api.routes.revenue_routes import router as revenue_router
 from backend.app.api.routes.admin_routes import router as admin_router
+from backend.app.api.routes.matching_routes import router as matching_router
 
 app.include_router(import_router, prefix="/api/import", tags=["import"])
 app.include_router(era_router, prefix="/api/era", tags=["era"])
 app.include_router(revenue_router, prefix="/api", tags=["revenue"])
 app.include_router(admin_router, prefix="/api", tags=["admin"])
+app.include_router(matching_router, prefix="/api/matching", tags=["matching"])
