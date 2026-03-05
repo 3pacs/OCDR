@@ -3,6 +3,7 @@ from backend.app.models.era import ERAPayment, ERAClaimLine
 from backend.app.models.payer import Payer, FeeSchedule
 from backend.app.models.physician import Physician, PhysicianStatement
 from backend.app.models.import_file import ImportFile
+from backend.app.models.insight_log import InsightLog
 
 __all__ = [
     "BillingRecord",
@@ -13,4 +14,5 @@ __all__ = [
     "Physician",
     "PhysicianStatement",
     "ImportFile",
+    "InsightLog",
 ]

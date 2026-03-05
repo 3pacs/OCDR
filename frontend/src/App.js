@@ -10,6 +10,7 @@ import ERAPayments from "./pages/ERAPayments";
 import Matching from "./pages/Matching";
 import Denials from "./pages/Denials";
 import SecondaryFollowup from "./pages/SecondaryFollowup";
+import Insights from "./pages/Insights";
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
           <Route path="filing-deadlines" element={<FilingDeadlines />} />
           <Route path="secondary-followup" element={<SecondaryFollowup />} />
           <Route path="era-payments" element={<ERAPayments />} />
+          <Route path="insights" element={<Insights />} />
         </Route>
       </Routes>
     </>

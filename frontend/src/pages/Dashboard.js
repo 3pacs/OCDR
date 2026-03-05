@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Card, Col, Row, Spinner, Alert } from "react-bootstrap";
+import { Card, Col, Row, Spinner, Alert, Badge } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import api from "../services/api";
@@ -28,23 +28,32 @@ function Dashboard() {
   const [underpaymentSummary, setUnderpaymentSummary] = useState(null);
   const [filingAlerts, setFilingAlerts] = useState(null);
   const [matchSummary, setMatchSummary] = useState(null);
+  const [denialSummary, setDenialSummary] = useState(null);
+  const [secondarySummary, setSecondarySummary] = useState(null);
+  const [topInsights, setTopInsights] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [healthRes, underpayRes, filingRes, matchRes] = await Promise.allSettled([
+        const results = await Promise.allSettled([
           api.get("/import/status"),
           api.get("/underpayments/summary"),
           api.get("/filing-deadlines/alerts"),
           api.get("/matching/summary"),
+          api.get("/denials/summary"),
+          api.get("/secondary-followup/summary"),
+          api.get("/insights/recommendations"),
         ]);
 
-        if (healthRes.status === "fulfilled") setHealth(healthRes.value.data);
-        if (underpayRes.status === "fulfilled") setUnderpaymentSummary(underpayRes.value.data);
-        if (filingRes.status === "fulfilled") setFilingAlerts(filingRes.value.data);
-        if (matchRes.status === "fulfilled") setMatchSummary(matchRes.value.data);
+        if (results[0].status === "fulfilled") setHealth(results[0].value.data);
+        if (results[1].status === "fulfilled") setUnderpaymentSummary(results[1].value.data);
+        if (results[2].status === "fulfilled") setFilingAlerts(results[2].value.data);
+        if (results[3].status === "fulfilled") setMatchSummary(results[3].value.data);
+        if (results[4].status === "fulfilled") setDenialSummary(results[4].value.data);
+        if (results[5].status === "fulfilled") setSecondarySummary(results[5].value.data);
+        if (results[6].status === "fulfilled") setTopInsights(results[6].value.data);
       } catch (err) {
         setError("Could not connect to backend API");
       } finally {
@@ -104,6 +113,37 @@ function Dashboard() {
           subtitle={`${filingAlerts?.past_deadline_count ?? 0} past deadline, ${filingAlerts?.warning_count ?? 0} warning`}
           link="/filing-deadlines"
           color={(filingAlerts?.past_deadline_count ?? 0) > 0 ? "danger" : "success"}
+        />
+      </Row>
+
+      <Row className="g-3 mb-4">
+        <KpiCard
+          title="Denied Claims"
+          value={denialSummary?.total_denied?.toLocaleString() ?? "0"}
+          subtitle={denialSummary ? `${denialSummary.pending} pending, ${denialSummary.appealed} appealed` : null}
+          link="/denials"
+          color="danger"
+        />
+        <KpiCard
+          title="Missing Secondary"
+          value={secondarySummary?.total_claims?.toLocaleString() ?? "0"}
+          subtitle={secondarySummary ? `Est. ${formatMoney(secondarySummary.estimated_missing_secondary)} missing` : null}
+          link="/secondary-followup"
+          color="warning"
+        />
+        <KpiCard
+          title="AI Insights"
+          value={topInsights?.total ?? "0"}
+          subtitle={topInsights ? `${formatMoney(topInsights.total_impact)} potential impact` : null}
+          link="/insights"
+          color="info"
+        />
+        <KpiCard
+          title="Critical Insights"
+          value={(topInsights?.recommendations || []).filter((r) => r.severity === "CRITICAL").length}
+          subtitle="need immediate attention"
+          link="/insights"
+          color={(topInsights?.recommendations || []).some((r) => r.severity === "CRITICAL") ? "danger" : "success"}
         />
       </Row>
 
@@ -182,6 +222,33 @@ function Dashboard() {
             {(filingAlerts.past_deadline?.length > 5 || filingAlerts.warning?.length > 5) && (
               <Link to="/filing-deadlines">View all alerts &rarr;</Link>
             )}
+          </Card.Body>
+        </Card>
+      )}
+
+      {topInsights?.recommendations?.length > 0 && (
+        <Card className="border-0 shadow-sm mt-4">
+          <Card.Body>
+            <Card.Title>Top Recommendations</Card.Title>
+            {topInsights.recommendations.slice(0, 5).map((rec, i) => (
+              <Alert
+                key={i}
+                variant={rec.severity === "CRITICAL" ? "danger" : rec.severity === "HIGH" ? "warning" : "info"}
+                className="py-2 mb-2"
+              >
+                <div className="d-flex justify-content-between align-items-start">
+                  <div>
+                    <Badge bg={rec.severity === "CRITICAL" ? "danger" : rec.severity === "HIGH" ? "warning" : "info"} className="me-2">{rec.severity}</Badge>
+                    <strong>{rec.title}</strong>
+                    <div className="small text-muted mt-1">{rec.recommendation.substring(0, 200)}{rec.recommendation.length > 200 ? "..." : ""}</div>
+                  </div>
+                  {rec.estimated_impact > 0 && (
+                    <Badge bg="success" className="ms-2 fs-6">{formatMoney(rec.estimated_impact)}</Badge>
+                  )}
+                </div>
+              </Alert>
+            ))}
+            <Link to="/insights" className="small">View all {topInsights.total} insights &rarr;</Link>
           </Card.Body>
         </Card>
       )}

@@ -19,6 +19,7 @@ function Layout() {
               <Nav.Link as={NavLink} to="/filing-deadlines">Filing Deadlines</Nav.Link>
               <Nav.Link as={NavLink} to="/secondary-followup">Secondary F/U</Nav.Link>
               <Nav.Link as={NavLink} to="/era-payments">ERA Payments</Nav.Link>
+              <Nav.Link as={NavLink} to="/insights">Insights</Nav.Link>
             </Nav>
           </Navbar.Collapse>
         </Container>
