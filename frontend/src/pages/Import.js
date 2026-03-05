@@ -364,12 +364,211 @@ function ImportHistory() {
   );
 }
 
+function EOBScanner() {
+  const [step, setStep] = useState("idle"); // idle | previewing | scanning | done
+  const [preview, setPreview] = useState(null);
+  const [scanResult, setScanResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const doPreview = async () => {
+    setStep("previewing");
+    setError(null);
+    try {
+      const res = await api.get("/import/scan-eobs/preview");
+      setPreview(res.data);
+      setStep("idle");
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+      setStep("idle");
+    }
+  };
+
+  const doScan = async () => {
+    setStep("scanning");
+    setError(null);
+    try {
+      const res = await api.post("/import/scan-eobs", {}, { timeout: 600000 });
+      setScanResult(res.data);
+      setStep("done");
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+      setStep("idle");
+    }
+  };
+
+  const formatSize = (bytes) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  };
+
+  return (
+    <Card className="border-0 shadow-sm">
+      <Card.Body>
+        <Card.Title>EOB Folder Scanner</Card.Title>
+        <p className="text-muted small">
+          Scans the <code>/app/data/eobs</code> folder (and all subfolders) for new EOB files.
+          Skips files already imported. Handles .835, .edi, .txt, .xlsx, .xls files.
+        </p>
+
+        {error && <Alert variant="danger" dismissible onClose={() => setError(null)}>{error}</Alert>}
+
+        {step === "scanning" && (
+          <div className="text-center py-4">
+            <Spinner animation="border" variant="primary" className="mb-2" />
+            <p>Scanning and importing EOB files... this may take a while.</p>
+            <ProgressBar animated now={100} variant="primary" />
+          </div>
+        )}
+
+        {step !== "scanning" && step !== "done" && (
+          <div className="d-flex gap-2 mb-3">
+            <Button variant="outline-primary" onClick={doPreview} disabled={step === "previewing"}>
+              {step === "previewing" ? <><Spinner size="sm" className="me-1" /> Scanning...</> : "Preview (Dry Run)"}
+            </Button>
+            <Button variant="primary" onClick={doScan}>
+              Scan &amp; Import New Files
+            </Button>
+          </div>
+        )}
+
+        {preview && step !== "done" && (
+          <>
+            <Alert variant="info">
+              <strong>{preview.total_files}</strong> total files found &mdash;{" "}
+              <strong className="text-success">{preview.new_count}</strong> new,{" "}
+              <strong className="text-muted">{preview.already_processed_count}</strong> already processed
+            </Alert>
+
+            {preview.new_files?.length > 0 && (
+              <>
+                <h6>New files to import:</h6>
+                <Table size="sm" striped className="small">
+                  <thead>
+                    <tr><th>File</th><th>Type</th><th>Size</th></tr>
+                  </thead>
+                  <tbody>
+                    {preview.new_files.map((f) => (
+                      <tr key={f.path}>
+                        <td>{f.path}</td>
+                        <td><Badge bg="secondary">{f.extension}</Badge></td>
+                        <td>{formatSize(f.size_bytes)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </>
+            )}
+
+            {preview.new_count === 0 && (
+              <Alert variant="success">All files in the EOB folder have already been processed!</Alert>
+            )}
+          </>
+        )}
+
+        {step === "done" && scanResult && (
+          <>
+            <Alert variant="success">
+              <Alert.Heading>Scan Complete!</Alert.Heading>
+              <Row className="mt-2">
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold">{scanResult.total_files_found}</div>
+                  <small>Total Files</small>
+                </Col>
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold text-muted">{scanResult.already_processed}</div>
+                  <small>Already Done</small>
+                </Col>
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold text-success">{scanResult.imported_835}</div>
+                  <small>835s Imported</small>
+                </Col>
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold text-primary">{scanResult.imported_excel}</div>
+                  <small>Excels Imported</small>
+                </Col>
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold text-info">{scanResult.claims_found}</div>
+                  <small>Claims Found</small>
+                </Col>
+                <Col md={2} className="text-center">
+                  <div className="fs-4 fw-bold text-danger">{scanResult.errors}</div>
+                  <small>Errors</small>
+                </Col>
+              </Row>
+            </Alert>
+
+            {scanResult.details?.length > 0 && (
+              <details>
+                <summary className="small text-muted mb-2">File-by-file details ({scanResult.details.length} files)</summary>
+                <Table size="sm" striped className="small mt-2">
+                  <thead>
+                    <tr><th>File</th><th>Type</th><th>Status</th><th>Details</th></tr>
+                  </thead>
+                  <tbody>
+                    {scanResult.details.map((d, i) => (
+                      <tr key={i}>
+                        <td className="text-truncate" style={{ maxWidth: 250 }}>{d.file}</td>
+                        <td><Badge bg="secondary">{d.type || "?"}</Badge></td>
+                        <td>
+                          <Badge bg={d.status === "ok" ? "success" : d.status === "skipped" ? "warning" : "danger"}>
+                            {d.status}
+                          </Badge>
+                        </td>
+                        <td className="small text-muted">
+                          {d.claims_found != null && `${d.claims_found} claims`}
+                          {d.imported != null && `${d.imported} rows`}
+                          {d.error && d.error}
+                          {d.reason && d.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            <Button variant="primary" onClick={() => { setStep("idle"); setScanResult(null); setPreview(null); }}>
+              Scan Again
+            </Button>
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
 function Import() {
   return (
     <>
       <h2 className="mb-4">Data Import</h2>
 
-      <Tabs defaultActiveKey="flexible" className="mb-4">
+      <Tabs defaultActiveKey="scan" className="mb-4">
+        <Tab eventKey="scan" title="EOB Folder Scan">
+          <Row className="mt-3">
+            <Col md={8}>
+              <EOBScanner />
+            </Col>
+            <Col md={4}>
+              <Card className="border-0 shadow-sm">
+                <Card.Body>
+                  <Card.Title>How Folder Scan Works</Card.Title>
+                  <ol className="small">
+                    <li>Place EOB files in <code>data/eobs/</code> folder (subfolders OK)</li>
+                    <li>Click &quot;Preview&quot; to see what&apos;s new</li>
+                    <li>Click &quot;Scan &amp; Import&quot; to process</li>
+                    <li>Already-imported files are skipped automatically</li>
+                    <li>Run again anytime to catch new files</li>
+                  </ol>
+                  <Alert variant="info" className="small mb-0">
+                    Supports: .835, .edi (X12 ERA), .txt (auto-detected), .xlsx, .xls (smart column matching)
+                  </Alert>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        </Tab>
+
         <Tab eventKey="flexible" title="Smart Import (Any Excel)">
           <Row className="mt-3">
             <Col md={8}>

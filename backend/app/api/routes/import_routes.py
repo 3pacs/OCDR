@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.db.session import get_db
 from backend.app.ingestion.excel_ingestor import import_excel
 from backend.app.ingestion.flexible_excel_ingestor import import_excel_flexible, inspect_excel_file
+from backend.app.ingestion.eob_scanner import scan_eob_folder
 from backend.app.parsing.x12_835_parser import import_835_file, import_835_folder
 from backend.app.revenue.filing_deadlines import update_appeal_deadlines
+from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,71 @@ async def import_history(
             }
             for f in items
         ],
+    }
+
+
+@router.post("/scan-eobs")
+async def scan_eobs(
+    folder_path: str | None = Body(None, embed=True),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Recursively scan EOB folder for new files and import them.
+
+    - Scans /app/data/eobs (or custom folder_path) and all subfolders
+    - Skips files already in the database
+    - Handles .835, .edi, .txt (X12), .xlsx, .xls (Excel)
+    - Returns summary of what was found and imported
+    """
+    scan_path = folder_path or settings.EOBS_DIR
+    try:
+        result = await scan_eob_folder(scan_path, db)
+        # Update appeal deadlines after scan
+        deadlines_updated = await update_appeal_deadlines(db)
+        result["appeal_deadlines_updated"] = deadlines_updated
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.exception(f"EOB scan failed: {e}")
+        raise HTTPException(500, f"Scan failed: {str(e)}")
+
+
+@router.get("/scan-eobs/preview")
+async def scan_eobs_preview(
+    folder_path: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview what an EOB scan would find without importing."""
+    import os
+    from pathlib import Path
+    from backend.app.ingestion.eob_scanner import _scan_directory, _get_processed_filenames
+
+    scan_path = folder_path or settings.EOBS_DIR
+    if not os.path.isdir(scan_path):
+        raise HTTPException(400, f"Folder not found: {scan_path}")
+
+    all_files = _scan_directory(scan_path)
+    processed = await _get_processed_filenames(db)
+
+    new_files = []
+    already_done = []
+    for fp, rel in all_files:
+        ext = Path(fp).suffix.lower()
+        size = os.path.getsize(fp)
+        entry = {"path": rel, "extension": ext, "size_bytes": size}
+        if rel in processed:
+            already_done.append(entry)
+        else:
+            new_files.append(entry)
+
+    return {
+        "folder": scan_path,
+        "total_files": len(all_files),
+        "new_files": new_files,
+        "new_count": len(new_files),
+        "already_processed": already_done,
+        "already_processed_count": len(already_done),
     }
 
 
