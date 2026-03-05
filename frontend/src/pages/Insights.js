@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Card, Table, Spinner, Alert, Row, Col, Badge, Button,
-  Accordion, Tab, Tabs, ProgressBar,
+  Accordion, Tab, Tabs,
 } from "react-bootstrap";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Treemap, PieChart, Pie, Cell, Legend,
+  ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 import { toast } from "react-toastify";
 import api from "../services/api";
@@ -74,7 +74,7 @@ function Insights() {
   }, [tab, recs, graph, report, loadRecs, loadGraph, loadReport]);
 
   const handleAcknowledge = async (id) => {
-    await api.post(`/insights/insights/${id}/status`, { status: "ACKNOWLEDGED" });
+    await api.post(`/insights/${id}/status`, { status: "ACKNOWLEDGED" });
     toast.success("Insight acknowledged");
     loadReport();
   };
@@ -331,7 +331,11 @@ function Insights() {
               )}
 
               {/* Payer trends */}
-              {graph.metrics?.payer_trends && (
+              {graph.metrics?.payer_trends && (() => {
+                const allYears = [...new Set(
+                  Object.values(graph.metrics.payer_trends).flatMap((yrs) => yrs.map((y) => y.year))
+                )].sort();
+                return (
                 <Card className="border-0 shadow-sm mb-4">
                   <Card.Body>
                     <h6>Payer Year-over-Year Trends</h6>
@@ -339,15 +343,9 @@ function Insights() {
                       <thead>
                         <tr>
                           <th>Payer</th>
-                          {(() => {
-                            const allYears = new Set();
-                            Object.values(graph.metrics.payer_trends).forEach((yrs) =>
-                              yrs.forEach((y) => allYears.add(y.year))
-                            );
-                            return [...allYears].sort().map((y) => (
-                              <th key={y} className="text-end">{y}</th>
-                            ));
-                          })()}
+                          {allYears.map((y) => (
+                            <th key={y} className="text-end">{y}</th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
@@ -361,14 +359,10 @@ function Insights() {
                           .map(([carrier, years]) => {
                             const yearMap = {};
                             years.forEach((y) => { yearMap[y.year] = y; });
-                            const allYears = new Set();
-                            Object.values(graph.metrics.payer_trends).forEach((yrs) =>
-                              yrs.forEach((y) => allYears.add(y.year))
-                            );
                             return (
                               <tr key={carrier}>
                                 <td><strong>{carrier}</strong></td>
-                                {[...allYears].sort().map((y) => (
+                                {allYears.map((y) => (
                                   <td key={y} className="text-end small">
                                     {yearMap[y] ? (
                                       <span>{formatMoney(yearMap[y].revenue)}<br /><span className="text-muted">{yearMap[y].count} claims</span></span>
@@ -382,6 +376,8 @@ function Insights() {
                     </Table>
                   </Card.Body>
                 </Card>
+                );
+              })()
               )}
             </>
           )}

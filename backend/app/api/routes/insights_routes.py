@@ -74,7 +74,7 @@ class InsightStatusUpdate(BaseModel):
     notes: str | None = None
 
 
-@router.post("/insights/{insight_id}/status")
+@router.post("/{insight_id}/status")
 async def update_status(
     insight_id: int,
     body: InsightStatusUpdate,

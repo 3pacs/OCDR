@@ -14,12 +14,11 @@ The graph powers recommendations and surfaces hidden patterns:
 from collections import defaultdict
 from datetime import date, timedelta
 
-from sqlalchemy import select, func, and_, or_, case, extract
+from sqlalchemy import String, select, func, case, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
-from backend.app.models.era import ERAClaimLine, ERAPayment
-from backend.app.models.payer import Payer, FeeSchedule
+from backend.app.models.payer import FeeSchedule
 
 
 async def build_knowledge_graph(db: AsyncSession) -> dict:

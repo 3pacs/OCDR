@@ -17,9 +17,8 @@ Recommendation categories:
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 
-from sqlalchemy import select, func, and_, case, extract
+from sqlalchemy import String, or_, select, func, case, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
@@ -197,19 +196,23 @@ async def _analyze_secondary_gaps(db: AsyncSession) -> list[dict]:
     secondary_carriers = {p.code for p in payer_result.scalars()}
     secondary_carriers.update({"M/M", "CALOPTIMA"})
 
-    for carrier in secondary_carriers:
-        q = (
-            select(
-                func.count().label("count"),
-                func.sum(BillingRecord.primary_payment).label("total_primary"),
-            )
-            .where(
-                BillingRecord.insurance_carrier == carrier,
-                BillingRecord.primary_payment > 0,
-                BillingRecord.secondary_payment == 0,
-            )
+    q = (
+        select(
+            BillingRecord.insurance_carrier.label("carrier"),
+            func.count().label("count"),
+            func.sum(BillingRecord.primary_payment).label("total_primary"),
         )
-        row = (await db.execute(q)).one()
+        .where(
+            BillingRecord.insurance_carrier.in_(secondary_carriers),
+            BillingRecord.primary_payment > 0,
+            BillingRecord.secondary_payment == 0,
+        )
+        .group_by(BillingRecord.insurance_carrier)
+        .having(func.count() >= 10)
+    )
+    rows = await db.execute(q)
+    for row in rows:
+        carrier = row.carrier
         if row.count and row.count >= 10:
             est_secondary = float(row.total_primary or 0) * 0.335
             results.append({
@@ -245,7 +248,7 @@ async def _analyze_payer_trends(db: AsyncSession) -> list[dict]:
             BillingRecord.insurance_carrier.label("carrier"),
             func.coalesce(
                 BillingRecord.service_year,
-                extract("year", BillingRecord.service_date).cast(func.text.__class__),
+                extract("year", BillingRecord.service_date).cast(String),
             ).label("year"),
             func.count().label("count"),
             func.sum(BillingRecord.total_payment).label("revenue"),
@@ -515,7 +518,6 @@ async def _analyze_process_improvements(db: AsyncSession) -> list[dict]:
             BillingRecord.insurance_carrier == "X",
         )
     )
-    from sqlalchemy import or_
     no_carrier = (await db.execute(no_carrier_q)).scalar() or 0
     if no_carrier > 50:
         results.append({
