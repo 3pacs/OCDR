@@ -68,7 +68,13 @@ CPT_TO_MODALITY = {
 CLAIM_STATUS_MAP = {
     "1": "PAID_PRIMARY",
     "2": "PAID_SECONDARY",
+    "3": "PAID_TERTIARY",
     "4": "DENIED",
+    "5": "PENDING",
+    "10": "PENDING",
+    "13": "PENDING",
+    "19": "PAID_PRIMARY",
+    "20": "PAID_SECONDARY",
     "22": "REVERSAL",
 }
 

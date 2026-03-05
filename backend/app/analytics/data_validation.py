@@ -37,6 +37,23 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+from backend.app.analytics.public_code_tables import (
+    VALID_CARC_CODES,
+    VALID_CLAIM_STATUS_CODES,
+    VALID_PAYMENT_METHODS,
+    VALID_CAS_GROUP_CODES,
+    VALID_RADIOLOGY_CPT_CODES,
+    CPT_TO_MODALITY_EXTENDED,
+    CARC_CODES,
+    CLAIM_STATUS_CODES,
+    is_valid_cpt_format,
+    is_radiology_cpt_range,
+    lookup_carc,
+    lookup_claim_status,
+    lookup_cpt,
+    cpt_to_modality,
+)
+
 
 # ============================================================
 # STATIC ENUMS — these are the source of truth
@@ -52,56 +69,40 @@ VALID_DENIAL_STATUSES = frozenset({
     "RESUBMITTED", "PAID_ON_APPEAL",
 })
 
-VALID_CLAIM_STATUSES = frozenset({
-    "1",   # Processed as primary
-    "2",   # Processed as secondary
-    "4",   # Denied
-    "22",  # Reversal of previous payment
-    "23",  # Predetermination pricing
-})
+# X12 835 claim status codes — full standard set from public_code_tables
+VALID_CLAIM_STATUSES = VALID_CLAIM_STATUS_CODES
 
 CLAIM_STATUS_LABELS = {
     "1": "PAID_PRIMARY",
     "2": "PAID_SECONDARY",
+    "3": "PAID_TERTIARY",
     "4": "DENIED",
+    "5": "PENDED",
+    "10": "RECEIVED_NOT_IN_PROCESS",
+    "13": "SUSPENDED",
+    "15": "SUSPENDED_INVESTIGATION",
+    "16": "SUSPENDED_RETURN_MATERIAL",
+    "17": "SUSPENDED_REVIEW_ORG",
+    "19": "PRIMARY_FORWARDED",
+    "20": "SECONDARY_FORWARDED",
+    "21": "TERTIARY_FORWARDED",
     "22": "REVERSAL",
-    "23": "PREDETERMINATION",
+    "23": "NOT_OUR_CLAIM_FORWARDED",
+    "25": "PREDETERMINATION",
 }
 
-# ANSI X12 Claim Adjustment Group Codes
-CAS_GROUP_CODES = frozenset({
-    "CO",  # Contractual Obligation
-    "CR",  # Correction/Reversal
-    "OA",  # Other Adjustment
-    "PI",  # Payer Initiated Reduction
-    "PR",  # Patient Responsibility
-})
+# ANSI X12 Claim Adjustment Group Codes — from public standard
+CAS_GROUP_CODES = VALID_CAS_GROUP_CODES
 
-# Common CAS Reason Codes (CARC) — top 30 most seen
-COMMON_CAS_REASON_CODES = frozenset({
-    "1", "2", "3", "4", "5", "16", "18", "22", "23", "24",
-    "26", "27", "29", "31", "45", "50", "55", "59", "96", "97",
-    "100", "107", "109", "119", "125", "130", "131", "133", "136", "140",
-    "146", "167", "170", "171", "181", "186", "187", "188", "189", "190",
-    "197", "198", "199", "204", "213", "216", "219", "222", "223", "224",
-    "226", "227", "234", "235", "236", "237", "238", "239", "240", "242",
-    "243", "246", "247", "253", "261", "262",
-})
+# Full CARC codes from public_code_tables (294 codes)
+COMMON_CAS_REASON_CODES = VALID_CARC_CODES
 
-PAYMENT_METHODS = frozenset({"CHK", "ACH", "NON", "FWT", "BOP"})
+PAYMENT_METHODS = VALID_PAYMENT_METHODS
 
 IMPORT_SOURCES = frozenset({"excel_structured", "excel_flexible", "era_835", "manual"})
 
-# CPT to modality crosswalk (externally validatable against CMS)
-CPT_TO_MODALITY = {
-    "74177": "CT", "74178": "CT", "74176": "CT", "72193": "CT",
-    "72192": "CT", "74174": "CT", "71260": "CT", "71250": "CT",
-    "70553": "HMRI", "70551": "HMRI", "70552": "HMRI",
-    "73721": "HMRI", "73718": "HMRI", "73220": "HMRI",
-    "78816": "PET", "78815": "PET", "78814": "PET",
-    "78300": "BONE", "78305": "BONE",
-    "71046": "DX", "71045": "DX", "73030": "DX",
-}
+# CPT to modality crosswalk — extended version from public_code_tables
+CPT_TO_MODALITY = CPT_TO_MODALITY_EXTENDED
 
 
 # ============================================================
@@ -254,18 +255,26 @@ def validate_billing_record(record: dict) -> list[ValidationResult]:
 
 
 def validate_era_claim_line(record: dict) -> list[ValidationResult]:
-    """Validate an ERA claim line."""
+    """Validate an ERA claim line against public X12/CMS standards."""
     results = []
 
-    # Claim status
+    # --- Claim status (X12 835 CLP02 standard) ---
     status = record.get("claim_status")
     if status and status not in VALID_CLAIM_STATUSES:
         results.append(ValidationResult(
             False, "claim_status", status,
-            f"Unknown claim status '{status}'. Valid: {', '.join(sorted(VALID_CLAIM_STATUSES))}",
+            f"Unknown X12 claim status '{status}'. Valid codes: {', '.join(sorted(VALID_CLAIM_STATUSES))}",
         ))
+    elif status:
+        label = lookup_claim_status(status)
+        if label and "Denied" in label:
+            results.append(ValidationResult(
+                True, "claim_status", status,
+                f"Claim denied: {label}",
+                severity="INFO",
+            ))
 
-    # CAS group code
+    # --- CAS group code (X12 standard) ---
     group = record.get("cas_group_code")
     if group and group.upper() not in CAS_GROUP_CODES:
         results.append(ValidationResult(
@@ -274,18 +283,65 @@ def validate_era_claim_line(record: dict) -> list[ValidationResult]:
             severity="WARNING",
         ))
 
-    # CPT code format
+    # --- CAS reason code (CARC — full public standard) ---
+    reason = record.get("cas_reason_code")
+    if reason:
+        reason_clean = str(reason).strip()
+        if reason_clean not in VALID_CARC_CODES:
+            results.append(ValidationResult(
+                False, "cas_reason_code", reason,
+                f"Unknown CARC code '{reason}'. Not in X12 CARC standard (294 codes)",
+                severity="WARNING",
+            ))
+        else:
+            desc = lookup_carc(reason_clean)
+            # Flag high-impact denial reasons
+            if reason_clean in ("29", "27", "26"):  # Timely filing, coverage terminated, prior to coverage
+                results.append(ValidationResult(
+                    True, "cas_reason_code", reason,
+                    f"Filing/eligibility denial: CARC-{reason_clean} ({desc})",
+                    severity="INFO",
+                ))
+
+    # --- CPT/HCPCS code format and range validation ---
     cpt = record.get("cpt_code")
     if cpt:
         clean = cpt.strip()
-        if not (clean.isdigit() and len(clean) == 5):
+        if not is_valid_cpt_format(clean):
             results.append(ValidationResult(
                 False, "cpt_code", cpt,
-                f"CPT code '{cpt}' is not a valid 5-digit code",
+                f"'{cpt}' is not valid CPT (5 digits) or HCPCS Level II (letter + 4 digits) format",
                 severity="WARNING",
             ))
+        elif clean.isdigit() and not is_radiology_cpt_range(clean):
+            results.append(ValidationResult(
+                False, "cpt_code", cpt,
+                f"CPT '{cpt}' is outside radiology ranges (70010-76999, 77001-77799, 78000-79999)",
+                severity="WARNING",
+            ))
+        elif clean in VALID_RADIOLOGY_CPT_CODES:
+            # Known code — check modality crosswalk consistency
+            expected_modality = cpt_to_modality(clean)
+            claim_modality = record.get("modality")
+            if expected_modality and claim_modality and expected_modality.upper() != claim_modality.upper():
+                results.append(ValidationResult(
+                    False, "cpt_code", cpt,
+                    f"CPT {cpt} ({lookup_cpt(clean)}) maps to {expected_modality}, "
+                    f"but claim modality is {claim_modality}",
+                    severity="WARNING",
+                ))
 
-    # Paid vs billed sanity
+    # --- Payment method (X12 BPR01 standard) ---
+    payment_method = record.get("payment_method")
+    if payment_method and payment_method not in VALID_PAYMENT_METHODS:
+        results.append(ValidationResult(
+            False, "payment_method", payment_method,
+            f"Unknown payment method '{payment_method}'. Valid X12 BPR codes: "
+            f"{', '.join(sorted(VALID_PAYMENT_METHODS))}",
+            severity="WARNING",
+        ))
+
+    # --- Paid vs billed sanity ---
     billed = float(record.get("billed_amount", 0) or 0)
     paid = float(record.get("paid_amount", 0) or 0)
     if paid > billed > 0:
@@ -294,6 +350,84 @@ def validate_era_claim_line(record: dict) -> list[ValidationResult]:
             f"Paid (${paid:,.2f}) exceeds billed (${billed:,.2f})",
             severity="WARNING",
         ))
+
+    # --- CAS adjustment amount vs billed-paid delta ---
+    cas_adj = float(record.get("cas_adjustment_amount", 0) or 0)
+    if cas_adj > 0 and billed > 0 and paid >= 0:
+        expected_adj = billed - paid
+        if expected_adj > 0 and abs(cas_adj - expected_adj) > 1.0:
+            results.append(ValidationResult(
+                False, "cas_adjustment_amount", cas_adj,
+                f"CAS adjustment (${cas_adj:,.2f}) differs from billed-paid delta "
+                f"(${expected_adj:,.2f}) by more than $1.00",
+                severity="INFO",
+            ))
+
+    return results
+
+
+def validate_era_payment(record: dict) -> list[ValidationResult]:
+    """Validate an ERA payment record against X12 835 standards."""
+    results = []
+
+    # Payment method (BPR01)
+    method = record.get("payment_method")
+    if method and method not in VALID_PAYMENT_METHODS:
+        results.append(ValidationResult(
+            False, "payment_method", method,
+            f"Unknown X12 payment method '{method}'. Valid: {', '.join(sorted(VALID_PAYMENT_METHODS))}",
+            severity="WARNING",
+        ))
+
+    # Payment amount sanity
+    amount = record.get("payment_amount")
+    if amount is not None:
+        try:
+            fval = float(amount)
+            if fval < 0:
+                results.append(ValidationResult(
+                    False, "payment_amount", amount,
+                    f"Negative ERA payment amount: ${fval:,.2f}",
+                    severity="WARNING",
+                ))
+            if fval > 1_000_000:
+                results.append(ValidationResult(
+                    False, "payment_amount", amount,
+                    f"Unusually large ERA payment: ${fval:,.2f} — verify",
+                    severity="WARNING",
+                ))
+        except (ValueError, TypeError):
+            results.append(ValidationResult(
+                False, "payment_amount", amount,
+                f"Payment amount is not a valid number: {amount}",
+            ))
+
+    # Payment date sanity
+    pdate = record.get("payment_date")
+    if pdate and isinstance(pdate, date):
+        if pdate > date.today():
+            results.append(ValidationResult(
+                False, "payment_date", pdate,
+                "ERA payment date is in the future",
+                severity="WARNING",
+            ))
+        if pdate < date(2010, 1, 1):
+            results.append(ValidationResult(
+                False, "payment_date", pdate,
+                "ERA payment date before 2010 — likely a parsing error",
+                severity="WARNING",
+            ))
+
+    # Check/EFT number format
+    check = record.get("check_eft_number")
+    if check:
+        check = str(check).strip()
+        if len(check) < 2:
+            results.append(ValidationResult(
+                False, "check_eft_number", check,
+                "Check/EFT number too short — likely incomplete",
+                severity="WARNING",
+            ))
 
     return results
 
@@ -378,3 +512,107 @@ def validate_batch(records: list[dict], known_payers: set[str] | None = None) ->
         "unknown_payers": sorted(unknown_payers),
         "unknown_modalities": sorted(unknown_modalities),
     }
+
+
+def validate_era_batch(claims: list[dict], payment_info: dict | None = None) -> dict:
+    """Validate a batch of ERA claim lines and optional payment header.
+
+    Returns:
+        {
+            "total": int,
+            "valid": int,
+            "warnings": int,
+            "errors": int,
+            "payment_errors": [...],
+            "claim_errors": [...],
+            "claim_warnings": [...],
+            "unknown_carc_codes": set,
+            "unknown_cpt_codes": set,
+            "non_radiology_cpt_codes": set,
+        }
+    """
+    total = len(claims)
+    valid = 0
+    warnings = 0
+    errors = 0
+    payment_errors = []
+    claim_errors = []
+    claim_warnings = []
+    unknown_carc_codes = set()
+    unknown_cpt_codes = set()
+    non_radiology_cpt_codes = set()
+
+    # Validate payment header
+    if payment_info:
+        p_results = validate_era_payment(payment_info)
+        for r in p_results:
+            payment_errors.append(r.to_dict())
+
+    for i, claim in enumerate(claims):
+        results = validate_era_claim_line(claim)
+
+        rec_errors = [r for r in results if r.severity == "ERROR"]
+        rec_warnings = [r for r in results if r.severity in ("WARNING", "INFO")]
+
+        if rec_errors:
+            errors += 1
+            for e in rec_errors[:3]:
+                claim_errors.append({"claim_index": i, **e.to_dict()})
+        elif rec_warnings:
+            warnings += 1
+            for w in rec_warnings[:3]:
+                claim_warnings.append({"claim_index": i, **w.to_dict()})
+        else:
+            valid += 1
+
+        # Track unknown codes
+        reason = claim.get("cas_reason_code")
+        if reason and str(reason).strip() not in VALID_CARC_CODES:
+            unknown_carc_codes.add(str(reason).strip())
+
+        cpt = claim.get("cpt_code")
+        if cpt:
+            cpt_clean = str(cpt).strip()
+            if cpt_clean.isdigit() and len(cpt_clean) == 5:
+                if cpt_clean not in VALID_RADIOLOGY_CPT_CODES:
+                    unknown_cpt_codes.add(cpt_clean)
+                if not is_radiology_cpt_range(cpt_clean):
+                    non_radiology_cpt_codes.add(cpt_clean)
+
+    return {
+        "total": total,
+        "valid": valid,
+        "warnings": warnings,
+        "errors": errors,
+        "payment_errors": payment_errors[:20],
+        "claim_errors": claim_errors[:50],
+        "claim_warnings": claim_warnings[:50],
+        "unknown_carc_codes": sorted(unknown_carc_codes),
+        "unknown_cpt_codes": sorted(unknown_cpt_codes),
+        "non_radiology_cpt_codes": sorted(non_radiology_cpt_codes),
+    }
+
+
+# ============================================================
+# ENRICHMENT — attach public code descriptions to records
+# ============================================================
+
+def enrich_carc_description(reason_code: str | None) -> str | None:
+    """Return human-readable description for a CARC reason code."""
+    if not reason_code:
+        return None
+    return lookup_carc(str(reason_code).strip())
+
+
+def enrich_claim_status_description(status_code: str | None) -> str | None:
+    """Return human-readable description for an X12 claim status code."""
+    if not status_code:
+        return None
+    return lookup_claim_status(str(status_code).strip())
+
+
+def enrich_cpt_description(cpt_code: str | None) -> str | None:
+    """Return human-readable description for a radiology CPT code."""
+    if not cpt_code:
+        return None
+    return lookup_cpt(str(cpt_code).strip())

@@ -13,6 +13,10 @@ from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.era import ERAPayment, ERAClaimLine
+from backend.app.analytics.data_validation import (
+    validate_era_payment,
+    validate_era_claim_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +161,14 @@ async def import_835_file(
     parsed = parse_835_content(file_content, filename)
     payment_data = parsed["payment"]
 
+    # Validate payment header against X12 standards
+    payment_warnings = []
+    p_results = validate_era_payment(payment_data)
+    for r in p_results:
+        if not r.valid:
+            payment_warnings.append(r.to_dict())
+            logger.warning(f"835 payment validation ({filename}): {r.message}")
+
     era_payment = ERAPayment(
         filename=payment_data["filename"],
         check_eft_number=payment_data["check_eft_number"],
@@ -168,7 +180,21 @@ async def import_835_file(
     session.add(era_payment)
     await session.flush()
 
+    claim_warnings = []
     for claim_data in parsed["claims"]:
+        # Validate each claim against CARC/CPT/X12 standards
+        c_results = validate_era_claim_line(claim_data)
+        for r in c_results:
+            if not r.valid:
+                claim_warnings.append({
+                    "claim_id": claim_data.get("claim_id"),
+                    **r.to_dict(),
+                })
+                logger.warning(
+                    f"835 claim validation ({filename}, claim {claim_data.get('claim_id')}): "
+                    f"{r.message}"
+                )
+
         claim_line = ERAClaimLine(
             era_payment_id=era_payment.id,
             claim_id=claim_data["claim_id"],
@@ -188,7 +214,8 @@ async def import_835_file(
 
     logger.info(
         f"835 import: {filename} — payment=${payment_data['payment_amount']}, "
-        f"{len(parsed['claims'])} claims"
+        f"{len(parsed['claims'])} claims, "
+        f"{len(payment_warnings)} payment warnings, {len(claim_warnings)} claim warnings"
     )
 
     return {
@@ -197,6 +224,10 @@ async def import_835_file(
         "check_eft_number": payment_data["check_eft_number"],
         "payer_name": payment_data["payer_name"],
         "claims_found": len(parsed["claims"]),
+        "validation_warnings": {
+            "payment": payment_warnings[:10],
+            "claims": claim_warnings[:50],
+        },
     }
 
 

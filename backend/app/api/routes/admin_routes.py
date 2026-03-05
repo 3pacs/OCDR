@@ -274,8 +274,18 @@ async def data_classification():
         "valid_enums": {
             "modalities": ["CT", "HMRI", "PET", "BONE", "OPEN", "DX", "PET_PSMA", "FLUORO", "MAMMO", "US", "NM", "DEXA"],
             "denial_statuses": ["DENIED", "PENDING", "APPEALED", "OVERTURNED", "WRITTEN_OFF", "RESUBMITTED", "PAID_ON_APPEAL"],
-            "claim_statuses": {"1": "PAID_PRIMARY", "2": "PAID_SECONDARY", "4": "DENIED", "22": "REVERSAL", "23": "PREDETERMINATION"},
+            "claim_statuses": {
+                "1": "PAID_PRIMARY", "2": "PAID_SECONDARY", "3": "PAID_TERTIARY",
+                "4": "DENIED", "5": "PENDED",
+                "10": "RECEIVED_NOT_IN_PROCESS", "13": "SUSPENDED",
+                "15": "SUSPENDED_INVESTIGATION", "16": "SUSPENDED_RETURN_MATERIAL",
+                "17": "SUSPENDED_REVIEW_ORG",
+                "19": "PRIMARY_FORWARDED", "20": "SECONDARY_FORWARDED", "21": "TERTIARY_FORWARDED",
+                "22": "REVERSAL", "23": "NOT_OUR_CLAIM_FORWARDED", "25": "PREDETERMINATION",
+            },
             "cas_group_codes": {"CO": "Contractual Obligation", "CR": "Correction/Reversal", "OA": "Other Adjustment", "PI": "Payer Initiated Reduction", "PR": "Patient Responsibility"},
-            "payment_methods": ["CHK", "ACH", "NON", "FWT", "BOP"],
+            "payment_methods": ["C", "D", "H", "I", "P", "U", "X", "CHK", "ACH", "BOP", "FWT", "NON"],
+            "carc_code_count": 294,
+            "radiology_cpt_code_count": 196,
         },
     }

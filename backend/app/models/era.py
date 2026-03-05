@@ -72,7 +72,8 @@ class ERAClaimLine(Base):
         Index("ix_era_claim_status_group", "claim_status", "cas_group_code"),
         # Constraints
         CheckConstraint(
-            "claim_status IS NULL OR claim_status IN ('1','2','4','22','23')",
+            "claim_status IS NULL OR claim_status IN "
+            "('1','2','3','4','5','10','13','15','16','17','19','20','21','22','23','25')",
             name="ck_era_claim_status",
         ),
         CheckConstraint(
