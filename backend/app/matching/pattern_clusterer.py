@@ -1,24 +1,25 @@
 """
 Pattern Clustering Engine.
 
-Analyzes confirmed matches to discover structural relationships between
-chart_number (BillingRecord.patient_id from OCMRI.xlsx) and topaz_id
-(ERA claim_id from 835 files).
+Manages the chart_number (BillingRecord.patient_id) ↔ topaz_id
+(ERA claim_id / Topaz billing system ID) crosswalk.
 
-After the auto-matcher links records by name/date/amount, this engine
-examines the resulting (chart_number, topaz_id) pairs to find patterns:
-  - Direct equality
-  - Numeric offset (topaz_id = chart_number ± N)
-  - Prefix/suffix transforms
-  - Zero-padding / stripping
+Two modes of operation:
+  1. DIRECT CROSSWALK: Parse Topaz server export files (.NET extensionless
+     files) that contain explicit chart_number ↔ topaz_id mappings. This is
+     the authoritative source — no offset or pattern guessing needed.
 
-Discovered patterns can then propagate topaz_id to unmatched billing
-records, enabling Pass 0 matching on future ERA imports.
+  2. PATTERN ANALYSIS: When direct exports aren't available, analyze
+     confirmed auto-matcher results to discover structural relationships
+     (offsets, prefixes, etc.) and propagate them.
+
+The direct crosswalk is always preferred when data is available.
 """
 
 import logging
 from collections import Counter
 
+from rapidfuzz import fuzz
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -220,4 +221,124 @@ async def get_crosswalk_stats(session: AsyncSession) -> dict:
         "has_topaz_id": has_topaz.scalar() or 0,
         "has_both": has_both.scalar() or 0,
         "missing_topaz": (has_chart.scalar() or 0) - (has_both.scalar() or 0),
+    }
+
+
+# ============================================================
+# DIRECT CROSSWALK from Topaz export files
+# ============================================================
+
+async def apply_topaz_crosswalk(
+    session: AsyncSession,
+    crosswalk_pairs: list[dict],
+) -> dict:
+    """
+    Apply chart_number ↔ topaz_id crosswalk pairs from a Topaz export file.
+
+    Each pair is a dict that may contain:
+      - chart_number: str (matches BillingRecord.patient_id)
+      - topaz_id: str (the Topaz billing system ID)
+      - patient_name: str (optional, for verification)
+
+    Strategy:
+      1. For each pair with both chart_number and topaz_id:
+         - Find billing records where patient_id == chart_number
+         - Set topaz_id on those records (if not already set)
+      2. For pairs with only topaz_id + patient_name:
+         - Find billing records by fuzzy name match and set topaz_id
+      3. For pairs with only chart_number + patient_name:
+         - Store the mapping for future use when topaz_id becomes available
+
+    Returns summary of updates applied.
+    """
+    if not crosswalk_pairs:
+        return {"status": "empty", "message": "No crosswalk pairs provided", "applied": 0}
+
+    # Load billing records that need topaz_id
+    result = await session.execute(
+        select(BillingRecord).where(BillingRecord.topaz_id.is_(None))
+    )
+    records_missing_topaz = list(result.scalars().all())
+
+    # Build indexes
+    by_chart_number = {}
+    for br in records_missing_topaz:
+        if br.patient_id is not None:
+            key = str(br.patient_id).strip()
+            by_chart_number.setdefault(key, []).append(br)
+
+    by_name = {}
+    for br in records_missing_topaz:
+        if br.patient_name:
+            norm = br.patient_name.upper().strip()
+            by_name.setdefault(norm, []).append(br)
+
+    applied = 0
+    skipped_already_set = 0
+    skipped_no_match = 0
+    name_matched = 0
+    updated_ids = set()
+
+    for pair in crosswalk_pairs:
+        chart_num = str(pair.get("chart_number", "")).strip() if pair.get("chart_number") else None
+        topaz_id = str(pair.get("topaz_id", "")).strip() if pair.get("topaz_id") else None
+        patient_name = pair.get("patient_name", "")
+
+        if not topaz_id:
+            skipped_no_match += 1
+            continue
+
+        # Strategy 1: Direct chart_number match
+        if chart_num:
+            candidates = by_chart_number.get(chart_num, [])
+            for br in candidates:
+                if br.id in updated_ids:
+                    continue
+                br.topaz_id = topaz_id
+                updated_ids.add(br.id)
+                applied += 1
+
+        # Strategy 2: Name-based match if no chart_number or chart didn't match
+        if chart_num not in by_chart_number and patient_name:
+            name_upper = patient_name.upper().strip()
+            # Try exact name match first
+            exact_matches = by_name.get(name_upper, [])
+            for br in exact_matches:
+                if br.id in updated_ids:
+                    continue
+                br.topaz_id = topaz_id
+                updated_ids.add(br.id)
+                applied += 1
+                name_matched += 1
+
+            # If no exact match, try fuzzy
+            if not exact_matches and len(name_upper) > 3:
+                for norm_name, brs in by_name.items():
+                    score = fuzz.token_sort_ratio(name_upper, norm_name)
+                    if score >= 92:
+                        for br in brs:
+                            if br.id in updated_ids:
+                                continue
+                            br.topaz_id = topaz_id
+                            updated_ids.add(br.id)
+                            applied += 1
+                            name_matched += 1
+                        break
+
+    if applied > 0:
+        await session.commit()
+
+    logger.info(
+        f"Topaz crosswalk: applied {applied} ({name_matched} by name), "
+        f"skipped {skipped_no_match} (no topaz_id)"
+    )
+
+    return {
+        "status": "success" if applied > 0 else "no_matches",
+        "total_pairs": len(crosswalk_pairs),
+        "applied": applied,
+        "by_chart_number": applied - name_matched,
+        "by_name_match": name_matched,
+        "records_needing_topaz": len(records_missing_topaz),
+        "skipped_no_topaz_id": skipped_no_match,
     }

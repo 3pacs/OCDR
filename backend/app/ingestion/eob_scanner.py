@@ -7,6 +7,7 @@ skips already-processed files, and imports new ones.
 Supports:
   - .835, .edi, .txt  → X12 835 parser
   - .xlsx, .xls       → Flexible Excel ingestor
+  - Extensionless / unknown files → Topaz export parser (if content matches)
 """
 
 import logging
@@ -20,6 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.era import ERAPayment
 from backend.app.models.import_file import ImportFile
 from backend.app.parsing.x12_835_parser import import_835_file
+from backend.app.parsing.topaz_export_parser import (
+    parse_topaz_export,
+    looks_like_topaz_export,
+)
 from backend.app.ingestion.flexible_excel_ingestor import import_excel_flexible
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,15 @@ X12_EXTENSIONS = {".835", ".edi"}
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 # .txt files are ambiguous — we'll sniff content to decide
 TEXT_EXTENSION = ".txt"
+# Binary extensions to always skip
+SKIP_EXTENSIONS = {
+    ".exe", ".dll", ".pdb", ".obj", ".lib", ".so", ".dylib",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico",
+    ".zip", ".gz", ".tar", ".rar", ".7z",
+    ".pdf",  # Handled by separate PDF parser
+    ".doc", ".docx",  # Word docs, not supported
+    ".gitkeep",
+}
 
 
 def _looks_like_x12(content: str) -> bool:
@@ -57,6 +71,8 @@ def _scan_directory(root_path: str) -> list[tuple[str, str]]:
     """
     Recursively find all EOB-like files under root_path.
     Returns list of (full_path, relative_name_for_tracking).
+
+    Includes extensionless files — these may be .NET Topaz server exports.
     """
     files = []
     root = Path(root_path)
@@ -67,10 +83,21 @@ def _scan_directory(root_path: str) -> list[tuple[str, str]]:
         if not path.is_file():
             continue
         ext = path.suffix.lower()
+        if ext in SKIP_EXTENSIONS:
+            continue
         if ext in X12_EXTENSIONS or ext in EXCEL_EXTENSIONS or ext == TEXT_EXTENSION:
-            # Use path relative to root as the tracking name
             rel = str(path.relative_to(root))
             files.append((str(path), rel))
+        elif ext == "" or ext not in SKIP_EXTENSIONS:
+            # Extensionless or unknown extension — candidate for Topaz export
+            # Only include reasonable file sizes (skip huge binaries)
+            try:
+                size = path.stat().st_size
+                if 100 < size < 100_000_000:  # 100B to 100MB
+                    rel = str(path.relative_to(root))
+                    files.append((str(path), rel))
+            except OSError:
+                continue
 
     return files
 
@@ -102,7 +129,9 @@ async def scan_eob_folder(
     results = []
     imported_835 = 0
     imported_excel = 0
+    imported_topaz = 0
     claims_found = 0
+    crosswalk_pairs_found = 0
     errors = 0
 
     for full_path, rel_name in new_files:
@@ -118,18 +147,6 @@ async def scan_eob_folder(
                 imported_835 += 1
                 claims_found += result.get("claims_found", 0)
 
-            elif ext == TEXT_EXTENSION:
-                # Sniff to see if it's X12
-                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
-                    content = f.read()
-                if _looks_like_x12(content):
-                    result = await import_835_file(content, rel_name, session)
-                    results.append({"file": rel_name, "type": "835", "status": "ok", **result})
-                    imported_835 += 1
-                    claims_found += result.get("claims_found", 0)
-                else:
-                    results.append({"file": rel_name, "type": "txt", "status": "skipped", "reason": "not X12 format"})
-
             elif ext in EXCEL_EXTENSIONS:
                 # Excel EOB — use flexible ingestor
                 with open(full_path, "rb") as f:
@@ -137,6 +154,51 @@ async def scan_eob_folder(
                 result = await import_excel_flexible(content, rel_name, session)
                 results.append({"file": rel_name, "type": "excel", "status": "ok", **result})
                 imported_excel += 1
+
+            else:
+                # Text or extensionless — sniff content
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+
+                if _looks_like_x12(content):
+                    result = await import_835_file(content, rel_name, session)
+                    results.append({"file": rel_name, "type": "835", "status": "ok", **result})
+                    imported_835 += 1
+                    claims_found += result.get("claims_found", 0)
+
+                elif looks_like_topaz_export(content):
+                    # Topaz/.NET server export — parse crosswalk data
+                    topaz_result = parse_topaz_export(content, rel_name)
+                    if topaz_result.total_rows > 0:
+                        results.append({
+                            "file": rel_name,
+                            "type": "topaz_export",
+                            "status": "ok",
+                            "format": topaz_result.format_detected,
+                            "crosswalk_pairs": topaz_result.total_rows,
+                            "headers": topaz_result.headers_found[:15],
+                            "column_mapping": topaz_result.column_mapping,
+                            "warnings": topaz_result.warnings,
+                        })
+                        imported_topaz += 1
+                        crosswalk_pairs_found += topaz_result.total_rows
+                    else:
+                        results.append({
+                            "file": rel_name,
+                            "type": "topaz_export",
+                            "status": "no_crosswalk_data",
+                            "format": topaz_result.format_detected,
+                            "headers": topaz_result.headers_found[:15],
+                            "warnings": topaz_result.warnings,
+                        })
+
+                else:
+                    results.append({
+                        "file": rel_name,
+                        "type": ext.lstrip(".") or "extensionless",
+                        "status": "skipped",
+                        "reason": "not X12, Excel, or Topaz export format",
+                    })
 
         except Exception as e:
             logger.warning(f"EOB scan error for {rel_name}: {e}")
@@ -150,14 +212,17 @@ async def scan_eob_folder(
         "new_files_found": len(new_files),
         "imported_835": imported_835,
         "imported_excel": imported_excel,
+        "imported_topaz": imported_topaz,
         "claims_found": claims_found,
+        "crosswalk_pairs_found": crosswalk_pairs_found,
         "errors": errors,
         "details": results,
     }
 
     logger.info(
         f"EOB scan complete: {len(all_files)} total, {skipped_already} already done, "
-        f"{imported_835} 835s, {imported_excel} excels, {errors} errors"
+        f"{imported_835} 835s, {imported_excel} excels, {imported_topaz} topaz exports, "
+        f"{crosswalk_pairs_found} crosswalk pairs, {errors} errors"
     )
 
     return summary
