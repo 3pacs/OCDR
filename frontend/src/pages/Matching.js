@@ -316,6 +316,159 @@ function TopazUpload({ onImported }) {
   );
 }
 
+function FileVerifier() {
+  const [verifying, setVerifying] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const fileRef = React.useRef();
+
+  const handleVerify = async () => {
+    const file = fileRef.current?.files?.[0];
+    if (!file) return;
+    setVerifying(true);
+    setError(null);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await api.post("/matching/crosswalk/verify-file", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000,
+      });
+      setResult(res.data);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const verdictColor = (v) => {
+    if (v === "jacket_id_list") return "success";
+    if (v === "topaz_id_list") return "info";
+    if (v === "multi_field") return "primary";
+    return "secondary";
+  };
+
+  return (
+    <Card className="border-0 shadow-sm mb-4">
+      <Card.Body>
+        <Card.Title>Verify File Against Records</Card.Title>
+        <p className="text-muted small mb-3">
+          Upload any file (extensionless .NET exports, text, etc.) to test whether its
+          contents match Jacket IDs or Topaz IDs in your billing records.
+        </p>
+
+        <div className="d-flex align-items-center gap-2 mb-3">
+          <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 350 }}
+            onChange={() => { setResult(null); setError(null); }} />
+          <Button variant="outline-primary" size="sm" onClick={handleVerify} disabled={verifying}>
+            {verifying ? <><Spinner size="sm" className="me-1" />Verifying...</> : "Test File"}
+          </Button>
+        </div>
+
+        {error && <Alert variant="danger" className="small">{error}</Alert>}
+
+        {result && (
+          <>
+            <Alert variant={verdictColor(result.verdict)} className="small">
+              <strong>Verdict: <Badge bg={verdictColor(result.verdict)}>{result.verdict}</Badge></strong>{" "}
+              &mdash; {result.verdict_detail}
+            </Alert>
+
+            <Row className="g-2 mb-3">
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.total_lines}</div><small>Total Lines</small></div></Col>
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-success">{result.jacket_id_matches}</div><small>Jacket ID Matches</small></div></Col>
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-info">{result.topaz_id_matches}</div><small>Topaz ID Matches</small></div></Col>
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-primary">{result.multi_field_lines}</div><small>Multi-field Lines</small></div></Col>
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-muted">{result.no_match}</div><small>No Match</small></div></Col>
+              <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.unique_jacket_ids_in_db}</div><small>Jacket IDs in DB</small></div></Col>
+            </Row>
+
+            {result.first_10_lines?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold">First 10 lines of file</summary>
+                <pre className="bg-light p-2 small mt-1" style={{ maxHeight: 200, overflow: "auto" }}>
+                  {result.first_10_lines.map((l, i) => `${i + 1}: ${l}`).join("\n")}
+                </pre>
+              </details>
+            )}
+
+            {result.sample_jacket_matches?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">Jacket ID Matches (sample)</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line</th><th>Value</th><th>Patient</th><th>Topaz ID</th><th>Records</th></tr></thead>
+                  <tbody>
+                    {result.sample_jacket_matches.slice(0, 15).map((m, i) => (
+                      <tr key={i}>
+                        <td>{m.line_num}</td>
+                        <td><code>{m.value}</code></td>
+                        <td>{m.sample_patient}</td>
+                        <td>{m.sample_topaz || "--"}</td>
+                        <td>{m.record_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.sample_topaz_matches?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">Topaz ID Matches (sample)</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line</th><th>Value</th><th>Patient</th><th>Jacket ID</th><th>Records</th></tr></thead>
+                  <tbody>
+                    {result.sample_topaz_matches.slice(0, 15).map((m, i) => (
+                      <tr key={i}>
+                        <td>{m.line_num}</td>
+                        <td><code>{m.value}</code></td>
+                        <td>{m.sample_patient}</td>
+                        <td>{m.sample_patient_id || "--"}</td>
+                        <td>{m.record_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.sample_field_analysis?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">Multi-field Line Analysis (sample)</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line</th><th>Fields</th><th>Matched Field</th><th>Match Type</th><th>Patient</th></tr></thead>
+                  <tbody>
+                    {result.sample_field_analysis.slice(0, 15).map((fa, i) => (
+                      <tr key={i}>
+                        <td>{fa.line_num}</td>
+                        <td className="text-truncate" style={{ maxWidth: 250 }}><code>{fa.fields.join(" | ")}</code></td>
+                        <td>{fa.matches.map(m => <Badge key={m.field_index} bg="light" text="dark" className="me-1">col {m.field_index}: {m.value}</Badge>)}</td>
+                        <td>{fa.matches.map(m => <Badge key={m.field_index} bg={m.match_type === "jacket_id" ? "success" : "info"} className="me-1">{m.match_type}</Badge>)}</td>
+                        <td>{fa.matches[0]?.sample_patient}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.sample_no_match?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold">Unmatched Lines (sample)</summary>
+                <pre className="bg-light p-2 small mt-1" style={{ maxHeight: 150, overflow: "auto" }}>
+                  {result.sample_no_match.map(m => `Line ${m.line_num}: ${m.value}`).join("\n")}
+                </pre>
+              </details>
+            )}
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  );
+}
+
 function CrosswalkTab() {
   const [stats, setStats] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -354,6 +507,7 @@ function CrosswalkTab() {
 
   return (
     <>
+      <FileVerifier />
       <TopazUpload onImported={loadData} />
 
       <p className="text-muted small mb-3">

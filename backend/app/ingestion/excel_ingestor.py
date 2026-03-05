@@ -31,7 +31,7 @@ COL_MAP = {
     9: "total_payment",       # J - Total
     10: "extra_charges",      # K - Extra
     11: "reading_physician",  # L - ReadBy
-    12: "patient_id",         # M - ID
+    12: "patient_id",         # M - Jacket ID
     13: "birth_date",         # N - Birth Date
     14: "patient_name_display",  # O - Patient Name
     15: "schedule_date",      # P - S Date
@@ -40,6 +40,8 @@ COL_MAP = {
     18: "service_month",      # S - Month
     19: "service_year",       # T - Year
     20: "is_new_patient",     # U - New
+    21: "topaz_id",           # V - Topaz ID
+    22: "payer_group",        # W - Payer Group
 }
 
 EXCEL_EPOCH = date(1899, 12, 30)
@@ -107,6 +109,29 @@ def _derive_psma(description: str | None, modality: str | None) -> bool:
     return False
 
 
+def _safe_int_str(val) -> str | None:
+    """Convert a numeric Excel value to a clean integer string (e.g., 9125.0 → '9125')."""
+    if val is None:
+        return None
+    try:
+        return str(int(float(val)))
+    except (ValueError, TypeError):
+        s = str(val).strip()
+        return s if s else None
+
+
+def _build_extra(row: tuple) -> dict | None:
+    """Capture columns beyond the standard 22 into extra_data."""
+    extra = {}
+    if len(row) > 22 and row[22] is not None:
+        extra["payer_group"] = str(row[22]).strip()
+    # Capture any additional columns beyond 23
+    for i in range(23, len(row)):
+        if row[i] is not None:
+            extra[f"col_{i}"] = str(row[i]).strip()
+    return extra if extra else None
+
+
 def _parse_row(row: tuple) -> dict | None:
     """Parse a single Excel row into a dict for BillingRecord. Returns None if row is invalid."""
     patient_name = _clean_text(row[0]) if len(row) > 0 else None
@@ -148,8 +173,10 @@ def _parse_row(row: tuple) -> dict | None:
         "service_month": _clean_text(row[18]) if len(row) > 18 else None,
         "service_year": _clean_text(row[19]) if len(row) > 19 else None,
         "is_new_patient": _parse_bool(row[20]) if len(row) > 20 else None,
+        "topaz_id": _safe_int_str(row[21]) if len(row) > 21 else None,
         "is_psma": _derive_psma(description, modality),
         "import_source": "EXCEL_IMPORT",
+        "extra_data": _build_extra(row),
     }
 
 

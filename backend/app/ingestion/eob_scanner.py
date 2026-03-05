@@ -166,10 +166,17 @@ async def scan_eob_folder(
                     imported_835 += 1
                     claims_found += result.get("claims_found", 0)
 
-                elif looks_like_topaz_export(content):
-                    # Topaz/.NET server export — parse crosswalk data
-                    topaz_result = parse_topaz_export(content, rel_name)
-                    if topaz_result.total_rows > 0:
+                else:
+                    # Try Topaz export parser on ANY text file —
+                    # extensionless .NET server exports may not match
+                    # the heuristic but can still be parsed successfully.
+                    topaz_result = None
+                    try:
+                        topaz_result = parse_topaz_export(content, rel_name)
+                    except Exception as te:
+                        logger.debug(f"Topaz parse attempt failed for {rel_name}: {te}")
+
+                    if topaz_result and topaz_result.total_rows > 0:
                         results.append({
                             "file": rel_name,
                             "type": "topaz_export",
@@ -182,7 +189,7 @@ async def scan_eob_folder(
                         })
                         imported_topaz += 1
                         crosswalk_pairs_found += topaz_result.total_rows
-                    else:
+                    elif topaz_result and topaz_result.headers_found:
                         results.append({
                             "file": rel_name,
                             "type": "topaz_export",
@@ -191,14 +198,13 @@ async def scan_eob_folder(
                             "headers": topaz_result.headers_found[:15],
                             "warnings": topaz_result.warnings,
                         })
-
-                else:
-                    results.append({
-                        "file": rel_name,
-                        "type": ext.lstrip(".") or "extensionless",
-                        "status": "skipped",
-                        "reason": "not X12, Excel, or Topaz export format",
-                    })
+                    else:
+                        results.append({
+                            "file": rel_name,
+                            "type": ext.lstrip(".") or "extensionless",
+                            "status": "skipped",
+                            "reason": "not X12, Excel, or recognized data format",
+                        })
 
         except Exception as e:
             logger.warning(f"EOB scan error for {rel_name}: {e}")

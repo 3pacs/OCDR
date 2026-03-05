@@ -508,33 +508,36 @@ def parse_topaz_export(content: str, filename: str = "unknown") -> TopazExportRe
 
 def looks_like_topaz_export(content: str) -> bool:
     """
-    Quick heuristic: does this content look like a Topaz/billing data export?
+    Quick heuristic: does this content look like a structured data export?
 
-    Checks for presence of column headers that suggest chart/billing ID data.
-    Used by the EOB scanner to decide whether to parse extensionless files.
+    Intentionally permissive — it's better to try parsing and find nothing
+    than to skip a file that has real crosswalk data. The parser itself
+    will report warnings if it can't find relevant columns.
     """
-    # Check first 2000 chars for header-like patterns
-    sample = content[:2000].lower()
+    # Check first 3000 chars
+    sample = content[:3000].lower()
 
-    billing_keywords = [
-        "chart", "patient", "billing", "account", "topaz",
-        "claim", "encounter", "invoice", "mrn", "record",
-        "charge", "reference", "transaction",
-    ]
-
-    id_keywords = [
-        "id", "number", "#", "no", "num",
-    ]
-
-    has_billing = any(kw in sample for kw in billing_keywords)
-    has_id = any(kw in sample for kw in id_keywords)
-
-    # Also check for structured data patterns (delimiters or XML)
+    # Any structured data pattern (delimiters or XML)
     has_structure = (
-        sample.count("|") > 5 or
-        sample.count("\t") > 5 or
-        "<" in sample[:100] or
-        sample.count(",") > 10
+        sample.count("|") > 3 or
+        sample.count("\t") > 3 or
+        "<" in sample[:200] or
+        sample.count(",") > 5
     )
 
-    return has_billing and (has_id or has_structure)
+    # Keywords that suggest patient/billing data
+    data_keywords = [
+        "patient", "billing", "account", "topaz", "jacket",
+        "claim", "encounter", "invoice", "mrn", "record",
+        "charge", "reference", "transaction", "name",
+        "chart", "id", "number", "date", "amount",
+        "insurance", "carrier", "payer", "doctor",
+    ]
+
+    has_data_hint = any(kw in sample for kw in data_keywords)
+
+    # Accept if: has structure + data, OR has data keywords + multi-line
+    lines = [l for l in content[:3000].split("\n") if l.strip()]
+    has_multiple_lines = len(lines) >= 2
+
+    return (has_structure and has_multiple_lines) or (has_data_hint and has_multiple_lines)

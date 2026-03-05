@@ -189,7 +189,7 @@ class TestContentSniffing:
         assert not looks_like_topaz_export("")
 
     def test_matches_with_id_columns(self):
-        assert looks_like_topaz_export("Patient Name|Account Number|Status\n")
+        assert looks_like_topaz_export("Patient Name|Account Number|Status\n12345|SMITH|Active\n")
 
 
 # ─── Edge cases ──────────────────────────────────────────────────────────
