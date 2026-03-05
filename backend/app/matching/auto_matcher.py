@@ -21,6 +21,7 @@ After matching, updates:
   - BillingRecord.era_claim_id, denial_status, denial_reason_code
 """
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -32,6 +33,9 @@ from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine, ERAPayment
 
 logger = logging.getLogger(__name__)
+
+# Batch size for periodic commits / event-loop yields
+BATCH_SIZE = 200
 
 
 def _normalize_name(name: str | None) -> str:
@@ -79,8 +83,132 @@ CLAIM_STATUS_MAP = {
 }
 
 
+def _remove_from_indexes(br, billing_by_name_date, billing_by_date, billing_by_topaz_id, billing_norm_names):
+    """Remove a matched billing record from all indexes to prevent re-scanning."""
+    norm = billing_norm_names.get(br.id, "")
+    key = (norm, br.service_date)
+    if key in billing_by_name_date:
+        lst = billing_by_name_date[key]
+        try:
+            lst.remove(br)
+        except ValueError:
+            pass
+        if not lst:
+            del billing_by_name_date[key]
+
+    if br.service_date in billing_by_date:
+        lst = billing_by_date[br.service_date]
+        try:
+            lst.remove(br)
+        except ValueError:
+            pass
+        if not lst:
+            del billing_by_date[br.service_date]
+
+    if br.topaz_id:
+        tk = br.topaz_id.strip()
+        if tk in billing_by_topaz_id:
+            lst = billing_by_topaz_id[tk]
+            try:
+                lst.remove(br)
+            except ValueError:
+                pass
+            if not lst:
+                del billing_by_topaz_id[tk]
+
+
+def _match_single_claim(
+    claim,
+    claim_name,
+    claim_date,
+    claim_paid,
+    claim_cpt,
+    claim_modality,
+    era_payment,
+    billing_by_name_date,
+    billing_by_date,
+    billing_by_topaz_id,
+    billing_norm_names,
+):
+    """Run 6-pass matching for a single claim. Returns (billing_record, confidence, pass_name) or (None, 0, None)."""
+
+    # Pass 0: Topaz ID crosswalk match
+    if claim.claim_id:
+        topaz_key = claim.claim_id.strip()
+        candidates = billing_by_topaz_id.get(topaz_key, [])
+        if len(candidates) == 1:
+            return candidates[0], 0.99, "pass_0_topaz_id"
+        if len(candidates) > 1 and claim_date:
+            date_matches = [c for c in candidates if c.service_date == claim_date]
+            if len(date_matches) == 1:
+                return date_matches[0], 0.99, "pass_0_topaz_id"
+            if len(date_matches) > 1 and claim_paid:
+                for br in date_matches:
+                    if br.total_payment and abs(float(br.total_payment) - claim_paid) < 0.01:
+                        return br, 0.99, "pass_0_topaz_id"
+
+    # Pass 1: Exact composite (name + date + amount)
+    if claim_name and claim_date:
+        key = (claim_name, claim_date)
+        candidates = billing_by_name_date.get(key, [])
+        for br in candidates:
+            if claim_paid and br.total_payment:
+                if abs(float(br.total_payment) - claim_paid) < 0.01:
+                    return br, 0.99, "pass_1_exact"
+            if len(candidates) == 1:
+                return br, 0.99, "pass_1_exact"
+            break  # Only check first candidate for single-match
+
+    # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
+    if claim_name and claim_date:
+        date_candidates = billing_by_date.get(claim_date, [])
+        for br in date_candidates:
+            norm = billing_norm_names.get(br.id, "")
+            score = fuzz.token_sort_ratio(claim_name, norm)
+            if score < 95:
+                continue
+            if claim_modality and br.modality and claim_modality.upper() == br.modality.upper():
+                return br, 0.95, "pass_2_strong"
+            if score >= 98:
+                return br, 0.95, "pass_2_strong"
+
+    # Pass 3: Medium fuzzy (name>=90 + date)
+    if claim_name and claim_date:
+        for br in billing_by_date.get(claim_date, []):
+            score = fuzz.token_sort_ratio(claim_name, billing_norm_names.get(br.id, ""))
+            if score >= 90:
+                return br, 0.85, "pass_3_medium"
+
+    # Pass 4: Weak fuzzy (name>=85 + date ±3 days)
+    if claim_name and claim_date:
+        for offset in range(-3, 4):
+            check_date = claim_date + timedelta(days=offset)
+            for br in billing_by_date.get(check_date, []):
+                score = fuzz.token_sort_ratio(claim_name, billing_norm_names.get(br.id, ""))
+                if score >= 85:
+                    return br, 0.70, "pass_4_weak"
+
+    # Pass 5: Amount-anchored (carrier + date + amount)
+    if claim_date and claim_paid and claim_paid > 0 and era_payment and era_payment.payer_name:
+        payer_upper = era_payment.payer_name.upper()
+        for br in billing_by_date.get(claim_date, []):
+            if not br.total_payment or abs(float(br.total_payment) - claim_paid) > 0.01:
+                continue
+            if br.insurance_carrier:
+                carrier_score = fuzz.token_sort_ratio(br.insurance_carrier.upper(), payer_upper)
+                if carrier_score >= 60:
+                    return br, 0.75, "pass_5_amount"
+
+    return None, 0, None
+
+
 async def run_auto_match(session: AsyncSession) -> dict:
-    """Run all 5 matching passes on unmatched ERA claim lines."""
+    """
+    Run all 6 matching passes on unmatched ERA claim lines.
+
+    Processes in batches of BATCH_SIZE with periodic commits and
+    event-loop yields to prevent timeout on large datasets.
+    """
     unmatched_result = await session.execute(
         select(ERAClaimLine).where(ERAClaimLine.matched_billing_id.is_(None))
     )
@@ -95,11 +223,11 @@ async def run_auto_match(session: AsyncSession) -> dict:
     if not billing_records:
         return {"status": "no_billing_records", "total": len(unmatched_claims), "matched_total": 0, "match_rate": 0}
 
-    # Build indexes
+    # Build mutable indexes (records are removed after matching)
     billing_by_name_date = {}
-    billing_by_topaz_id = {}  # Topaz ID crosswalk index
-    billing_by_date = {}  # Date-only index for fuzzy passes
-    billing_norm_names = {}  # Pre-computed normalized names (br.id → str)
+    billing_by_topaz_id = {}
+    billing_by_date = {}
+    billing_norm_names = {}
     for br in billing_records:
         norm = _normalize_name(br.patient_name)
         billing_norm_names[br.id] = norm
@@ -127,138 +255,41 @@ async def run_auto_match(session: AsyncSession) -> dict:
         "total": len(unmatched_claims),
     }
 
-    matched_billing_ids = set()
+    pending_commits = 0
 
-    for claim in unmatched_claims:
+    for i, claim in enumerate(unmatched_claims):
         claim_name = _normalize_name(claim.patient_name_835)
         claim_date = claim.service_date_835
         claim_paid = round(float(claim.paid_amount), 2) if claim.paid_amount else None
         claim_cpt = claim.cpt_code
         claim_modality = CPT_TO_MODALITY.get(claim_cpt) if claim_cpt else None
+        era_payment = payments_by_id.get(claim.era_payment_id)
 
-        matched_br = None
-        confidence = 0
+        matched_br, confidence, pass_name = _match_single_claim(
+            claim, claim_name, claim_date, claim_paid, claim_cpt, claim_modality,
+            era_payment,
+            billing_by_name_date, billing_by_date, billing_by_topaz_id, billing_norm_names,
+        )
 
-        # Pass 0: Topaz ID crosswalk match
-        # Uses billing records where topaz_id has been previously set
-        # (from confirmed matches or manual crosswalk entry)
-        if claim.claim_id:
-            topaz_key = claim.claim_id.strip()
-            candidates = [c for c in billing_by_topaz_id.get(topaz_key, []) if c.id not in matched_billing_ids]
-            if len(candidates) == 1:
-                matched_br = candidates[0]
-                confidence = 0.99
-                stats["pass_0_topaz_id"] += 1
-            elif len(candidates) > 1 and claim_date:
-                date_matches = [c for c in candidates if c.service_date == claim_date]
-                if len(date_matches) == 1:
-                    matched_br = date_matches[0]
-                    confidence = 0.99
-                    stats["pass_0_topaz_id"] += 1
-                elif len(date_matches) > 1 and claim_paid:
-                    for br in date_matches:
-                        if br.total_payment and abs(float(br.total_payment) - claim_paid) < 0.01:
-                            matched_br = br
-                            confidence = 0.99
-                            stats["pass_0_topaz_id"] += 1
-                            break
-
-        # Pass 1: Exact composite
-        if not matched_br and claim_name and claim_date:
-            key = (claim_name, claim_date)
-            candidates = [c for c in billing_by_name_date.get(key, []) if c.id not in matched_billing_ids]
-            for br in candidates:
-                if claim_paid and br.total_payment:
-                    if abs(float(br.total_payment) - claim_paid) < 0.01:
-                        matched_br = br
-                        confidence = 0.99
-                        stats["pass_1_exact"] += 1
-                        break
-                if len(candidates) == 1:
-                    matched_br = br
-                    confidence = 0.99
-                    stats["pass_1_exact"] += 1
-                    break
-
-        # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
-        # Uses date index to avoid scanning all billing records
-        if not matched_br and claim_name and claim_date:
-            for br in billing_by_date.get(claim_date, []):
-                if br.id in matched_billing_ids:
-                    continue
-                norm = billing_norm_names[br.id]
-                score = fuzz.token_sort_ratio(claim_name, norm)
-                if score < 95:
-                    continue
-                if claim_modality and br.modality and claim_modality.upper() == br.modality.upper():
-                    matched_br = br
-                    confidence = 0.95
-                    stats["pass_2_strong"] += 1
-                    break
-                if score >= 98:
-                    matched_br = br
-                    confidence = 0.95
-                    stats["pass_2_strong"] += 1
-                    break
-
-        # Pass 3: Medium fuzzy (name>=90 + date)
-        if not matched_br and claim_name and claim_date:
-            for br in billing_by_date.get(claim_date, []):
-                if br.id in matched_billing_ids:
-                    continue
-                score = fuzz.token_sort_ratio(claim_name, billing_norm_names[br.id])
-                if score >= 90:
-                    matched_br = br
-                    confidence = 0.85
-                    stats["pass_3_medium"] += 1
-                    break
-
-        # Pass 4: Weak fuzzy (name>=85 + date ±3 days)
-        if not matched_br and claim_name and claim_date:
-            for offset in range(-3, 4):
-                check_date = claim_date + timedelta(days=offset)
-                for br in billing_by_date.get(check_date, []):
-                    if br.id in matched_billing_ids:
-                        continue
-                    score = fuzz.token_sort_ratio(claim_name, billing_norm_names[br.id])
-                    if score >= 85:
-                        matched_br = br
-                        confidence = 0.70
-                        stats["pass_4_weak"] += 1
-                        break
-                if matched_br:
-                    break
-
-        # Pass 5: Amount-anchored (carrier + date + amount)
-        if not matched_br and claim_date and claim_paid and claim_paid > 0:
-            era_payment = payments_by_id.get(claim.era_payment_id)
-            if era_payment and era_payment.payer_name:
-                payer_upper = era_payment.payer_name.upper()
-                for br in billing_by_date.get(claim_date, []):
-                    if br.id in matched_billing_ids:
-                        continue
-                    if not br.total_payment or abs(float(br.total_payment) - claim_paid) > 0.01:
-                        continue
-                    if br.insurance_carrier:
-                        carrier_score = fuzz.token_sort_ratio(br.insurance_carrier.upper(), payer_upper)
-                        if carrier_score >= 60:
-                            matched_br = br
-                            confidence = 0.75
-                            stats["pass_5_amount"] += 1
-                            break
-
-        # Apply match
         if matched_br:
-            matched_billing_ids.add(matched_br.id)
+            stats[pass_name] += 1
+
+            # Remove from indexes so no other claim can match this record
+            _remove_from_indexes(
+                matched_br, billing_by_name_date, billing_by_date,
+                billing_by_topaz_id, billing_norm_names,
+            )
+
+            # Apply match
             claim.matched_billing_id = matched_br.id
             claim.match_confidence = confidence
             matched_br.era_claim_id = claim.claim_id
 
-            # Learn topaz_id crosswalk: when we match via name/date/amount,
-            # store the ERA claim_id as this billing record's topaz_id
-            # so future runs can use Pass 0 (instant ID lookup)
+            # Learn topaz_id crosswalk
             if claim.claim_id and not matched_br.topaz_id:
                 matched_br.topaz_id = claim.claim_id.strip()
+                # Also add to topaz index for subsequent claims
+                billing_by_topaz_id.setdefault(matched_br.topaz_id, []).append(matched_br)
 
             status = CLAIM_STATUS_MAP.get(claim.claim_status)
             if status:
@@ -267,8 +298,22 @@ async def run_auto_match(session: AsyncSession) -> dict:
                 matched_br.denial_reason_code = claim.cas_reason_code
             if float(matched_br.total_payment or 0) == 0 and claim.paid_amount:
                 matched_br.total_payment = claim.paid_amount
+
+            pending_commits += 1
         else:
             stats["unmatched"] += 1
+
+        # Periodic flush + yield to prevent event-loop starvation and timeout
+        if (i + 1) % BATCH_SIZE == 0:
+            if pending_commits > 0:
+                await session.flush()
+                pending_commits = 0
+            # Yield to event loop so HTTP timeout doesn't fire
+            await asyncio.sleep(0)
+            if (i + 1) % (BATCH_SIZE * 5) == 0:
+                logger.info(
+                    f"Auto-match progress: {i + 1}/{len(unmatched_claims)} processed"
+                )
 
     await session.commit()
 

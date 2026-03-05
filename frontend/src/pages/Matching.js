@@ -347,7 +347,7 @@ function Matching() {
     setError(null);
     setLastResult(null);
     try {
-      const res = await api.post("/matching/run", {}, { timeout: 300000 });
+      const res = await api.post("/matching/run", {}, { timeout: 900000 });
       setLastResult(res.data);
       loadSummary();
     } catch (err) {
