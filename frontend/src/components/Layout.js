@@ -12,7 +12,10 @@ function Layout() {
           <Navbar.Collapse id="main-nav">
             <Nav className="me-auto">
               <Nav.Link as={NavLink} to="/">Dashboard</Nav.Link>
-              {/* TODO: Step 8-9 - Add nav links */}
+              <Nav.Link as={NavLink} to="/import">Import Data</Nav.Link>
+              <Nav.Link as={NavLink} to="/underpayments">Underpayments</Nav.Link>
+              <Nav.Link as={NavLink} to="/filing-deadlines">Filing Deadlines</Nav.Link>
+              <Nav.Link as={NavLink} to="/era-payments">ERA Payments</Nav.Link>
             </Nav>
           </Navbar.Collapse>
         </Container>
