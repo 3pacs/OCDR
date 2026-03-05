@@ -34,6 +34,10 @@ class BillingRecord(Base):
     service_year: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_new_patient: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # Crosswalk: patient_id is chart_number (from OCMRI.xlsx col M)
+    # topaz_id is the Topaz billing system ID (== ERA claim_id in 835 files)
+    topaz_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+
     # Derived / system fields
     is_psma: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     denial_status: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)

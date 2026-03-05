@@ -1,14 +1,20 @@
 """
-5-Pass Auto-Matching Engine.
+6-Pass Auto-Matching Engine.
 
 Matches ERA claim lines (from 835 files) to billing records using
 progressively looser matching criteria:
 
-  Pass 1: Exact composite (name + DOB + service_date + amount)  → 99%
+  Pass 0: Topaz ID       (claim_id == topaz_id crosswalk)       → 99%
+  Pass 1: Exact composite (name + service_date + amount)        → 99%
   Pass 2: Strong fuzzy   (name>=95 + service_date + CPT)        → 95%
   Pass 3: Medium fuzzy   (name>=90 + service_date + modality)   → 85%
   Pass 4: Weak fuzzy     (name>=85 + service_date ±3 days)      → 70%
   Pass 5: Amount-anchor  (carrier + service_date + amount)      → 75%
+
+Key insight: ERA claim_id is the Topaz billing system ID. This is NOT
+the same as BillingRecord.patient_id, which is the chart number from
+OCMRI.xlsx. Matches found by passes 1-5 teach us the chart↔topaz
+crosswalk, which Pass 0 can then exploit for faster future matching.
 
 After matching, updates:
   - ERAClaimLine.matched_billing_id and match_confidence
@@ -85,10 +91,13 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
     # Build indexes
     billing_by_name_date = {}
+    billing_by_topaz_id = {}  # Topaz ID crosswalk index
     for br in billing_records:
         norm = _normalize_name(br.patient_name)
         key = (norm, br.service_date)
         billing_by_name_date.setdefault(key, []).append(br)
+        if br.topaz_id:
+            billing_by_topaz_id.setdefault(br.topaz_id.strip(), []).append(br)
 
     # Load ERA payments for payer name lookup
     payment_ids = {c.era_payment_id for c in unmatched_claims}
@@ -98,6 +107,7 @@ async def run_auto_match(session: AsyncSession) -> dict:
     payments_by_id = {p.id: p for p in payment_result.scalars().all()}
 
     stats = {
+        "pass_0_topaz_id": 0,
         "pass_1_exact": 0,
         "pass_2_strong": 0,
         "pass_3_medium": 0,
@@ -119,8 +129,32 @@ async def run_auto_match(session: AsyncSession) -> dict:
         matched_br = None
         confidence = 0
 
+        # Pass 0: Topaz ID crosswalk match
+        # Uses billing records where topaz_id has been previously set
+        # (from confirmed matches or manual crosswalk entry)
+        if claim.claim_id:
+            topaz_key = claim.claim_id.strip()
+            candidates = [c for c in billing_by_topaz_id.get(topaz_key, []) if c.id not in matched_billing_ids]
+            if len(candidates) == 1:
+                matched_br = candidates[0]
+                confidence = 0.99
+                stats["pass_0_topaz_id"] += 1
+            elif len(candidates) > 1 and claim_date:
+                date_matches = [c for c in candidates if c.service_date == claim_date]
+                if len(date_matches) == 1:
+                    matched_br = date_matches[0]
+                    confidence = 0.99
+                    stats["pass_0_topaz_id"] += 1
+                elif len(date_matches) > 1 and claim_paid:
+                    for br in date_matches:
+                        if br.total_payment and abs(float(br.total_payment) - claim_paid) < 0.01:
+                            matched_br = br
+                            confidence = 0.99
+                            stats["pass_0_topaz_id"] += 1
+                            break
+
         # Pass 1: Exact composite
-        if claim_name and claim_date:
+        if not matched_br and claim_name and claim_date:
             key = (claim_name, claim_date)
             candidates = [c for c in billing_by_name_date.get(key, []) if c.id not in matched_billing_ids]
             for br in candidates:
@@ -207,6 +241,13 @@ async def run_auto_match(session: AsyncSession) -> dict:
             claim.matched_billing_id = matched_br.id
             claim.match_confidence = confidence
             matched_br.era_claim_id = claim.claim_id
+
+            # Learn topaz_id crosswalk: when we match via name/date/amount,
+            # store the ERA claim_id as this billing record's topaz_id
+            # so future runs can use Pass 0 (instant ID lookup)
+            if claim.claim_id and not matched_br.topaz_id:
+                matched_br.topaz_id = claim.claim_id.strip()
+
             status = CLAIM_STATUS_MAP.get(claim.claim_status)
             if status:
                 matched_br.denial_status = status
@@ -226,8 +267,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
     logger.info(
         f"Auto-match: {stats['matched_total']}/{stats['total']} ({stats['match_rate']}%) "
-        f"P1:{stats['pass_1_exact']} P2:{stats['pass_2_strong']} P3:{stats['pass_3_medium']} "
-        f"P4:{stats['pass_4_weak']} P5:{stats['pass_5_amount']}"
+        f"P0:{stats['pass_0_topaz_id']} P1:{stats['pass_1_exact']} P2:{stats['pass_2_strong']} "
+        f"P3:{stats['pass_3_medium']} P4:{stats['pass_4_weak']} P5:{stats['pass_5_amount']}"
     )
     return stats
 

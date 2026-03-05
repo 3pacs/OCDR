@@ -151,7 +151,7 @@ function UnmatchedTable() {
             <th>Date</th>
             <th>Payer</th>
             <th>CPT</th>
-            <th>Claim ID</th>
+            <th>Topaz ID</th>
             <th className="text-end">Billed</th>
             <th className="text-end">Paid</th>
             <th>Status</th>
@@ -181,6 +181,151 @@ function UnmatchedTable() {
         <span className="text-muted small">Page {page}</span>
         <Button size="sm" variant="outline-secondary" disabled={items.length < 50} onClick={() => setPage(page + 1)}>Next</Button>
       </div>
+    </>
+  );
+}
+
+function CrosswalkTab() {
+  const [stats, setStats] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [propagating, setPropagating] = useState(false);
+  const [propagateResult, setPropagateResult] = useState(null);
+
+  const loadData = () => {
+    setLoading(true);
+    Promise.allSettled([
+      api.get("/matching/crosswalk/stats"),
+      api.get("/matching/crosswalk/analyze"),
+    ]).then(([statsRes, analysisRes]) => {
+      if (statsRes.status === "fulfilled") setStats(statsRes.value.data);
+      if (analysisRes.status === "fulfilled") setAnalysis(analysisRes.value.data);
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadData(); }, []);
+
+  const propagate = async (offset) => {
+    setPropagating(true);
+    setPropagateResult(null);
+    try {
+      const res = await api.post("/matching/crosswalk/propagate", { offset });
+      setPropagateResult(res.data);
+      loadData();
+    } catch (err) {
+      setPropagateResult({ status: "error", message: err.message });
+    } finally {
+      setPropagating(false);
+    }
+  };
+
+  if (loading) return <div className="text-center py-3"><Spinner animation="border" size="sm" /></div>;
+
+  return (
+    <>
+      <p className="text-muted small mb-3">
+        Chart Number (from OCMRI.xlsx column M) &harr; Topaz ID (from ERA 835 claim_id).
+        The matcher learns this crosswalk from confirmed matches.
+      </p>
+
+      {stats && (
+        <Row className="g-3 mb-4">
+          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold">{stats.total_records?.toLocaleString()}</div><small>Total Records</small></Card></Col>
+          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold">{stats.has_chart_number?.toLocaleString()}</div><small>Have Chart #</small></Card></Col>
+          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold text-success">{stats.has_topaz_id?.toLocaleString()}</div><small>Have Topaz ID</small></Card></Col>
+          <Col md={3}><Card className="border-0 bg-light text-center p-3"><div className="fs-4 fw-bold text-warning">{stats.missing_topaz?.toLocaleString()}</div><small>Missing Topaz ID</small></Card></Col>
+        </Row>
+      )}
+
+      {analysis && analysis.total_pairs > 0 && (
+        <Card className="border-0 shadow-sm mb-4">
+          <Card.Body>
+            <Card.Title>Discovered Patterns ({analysis.total_pairs} pairs analyzed)</Card.Title>
+            <Table size="sm" className="small mb-3">
+              <thead><tr><th>Pattern</th><th>Count</th></tr></thead>
+              <tbody>
+                <tr><td>Direct equality</td><td>{analysis.patterns?.direct_equal}</td></tr>
+                <tr><td>Numeric offset</td><td>{analysis.patterns?.numeric_offset_total}</td></tr>
+                <tr><td>String prefix</td><td>{analysis.patterns?.string_prefix}</td></tr>
+                <tr><td>String suffix</td><td>{analysis.patterns?.string_suffix}</td></tr>
+                <tr><td>No pattern found</td><td>{analysis.patterns?.no_pattern}</td></tr>
+              </tbody>
+            </Table>
+
+            {analysis.dominant_offset != null && (
+              <Alert variant="info">
+                <strong>Dominant pattern:</strong> topaz_id = chart_number + {analysis.dominant_offset}{" "}
+                ({analysis.dominant_offset_pct}% of pairs)
+                <Button
+                  variant="outline-primary"
+                  size="sm"
+                  className="ms-3"
+                  disabled={propagating}
+                  onClick={() => propagate(analysis.dominant_offset)}
+                >
+                  {propagating ? "Propagating..." : `Apply offset +${analysis.dominant_offset} to missing records`}
+                </Button>
+              </Alert>
+            )}
+
+            {analysis.patterns?.top_offsets?.length > 1 && (
+              <>
+                <strong className="small">All offsets found:</strong>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Offset</th><th>Count</th><th></th></tr></thead>
+                  <tbody>
+                    {analysis.patterns.top_offsets.map((o, i) => (
+                      <tr key={i}>
+                        <td>chart + {o.offset}</td>
+                        <td>{o.count}</td>
+                        <td><Button size="sm" variant="outline-secondary" onClick={() => propagate(o.offset)}>Apply</Button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </>
+            )}
+
+            {propagateResult && (
+              <Alert variant={propagateResult.status === "success" ? "success" : "warning"} className="mt-3">
+                {propagateResult.status === "success"
+                  ? `Propagated topaz_id to ${propagateResult.propagated} records using offset +${propagateResult.offset_used}`
+                  : propagateResult.message}
+              </Alert>
+            )}
+
+            {analysis.sample_pairs?.length > 0 && (
+              <>
+                <strong className="small">Sample crosswalk pairs:</strong>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Patient</th><th>Chart #</th><th>Topaz ID</th><th>Offset</th></tr></thead>
+                  <tbody>
+                    {analysis.sample_pairs.slice(0, 10).map((p, i) => {
+                      let offset = "--";
+                      try { offset = parseInt(p.topaz_id) - parseInt(p.chart_number); } catch (e) {}
+                      return (
+                        <tr key={i}>
+                          <td>{p.patient}</td>
+                          <td>{p.chart_number}</td>
+                          <td>{p.topaz_id}</td>
+                          <td>{offset}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </>
+            )}
+          </Card.Body>
+        </Card>
+      )}
+
+      {analysis && analysis.total_pairs === 0 && (
+        <Alert variant="info">
+          No crosswalk data yet. Run the auto-matcher first &mdash; it will learn chart# &harr; Topaz ID
+          mappings from name/date/amount matches.
+        </Alert>
+      )}
     </>
   );
 }
@@ -225,7 +370,7 @@ function Matching() {
               {running ? <><Spinner size="sm" className="me-2" /> Matching...</> : "Run Auto-Match Engine"}
             </Button>
             <span className="text-muted small">
-              Runs 5-pass fuzzy matching: ERA claims &harr; billing records
+              6-pass matching: Topaz ID crosswalk + name/date/amount fuzzy
             </span>
           </div>
 
@@ -235,11 +380,12 @@ function Matching() {
             <Alert variant={lastResult.matched_total > 0 ? "success" : "info"} className="mt-3">
               <strong>Matching complete!</strong>{" "}
               {lastResult.matched_total}/{lastResult.total} claims matched ({lastResult.match_rate}%)
-              {lastResult.pass_1_exact > 0 && <span> &mdash; Pass 1 (exact): {lastResult.pass_1_exact}</span>}
-              {lastResult.pass_2_strong > 0 && <span> &mdash; Pass 2 (strong): {lastResult.pass_2_strong}</span>}
-              {lastResult.pass_3_medium > 0 && <span> &mdash; Pass 3 (medium): {lastResult.pass_3_medium}</span>}
-              {lastResult.pass_4_weak > 0 && <span> &mdash; Pass 4 (weak): {lastResult.pass_4_weak}</span>}
-              {lastResult.pass_5_amount > 0 && <span> &mdash; Pass 5 (amount): {lastResult.pass_5_amount}</span>}
+              {lastResult.pass_0_topaz_id > 0 && <span> &mdash; Topaz ID: {lastResult.pass_0_topaz_id}</span>}
+              {lastResult.pass_1_exact > 0 && <span> &mdash; Exact: {lastResult.pass_1_exact}</span>}
+              {lastResult.pass_2_strong > 0 && <span> &mdash; Strong: {lastResult.pass_2_strong}</span>}
+              {lastResult.pass_3_medium > 0 && <span> &mdash; Medium: {lastResult.pass_3_medium}</span>}
+              {lastResult.pass_4_weak > 0 && <span> &mdash; Weak: {lastResult.pass_4_weak}</span>}
+              {lastResult.pass_5_amount > 0 && <span> &mdash; Amount: {lastResult.pass_5_amount}</span>}
             </Alert>
           )}
         </Card.Body>
@@ -251,6 +397,9 @@ function Matching() {
         </Tab>
         <Tab eventKey="unmatched" title="Unmatched Claims">
           <UnmatchedTable />
+        </Tab>
+        <Tab eventKey="crosswalk" title="ID Crosswalk">
+          <CrosswalkTab />
         </Tab>
       </Tabs>
     </>

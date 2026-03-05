@@ -1,17 +1,223 @@
 """
-Pattern Clustering Engine (Phase 2).
+Pattern Clustering Engine.
 
-Analyzes structural relationships between chart_number and topaz_id
-using known crosswalk matches as training data:
-- Direct equality
-- Numeric offset (topaz_id = chart_number ± N)
-- Prefix/suffix transforms
-- Zero-padding / stripping
-- Substring extraction
-- Carrier-specific patterns
-- Date-dependent patterns
+Analyzes confirmed matches to discover structural relationships between
+chart_number (BillingRecord.patient_id from OCMRI.xlsx) and topaz_id
+(ERA claim_id from 835 files).
 
-Proposes crosswalk_rules for human review.
+After the auto-matcher links records by name/date/amount, this engine
+examines the resulting (chart_number, topaz_id) pairs to find patterns:
+  - Direct equality
+  - Numeric offset (topaz_id = chart_number ± N)
+  - Prefix/suffix transforms
+  - Zero-padding / stripping
 
-TODO: Step 6 - Full implementation
+Discovered patterns can then propagate topaz_id to unmatched billing
+records, enabling Pass 0 matching on future ERA imports.
 """
+
+import logging
+from collections import Counter
+
+from sqlalchemy import select, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.models.billing import BillingRecord
+
+logger = logging.getLogger(__name__)
+
+
+async def analyze_crosswalk(session: AsyncSession) -> dict:
+    """
+    Analyze chart_number <-> topaz_id pairs from confirmed matches.
+    Returns discovered patterns and statistics.
+    """
+    # Get all records that have both chart_number (patient_id) and topaz_id
+    result = await session.execute(
+        select(BillingRecord.patient_id, BillingRecord.topaz_id, BillingRecord.patient_name)
+        .where(
+            BillingRecord.patient_id.is_not(None),
+            BillingRecord.topaz_id.is_not(None),
+        )
+    )
+    pairs = result.all()
+
+    if not pairs:
+        return {
+            "status": "no_crosswalk_data",
+            "message": "No billing records have both chart_number and topaz_id. Run the auto-matcher first.",
+            "total_pairs": 0,
+        }
+
+    # Deduplicate to unique (chart, topaz) pairs
+    unique_pairs = {}
+    for chart_num, topaz_id, patient_name in pairs:
+        key = (chart_num, topaz_id)
+        if key not in unique_pairs:
+            unique_pairs[key] = patient_name
+
+    # Analyze patterns
+    patterns = {
+        "direct_equal": 0,
+        "numeric_offset": Counter(),
+        "string_prefix": 0,
+        "string_suffix": 0,
+        "no_pattern": 0,
+    }
+
+    offsets = []
+
+    for (chart_num, topaz_id), patient_name in unique_pairs.items():
+        chart_str = str(chart_num).strip()
+        topaz_str = str(topaz_id).strip()
+
+        # Pattern 1: Direct equality
+        if chart_str == topaz_str:
+            patterns["direct_equal"] += 1
+            continue
+
+        # Pattern 2: Numeric offset
+        try:
+            chart_int = int(chart_str)
+            topaz_int = int(topaz_str)
+            offset = topaz_int - chart_int
+            offsets.append(offset)
+            patterns["numeric_offset"][offset] += 1
+            continue
+        except (ValueError, TypeError):
+            pass
+
+        # Pattern 3: Prefix/suffix relationship
+        if topaz_str.startswith(chart_str) or chart_str.startswith(topaz_str):
+            patterns["string_prefix"] += 1
+            continue
+        if topaz_str.endswith(chart_str) or chart_str.endswith(topaz_str):
+            patterns["string_suffix"] += 1
+            continue
+
+        # Pattern 4: Zero-padding equivalence
+        try:
+            if int(chart_str) == int(topaz_str):
+                patterns["direct_equal"] += 1
+                continue
+        except (ValueError, TypeError):
+            pass
+
+        patterns["no_pattern"] += 1
+
+    # Find dominant offset if any
+    dominant_offset = None
+    dominant_offset_count = 0
+    if patterns["numeric_offset"]:
+        dominant_offset, dominant_offset_count = patterns["numeric_offset"].most_common(1)[0]
+
+    total = len(unique_pairs)
+
+    return {
+        "total_pairs": total,
+        "patterns": {
+            "direct_equal": patterns["direct_equal"],
+            "numeric_offset_total": sum(patterns["numeric_offset"].values()),
+            "top_offsets": [
+                {"offset": off, "count": cnt}
+                for off, cnt in patterns["numeric_offset"].most_common(5)
+            ],
+            "string_prefix": patterns["string_prefix"],
+            "string_suffix": patterns["string_suffix"],
+            "no_pattern": patterns["no_pattern"],
+        },
+        "dominant_offset": dominant_offset,
+        "dominant_offset_count": dominant_offset_count,
+        "dominant_offset_pct": round(dominant_offset_count / total * 100, 1) if total > 0 and dominant_offset_count > 0 else 0,
+        "sample_pairs": [
+            {"chart_number": str(c), "topaz_id": str(t), "patient": n}
+            for (c, t), n in list(unique_pairs.items())[:20]
+        ],
+    }
+
+
+async def propagate_topaz_ids(session: AsyncSession, offset: int | None = None) -> dict:
+    """
+    Use discovered crosswalk patterns to assign topaz_id to billing records
+    that don't have one yet.
+
+    If offset is provided, applies: topaz_id = chart_number + offset
+    Otherwise auto-detects the dominant offset from existing pairs.
+    """
+    if offset is None:
+        # Auto-detect from existing data
+        analysis = await analyze_crosswalk(session)
+        if analysis.get("dominant_offset") is None:
+            return {
+                "status": "no_pattern",
+                "message": "No dominant offset pattern found. Run the auto-matcher first to build crosswalk data.",
+                "propagated": 0,
+            }
+        offset = analysis["dominant_offset"]
+        confidence_pct = analysis["dominant_offset_pct"]
+        if confidence_pct < 50:
+            return {
+                "status": "low_confidence",
+                "message": f"Dominant offset {offset} only covers {confidence_pct}% of pairs. Not reliable enough to auto-propagate.",
+                "propagated": 0,
+                "offset": offset,
+                "confidence_pct": confidence_pct,
+            }
+
+    # Get billing records with chart_number but no topaz_id
+    result = await session.execute(
+        select(BillingRecord)
+        .where(
+            BillingRecord.patient_id.is_not(None),
+            BillingRecord.topaz_id.is_(None),
+        )
+    )
+    records = list(result.scalars().all())
+
+    propagated = 0
+    for br in records:
+        try:
+            chart_int = int(br.patient_id)
+            br.topaz_id = str(chart_int + offset)
+            propagated += 1
+        except (ValueError, TypeError):
+            continue
+
+    if propagated > 0:
+        await session.commit()
+
+    logger.info(f"Propagated topaz_id to {propagated} records using offset {offset}")
+
+    return {
+        "status": "success",
+        "offset_used": offset,
+        "propagated": propagated,
+        "total_without_topaz": len(records),
+    }
+
+
+async def get_crosswalk_stats(session: AsyncSession) -> dict:
+    """Quick stats on crosswalk coverage."""
+    total = await session.execute(select(func.count(BillingRecord.id)))
+    total_count = total.scalar() or 0
+
+    has_chart = await session.execute(
+        select(func.count(BillingRecord.id)).where(BillingRecord.patient_id.is_not(None))
+    )
+    has_topaz = await session.execute(
+        select(func.count(BillingRecord.id)).where(BillingRecord.topaz_id.is_not(None))
+    )
+    has_both = await session.execute(
+        select(func.count(BillingRecord.id)).where(
+            BillingRecord.patient_id.is_not(None),
+            BillingRecord.topaz_id.is_not(None),
+        )
+    )
+
+    return {
+        "total_records": total_count,
+        "has_chart_number": has_chart.scalar() or 0,
+        "has_topaz_id": has_topaz.scalar() or 0,
+        "has_both": has_both.scalar() or 0,
+        "missing_topaz": (has_chart.scalar() or 0) - (has_both.scalar() or 0),
+    }
