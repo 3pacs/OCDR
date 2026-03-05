@@ -98,10 +98,14 @@ async def run_auto_match(session: AsyncSession) -> dict:
     # Build indexes
     billing_by_name_date = {}
     billing_by_topaz_id = {}  # Topaz ID crosswalk index
+    billing_by_date = {}  # Date-only index for fuzzy passes
+    billing_norm_names = {}  # Pre-computed normalized names (br.id → str)
     for br in billing_records:
         norm = _normalize_name(br.patient_name)
+        billing_norm_names[br.id] = norm
         key = (norm, br.service_date)
         billing_by_name_date.setdefault(key, []).append(br)
+        billing_by_date.setdefault(br.service_date, []).append(br)
         if br.topaz_id:
             billing_by_topaz_id.setdefault(br.topaz_id.strip(), []).append(br)
 
@@ -177,12 +181,14 @@ async def run_auto_match(session: AsyncSession) -> dict:
                     break
 
         # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
+        # Uses date index to avoid scanning all billing records
         if not matched_br and claim_name and claim_date:
-            for br in billing_records:
-                if br.id in matched_billing_ids or br.service_date != claim_date:
+            for br in billing_by_date.get(claim_date, []):
+                if br.id in matched_billing_ids:
                     continue
-                match, score = _names_match(br.patient_name, claim.patient_name_835, 95)
-                if not match:
+                norm = billing_norm_names[br.id]
+                score = fuzz.token_sort_ratio(claim_name, norm)
+                if score < 95:
                     continue
                 if claim_modality and br.modality and claim_modality.upper() == br.modality.upper():
                     matched_br = br
@@ -197,11 +203,11 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
         # Pass 3: Medium fuzzy (name>=90 + date)
         if not matched_br and claim_name and claim_date:
-            for br in billing_records:
-                if br.id in matched_billing_ids or br.service_date != claim_date:
+            for br in billing_by_date.get(claim_date, []):
+                if br.id in matched_billing_ids:
                     continue
-                match, _ = _names_match(br.patient_name, claim.patient_name_835, 90)
-                if match:
+                score = fuzz.token_sort_ratio(claim_name, billing_norm_names[br.id])
+                if score >= 90:
                     matched_br = br
                     confidence = 0.85
                     stats["pass_3_medium"] += 1
@@ -209,18 +215,18 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
         # Pass 4: Weak fuzzy (name>=85 + date ±3 days)
         if not matched_br and claim_name and claim_date:
-            date_min = claim_date - timedelta(days=3)
-            date_max = claim_date + timedelta(days=3)
-            for br in billing_records:
-                if br.id in matched_billing_ids:
-                    continue
-                if not (date_min <= br.service_date <= date_max):
-                    continue
-                match, _ = _names_match(br.patient_name, claim.patient_name_835, 85)
-                if match:
-                    matched_br = br
-                    confidence = 0.70
-                    stats["pass_4_weak"] += 1
+            for offset in range(-3, 4):
+                check_date = claim_date + timedelta(days=offset)
+                for br in billing_by_date.get(check_date, []):
+                    if br.id in matched_billing_ids:
+                        continue
+                    score = fuzz.token_sort_ratio(claim_name, billing_norm_names[br.id])
+                    if score >= 85:
+                        matched_br = br
+                        confidence = 0.70
+                        stats["pass_4_weak"] += 1
+                        break
+                if matched_br:
                     break
 
         # Pass 5: Amount-anchored (carrier + date + amount)
@@ -228,8 +234,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
             era_payment = payments_by_id.get(claim.era_payment_id)
             if era_payment and era_payment.payer_name:
                 payer_upper = era_payment.payer_name.upper()
-                for br in billing_records:
-                    if br.id in matched_billing_ids or br.service_date != claim_date:
+                for br in billing_by_date.get(claim_date, []):
+                    if br.id in matched_billing_ids:
                         continue
                     if not br.total_payment or abs(float(br.total_payment) - claim_paid) > 0.01:
                         continue
