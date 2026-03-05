@@ -377,8 +377,7 @@ function Insights() {
                   </Card.Body>
                 </Card>
                 );
-              })()
-              )}
+              })()}
             </>
           )}
         </Tab>
