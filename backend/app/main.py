@@ -24,6 +24,22 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created/verified")
 
+    # Add columns that may be missing on older databases
+    async with engine.begin() as conn:
+        migrations = [
+            ("billing_records", "import_file_id", "INTEGER"),
+            ("billing_records", "extra_data", "JSONB"),
+            ("billing_records", "import_source", "VARCHAR(50)"),
+        ]
+        for table, column, col_type in migrations:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
+                ))
+            except Exception as e:
+                logger.debug(f"Column {table}.{column} migration skipped: {e}")
+    logger.info("Schema migrations applied")
+
     # Seed data on startup
     async with AsyncSessionLocal() as session:
         from backend.app.db.seed_data import run_all_seeds
