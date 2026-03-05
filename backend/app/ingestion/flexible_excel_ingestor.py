@@ -182,11 +182,13 @@ def _parse_bool(val) -> bool:
     return str(val).strip().upper() in ("YES", "TRUE", "1", "Y", "X")
 
 
-def _clean_text(val) -> str | None:
+def _clean_text(val, max_len: int = 200) -> str | None:
     if val is None:
         return None
     s = str(val).strip()
-    return s if s else None
+    if not s:
+        return None
+    return s[:max_len]
 
 
 SELFPAY_VARIANTS = {"SELFPAY", "SELF-PAY", "SELF PAY", "CASH", "SELF"}
@@ -326,6 +328,34 @@ def inspect_excel_file(file_content: bytes) -> dict:
         }
     wb.close()
     return {"sheets": sheets, "sheet_names": wb.sheetnames}
+
+
+# ─── String truncation safety ────────────────────────────────────────────────
+
+# Max lengths matching the model's VARCHAR sizes
+FIELD_MAX_LENGTHS = {
+    "patient_name": 200,
+    "referring_doctor": 200,
+    "scan_type": 200,
+    "insurance_carrier": 200,
+    "modality": 100,
+    "reading_physician": 200,
+    "patient_name_display": 200,
+    "modality_code": 100,
+    "service_month": 20,
+    "service_year": 10,
+    "denial_status": 50,
+    "denial_reason_code": 50,
+    "era_claim_id": 50,
+    "import_source": 50,
+}
+
+
+def _truncate_fields(record_data: dict) -> None:
+    """Truncate string fields to their column max lengths to prevent DB errors."""
+    for field, max_len in FIELD_MAX_LENGTHS.items():
+        if field in record_data and isinstance(record_data[field], str):
+            record_data[field] = record_data[field][:max_len]
 
 
 # ─── Main import ─────────────────────────────────────────────────────────────
@@ -508,12 +538,21 @@ async def import_excel_flexible(
             if "service_date" not in record_data or not record_data["service_date"]:
                 record_data["service_date"] = date.today()
 
+            # Truncate all string fields to their column max lengths
+            _truncate_fields(record_data)
+
             batch.append(BillingRecord(**record_data))
             imported += 1
 
             if len(batch) >= BATCH_SIZE:
-                session.add_all(batch)
-                await session.flush()
+                try:
+                    session.add_all(batch)
+                    await session.flush()
+                except Exception as e:
+                    logger.warning(f"Batch flush error at row {row_idx}, rolling back batch: {e}")
+                    await session.rollback()
+                    errors += len(batch)
+                    imported -= len(batch)
                 batch = []
 
         except Exception as e:
@@ -522,16 +561,27 @@ async def import_excel_flexible(
 
     # Flush remaining
     if batch:
-        session.add_all(batch)
-        await session.flush()
+        try:
+            session.add_all(batch)
+            await session.flush()
+        except Exception as e:
+            logger.warning(f"Final batch flush error, rolling back: {e}")
+            await session.rollback()
+            errors += len(batch)
+            imported -= len(batch)
 
-    # Update import file record
-    import_file.status = "COMPLETED"
-    import_file.rows_imported = imported
-    import_file.rows_skipped = skipped
-    import_file.rows_errored = errors
-    import_file.completed_at = datetime.utcnow()
-    await session.commit()
+    # Update import file record — re-merge in case of prior rollback
+    try:
+        import_file = await session.merge(import_file)
+        import_file.status = "COMPLETED" if errors == 0 else "COMPLETED_WITH_ERRORS"
+        import_file.rows_imported = imported
+        import_file.rows_skipped = skipped
+        import_file.rows_errored = errors
+        import_file.completed_at = datetime.utcnow()
+        await session.commit()
+    except Exception as e:
+        logger.warning(f"Could not update import_file record: {e}")
+        await session.rollback()
     wb.close()
 
     logger.info(f"Flexible import '{filename}' sheet '{target_sheet}': {imported} imported, {skipped} skipped, {errors} errors")

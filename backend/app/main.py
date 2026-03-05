@@ -24,20 +24,40 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created/verified")
 
-    # Add columns that may be missing on older databases
+    # Add columns that may be missing on older databases + widen narrow columns
     async with engine.begin() as conn:
-        migrations = [
+        # Add missing columns
+        new_columns = [
             ("billing_records", "import_file_id", "INTEGER"),
             ("billing_records", "extra_data", "JSONB"),
-            ("billing_records", "import_source", "VARCHAR(50)"),
         ]
-        for table, column, col_type in migrations:
+        for table, column, col_type in new_columns:
             try:
                 await conn.execute(text(
                     f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
                 ))
             except Exception as e:
-                logger.debug(f"Column {table}.{column} migration skipped: {e}")
+                logger.debug(f"Column {table}.{column} add skipped: {e}")
+
+        # Widen columns that are too narrow for messy data
+        widen_columns = [
+            ("billing_records", "scan_type", "VARCHAR(200)"),
+            ("billing_records", "insurance_carrier", "VARCHAR(200)"),
+            ("billing_records", "modality", "VARCHAR(100)"),
+            ("billing_records", "modality_code", "VARCHAR(100)"),
+            ("billing_records", "service_month", "VARCHAR(20)"),
+            ("billing_records", "service_year", "VARCHAR(10)"),
+            ("billing_records", "denial_status", "VARCHAR(50)"),
+            ("billing_records", "denial_reason_code", "VARCHAR(50)"),
+            ("billing_records", "import_source", "VARCHAR(50)"),
+        ]
+        for table, column, col_type in widen_columns:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {col_type}"
+                ))
+            except Exception as e:
+                logger.debug(f"Column {table}.{column} widen skipped: {e}")
     logger.info("Schema migrations applied")
 
     # Seed data on startup
