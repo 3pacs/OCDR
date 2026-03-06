@@ -1,7 +1,8 @@
 """API routes for auto-matching, crosswalk, and match review."""
 
 import logging
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+import json
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -299,6 +300,7 @@ async def crosswalk_integrity_check(
 @router.post("/crosswalk/import-topaz")
 async def import_topaz_crosswalk(
     file: UploadFile = File(...),
+    field_mapping: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -306,11 +308,12 @@ async def import_topaz_crosswalk(
     chart_number ↔ topaz_id crosswalk.
 
     Accepts any file format — auto-detects pipe/tab/CSV/XML/fixed-width.
-    Extensionless .NET export files from the Topaz server are supported.
 
-    For fixed-width .NET server files, the line number IS the Topaz
-    patient ID. ID fields within the record are treated as chart/jacket
-    numbers for crosswalk purposes.
+    For fixed-width files, the line number IS the Topaz patient ID.
+
+    Optional field_mapping (JSON string) lets the user override auto-detected
+    field roles. Format: {"chart_number": "id_2", "patient_name": "name_1"}
+    where the values are zone labels from the preview step.
     """
     from backend.app.parsing.fixed_width_parser import (
         looks_like_fixed_width,
@@ -325,24 +328,42 @@ async def import_topaz_crosswalk(
 
     filename = file.filename or "upload"
 
+    # Parse user-provided field mapping
+    user_mapping = {}
+    if field_mapping:
+        try:
+            user_mapping = json.loads(field_mapping)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     # ── Fixed-width .NET server file: line number = Topaz patient ID ──
     if looks_like_fixed_width(content_bytes):
         fw_result = parse_fixed_width_records(content_bytes)
         if fw_result.total_records > 0:
-            # Build crosswalk pairs from records:
-            #   topaz_id = line number (record position)
-            #   chart_number = first non-empty ID field in the record
-            #   patient_name = first non-empty name field in the record
+            # Determine which zone labels map to which roles.
+            # User mapping overrides auto-detected fields.
+            chart_fields = []
+            name_fields = []
+
+            if user_mapping.get("chart_number"):
+                chart_fields = [user_mapping["chart_number"]]
+            else:
+                chart_fields = list(fw_result.id_fields)
+
+            if user_mapping.get("patient_name"):
+                name_fields = [user_mapping["patient_name"]]
+            else:
+                name_fields = list(fw_result.name_fields)
+
             crosswalk_pairs = []
             for rec in fw_result.records:
                 topaz_id = rec.get("_topaz_id")
                 if not topaz_id:
                     continue
 
-                # Extract chart number from ID fields
                 chart_number = None
-                for id_field in fw_result.id_fields:
-                    val = rec.get(id_field, "").strip()
+                for field_label in chart_fields:
+                    val = rec.get(field_label, "").strip()
                     if val:
                         try:
                             chart_number = str(int(float(val)))
@@ -350,16 +371,13 @@ async def import_topaz_crosswalk(
                             chart_number = val
                         break
 
-                # Extract patient name
                 patient_name = None
-                for name_field in fw_result.name_fields:
-                    val = rec.get(name_field, "").strip()
+                for field_label in name_fields:
+                    val = rec.get(field_label, "").strip()
                     if val:
                         patient_name = val
                         break
 
-                # Only add if we have at least a chart number or patient name
-                # to match against billing records
                 if chart_number or patient_name:
                     crosswalk_pairs.append({
                         "topaz_id": topaz_id,
@@ -372,19 +390,18 @@ async def import_topaz_crosswalk(
                     "status": "no_crosswalk_data",
                     "format": "fixed_width",
                     "total_records": fw_result.total_records,
-                    "id_fields": fw_result.id_fields,
-                    "name_fields": fw_result.name_fields,
+                    "field_zones": fw_result.field_zones,
                     "warnings": fw_result.warnings + [
-                        "Fixed-width file parsed but no records had ID or name "
-                        "fields to build crosswalk pairs."
+                        "No records had usable data in the selected fields. "
+                        "Try assigning different field zones."
                     ],
                     "message": (
                         f"Parsed {fw_result.total_records:,} fixed-width records "
-                        f"but found no usable ID or name data for crosswalk."
+                        f"but the selected fields produced no crosswalk pairs. "
+                        f"Try a different field mapping."
                     ),
                 }
 
-            # Apply crosswalk
             apply_result = await apply_topaz_crosswalk(db, crosswalk_pairs)
 
             return {
@@ -393,12 +410,14 @@ async def import_topaz_crosswalk(
                 "format": "fixed_width",
                 "format_detail": (
                     f"Fixed-width: {fw_result.total_records:,} records x "
-                    f"{fw_result.record_width} bytes. Line number = Topaz ID."
+                    f"{fw_result.record_width} bytes. Line# = Topaz ID."
                 ),
                 "total_records": fw_result.total_records,
                 "crosswalk_pairs_extracted": len(crosswalk_pairs),
-                "id_fields": fw_result.id_fields,
-                "name_fields": fw_result.name_fields,
+                "field_mapping_used": {
+                    "chart_number": chart_fields[0] if chart_fields else None,
+                    "patient_name": name_fields[0] if name_fields else None,
+                },
                 "field_zones": fw_result.field_zones,
                 "crosswalk_applied": apply_result,
                 "sample_pairs": crosswalk_pairs[:20],
@@ -407,6 +426,27 @@ async def import_topaz_crosswalk(
 
     # ── Delimited / XML / other formats ──
     parsed = parse_topaz_export(content, filename)
+
+    # If user provided header overrides, re-extract crosswalk pairs
+    # using the user's column names instead of auto-detected ones.
+    if user_mapping and parsed.raw_rows:
+        crosswalk_pairs = []
+        for raw_row in parsed.raw_rows:
+            pair = {}
+            for role, header_name in user_mapping.items():
+                if role in ("chart_number", "topaz_id", "patient_name", "service_date"):
+                    val = raw_row.get(header_name, "").strip()
+                    if val:
+                        pair[role] = val
+            if pair.get("chart_number") or pair.get("topaz_id"):
+                crosswalk_pairs.append(pair)
+        if crosswalk_pairs:
+            parsed.crosswalk_pairs = crosswalk_pairs
+            parsed.total_rows = len(crosswalk_pairs)
+            parsed.column_mapping = {
+                role: header for role, header in user_mapping.items()
+                if role in ("chart_number", "topaz_id", "patient_name", "service_date")
+            }
 
     if not parsed.crosswalk_pairs:
         return {
@@ -418,8 +458,7 @@ async def import_topaz_crosswalk(
             "message": (
                 "No chart_number or topaz_id columns detected. "
                 f"Headers found: {parsed.headers_found[:20]}. "
-                "Ensure the file contains columns like 'Chart Number', 'Patient ID', "
-                "'Billing ID', 'Claim ID', 'Account', etc."
+                "Use the Preview step to see all headers and assign them manually."
             ),
         }
 
@@ -446,7 +485,8 @@ async def preview_topaz_crosswalk(
     """
     Preview a Topaz export file without applying changes.
 
-    Returns detected format, headers, column mapping, and sample crosswalk pairs.
+    Returns detected format, all field zones with sample values, and
+    auto-detected column mapping (which the user can override before import).
     """
     from backend.app.parsing.fixed_width_parser import (
         looks_like_fixed_width,
@@ -463,66 +503,66 @@ async def preview_topaz_crosswalk(
     if looks_like_fixed_width(content_bytes):
         fw_result = parse_fixed_width_records(content_bytes)
         if fw_result.total_records > 0:
-            sample_pairs = []
-            for rec in fw_result.records[:20]:
-                topaz_id = rec.get("_topaz_id")
-                chart_number = None
-                for id_field in fw_result.id_fields:
-                    val = rec.get(id_field, "").strip()
-                    if val:
-                        try:
-                            chart_number = str(int(float(val)))
-                        except (ValueError, TypeError):
-                            chart_number = val
+            # Return ALL zones with expanded sample values so the user
+            # can see what each field contains and assign roles manually.
+            zones_with_samples = []
+            for z in fw_result.field_zones:
+                # Gather more sample values from populated records
+                samples = []
+                for rec in fw_result.records[:50]:
+                    val = rec.get(z["label"], "")
+                    if val and val not in samples:
+                        samples.append(val)
+                    if len(samples) >= 8:
                         break
-                patient_name = None
-                for name_field in fw_result.name_fields:
-                    val = rec.get(name_field, "").strip()
-                    if val:
-                        patient_name = val
-                        break
-                sample_pairs.append({
-                    "topaz_id": topaz_id,
-                    "chart_number": chart_number,
-                    "patient_name": patient_name,
+                zones_with_samples.append({
+                    **z,
+                    "sample_values": samples,
                 })
 
-            # Count how many records have usable data
-            usable = sum(
-                1 for rec in fw_result.records
-                if any(rec.get(f, "").strip() for f in fw_result.id_fields)
-                or any(rec.get(f, "").strip() for f in fw_result.name_fields)
-            )
+            # Build sample records showing all field values
+            sample_records = []
+            for rec in fw_result.records[:20]:
+                row = {"_line_num": rec.get("_line_num"), "_topaz_id": rec.get("_topaz_id")}
+                for z in fw_result.field_zones:
+                    val = rec.get(z["label"], "")
+                    if val:
+                        row[z["label"]] = val
+                sample_records.append(row)
+
+            # Auto-detected mapping (user can override)
+            auto_mapping = {}
+            if fw_result.id_fields:
+                auto_mapping["chart_number"] = fw_result.id_fields[0]
+            if fw_result.name_fields:
+                auto_mapping["patient_name"] = fw_result.name_fields[0]
 
             return {
                 "format": "fixed_width",
                 "format_detail": (
                     f"Fixed-width: {fw_result.total_records:,} records x "
-                    f"{fw_result.record_width} bytes. Line number = Topaz ID."
+                    f"{fw_result.record_width} bytes. Line# = Topaz patient ID."
                 ),
                 "total_records": fw_result.total_records,
-                "total_rows": usable,
-                "id_fields": fw_result.id_fields,
-                "name_fields": fw_result.name_fields,
-                "field_zones": fw_result.field_zones,
-                "sample_pairs": sample_pairs,
-                "column_mapping": {
-                    "topaz_id": "line_number (record position)",
-                    **({"chart_number": fw_result.id_fields[0]} if fw_result.id_fields else {}),
-                    **({"patient_name": fw_result.name_fields[0]} if fw_result.name_fields else {}),
-                },
+                "field_zones": zones_with_samples,
+                "sample_records": sample_records,
+                "auto_mapping": auto_mapping,
                 "warnings": fw_result.warnings,
             }
 
     # ── Delimited / XML / other formats ──
     parsed = parse_topaz_export(content, file.filename or "preview")
 
+    # For delimited files, also allow header override
+    all_headers = parsed.headers_found[:50]
+
     return {
         "format": parsed.format_detected,
-        "headers_found": parsed.headers_found[:30],
+        "headers_found": all_headers,
         "column_mapping": parsed.column_mapping,
         "total_rows": parsed.total_rows,
         "sample_pairs": parsed.crosswalk_pairs[:20],
+        "raw_rows": [r for r in parsed.raw_rows[:15] if r],
         "extra_fields": parsed.extra_fields[:20],
         "warnings": parsed.warnings,
     }

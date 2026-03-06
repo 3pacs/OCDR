@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Card, Row, Col, Button, Alert, Spinner, Table, Badge, Tab, Tabs, ProgressBar } from "react-bootstrap";
+import { Card, Row, Col, Button, Alert, Spinner, Table, Badge, Tab, Tabs, ProgressBar, Form as BsForm } from "react-bootstrap";
 import api from "../services/api";
 
 function MatchSummary({ summary, onRefresh }) {
@@ -194,7 +194,16 @@ function TopazUpload({ onImported }) {
   const [saving, setSaving] = useState(false);
   const [editedRows, setEditedRows] = useState({});
   const [saveMsg, setSaveMsg] = useState(null);
+  // User-chosen field mapping: { chart_number: "id_2", patient_name: "name_1" }
+  const [fieldMapping, setFieldMapping] = useState({});
   const fileRef = React.useRef();
+
+  const ROLE_OPTIONS = [
+    { value: "", label: "-- ignore --" },
+    { value: "chart_number", label: "Chart / Jacket #" },
+    { value: "patient_name", label: "Patient Name" },
+    { value: "service_date", label: "Service Date" },
+  ];
 
   const handlePreview = async () => {
     const file = fileRef.current?.files?.[0];
@@ -205,6 +214,7 @@ function TopazUpload({ onImported }) {
     setResult(null);
     setEditedRows({});
     setSaveMsg(null);
+    setFieldMapping({});
     try {
       const form = new FormData();
       form.append("file", file);
@@ -213,6 +223,12 @@ function TopazUpload({ onImported }) {
         timeout: 120000,
       });
       setPreview(res.data);
+      // Seed field mapping from auto-detected mapping
+      if (res.data.auto_mapping) {
+        setFieldMapping(res.data.auto_mapping);
+      } else if (res.data.column_mapping) {
+        setFieldMapping(res.data.column_mapping);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.response?.data?.message || err.message);
     } finally {
@@ -231,6 +247,11 @@ function TopazUpload({ onImported }) {
     try {
       const form = new FormData();
       form.append("file", file);
+      // Send user's field mapping as JSON
+      if (Object.keys(fieldMapping).length > 0) {
+        // Invert: our state is { chart_number: "id_2" } — that's what backend expects
+        form.append("field_mapping", JSON.stringify(fieldMapping));
+      }
       const res = await api.post("/matching/crosswalk/import-topaz", form, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 300000,
@@ -244,7 +265,6 @@ function TopazUpload({ onImported }) {
     }
   };
 
-  // Save manual corrections via PATCH
   const handleSaveCorrections = async () => {
     const updates = Object.entries(editedRows).map(([billingId, fields]) => ({
       billing_record_id: parseInt(billingId, 10),
@@ -265,7 +285,48 @@ function TopazUpload({ onImported }) {
     }
   };
 
+  // When user changes a zone's role via dropdown
+  const handleZoneRoleChange = (zoneLabel, newRole) => {
+    setFieldMapping(prev => {
+      const next = { ...prev };
+      // Remove this zone from any existing role
+      for (const [role, label] of Object.entries(next)) {
+        if (label === zoneLabel) delete next[role];
+      }
+      // Assign new role (if not "ignore")
+      if (newRole) {
+        // If another zone already has this role, clear it
+        delete next[newRole];
+        next[newRole] = zoneLabel;
+      }
+      return next;
+    });
+  };
+
+  // Get the role currently assigned to a zone label
+  const getZoneRole = (zoneLabel) => {
+    for (const [role, label] of Object.entries(fieldMapping)) {
+      if (label === zoneLabel) return role;
+    }
+    return "";
+  };
+
+  // Build a live preview of crosswalk pairs based on current field mapping
+  const getLivePreviewRows = () => {
+    if (!preview?.sample_records || !preview?.format === "fixed_width") return null;
+    const chartField = fieldMapping.chart_number;
+    const nameField = fieldMapping.patient_name;
+    if (!chartField && !nameField) return null;
+
+    return preview.sample_records.slice(0, 10).map(rec => ({
+      topaz_id: rec._topaz_id,
+      chart_number: chartField ? (rec[chartField] || "") : "",
+      patient_name: nameField ? (rec[nameField] || "") : "",
+    }));
+  };
+
   const isFixedWidth = preview?.format === "fixed_width" || result?.format === "fixed_width";
+  const liveRows = isFixedWidth ? getLivePreviewRows() : null;
 
   return (
     <Card className="border-0 shadow-sm mb-4">
@@ -274,70 +335,200 @@ function TopazUpload({ onImported }) {
         <p className="text-muted small mb-3">
           Upload a data export from the Topaz billing server to map Chart Numbers to Topaz IDs.
           Supports pipe-delimited, tab, CSV, XML, or fixed-width .NET server files
-          (where line number = Topaz patient ID).
+          (line# = Topaz patient ID). After preview, assign which fields are which before importing.
         </p>
 
         <div className="d-flex align-items-center gap-2 mb-3">
           <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 350 }}
-            onChange={() => { setPreview(null); setResult(null); setError(null); setEditedRows({}); setSaveMsg(null); }} />
+            onChange={() => { setPreview(null); setResult(null); setError(null); setEditedRows({}); setSaveMsg(null); setFieldMapping({}); }} />
           <Button variant="outline-secondary" size="sm" onClick={handlePreview}
             disabled={previewing || uploading}>
             {previewing ? <><Spinner size="sm" className="me-1" />Previewing...</> : "Preview"}
           </Button>
           <Button variant="primary" size="sm" onClick={handleImport}
-            disabled={uploading || previewing}>
+            disabled={uploading || previewing || (!preview && !result)}>
             {uploading ? <><Spinner size="sm" className="me-1" />Importing...</> : "Import & Apply"}
           </Button>
         </div>
 
         {error && <Alert variant="danger" className="small">{error}</Alert>}
 
-        {/* ── Preview ── */}
-        {preview && (
+        {/* ── PREVIEW: Fixed-width with interactive field mapping ── */}
+        {preview && isFixedWidth && (
+          <>
+            <Alert variant="info" className="small mb-3">
+              <strong>Detected:</strong> <Badge bg="secondary">{preview.format}</Badge>
+              {preview.format_detail && <span> &mdash; {preview.format_detail}</span>}
+              {preview.warnings?.length > 0 && (
+                <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
+              )}
+            </Alert>
+
+            {/* Field zone table with role dropdowns */}
+            <div className="mb-3">
+              <h6 className="mb-2">Assign Field Roles</h6>
+              <p className="text-muted small mb-2">
+                Each row is a detected field zone. Use the dropdown to tell the system what each field contains.
+                The Topaz ID is always the line number (record position) &mdash; you just need to identify
+                which field holds the <strong>Chart / Jacket #</strong> and <strong>Patient Name</strong>.
+              </p>
+              <Table size="sm" className="small">
+                <thead>
+                  <tr>
+                    <th style={{ width: 100 }}>Label</th>
+                    <th style={{ width: 80 }}>Bytes</th>
+                    <th style={{ width: 50 }}>Width</th>
+                    <th style={{ width: 70 }}>Type</th>
+                    <th style={{ width: 180 }}>Role</th>
+                    <th>Sample Values</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.field_zones?.map((z, i) => {
+                    const role = getZoneRole(z.label);
+                    return (
+                      <tr key={i} className={role === "chart_number" ? "table-info" : role === "patient_name" ? "table-success" : role === "service_date" ? "table-warning" : ""}>
+                        <td><strong>{z.label}</strong></td>
+                        <td>{z.start}-{z.end}</td>
+                        <td>{z.width}</td>
+                        <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
+                        <td>
+                          <BsForm.Select size="sm" value={role}
+                            onChange={e => handleZoneRoleChange(z.label, e.target.value)}>
+                            {ROLE_OPTIONS.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </BsForm.Select>
+                        </td>
+                        <td className="text-truncate" style={{ maxWidth: 350 }}>
+                          {z.sample_values?.slice(0, 5).map((v, j) => <code key={j} className="me-2">{v}</code>)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </div>
+
+            {/* Current mapping summary */}
+            <div className="mb-3">
+              <strong className="small">Current Mapping: </strong>
+              <Badge bg="dark" className="me-1">Topaz ID &larr; line# (always)</Badge>
+              {fieldMapping.chart_number && <Badge bg="info" className="me-1">Chart/Jacket# &larr; {fieldMapping.chart_number}</Badge>}
+              {fieldMapping.patient_name && <Badge bg="success" className="me-1">Patient Name &larr; {fieldMapping.patient_name}</Badge>}
+              {fieldMapping.service_date && <Badge bg="warning" className="me-1">Date &larr; {fieldMapping.service_date}</Badge>}
+              {!fieldMapping.chart_number && !fieldMapping.patient_name && (
+                <span className="text-danger small ms-1">Please assign at least Chart/Jacket# or Patient Name to import.</span>
+              )}
+            </div>
+
+            {/* Live preview of crosswalk with current mapping */}
+            {liveRows && liveRows.length > 0 && (
+              <details open className="mb-3">
+                <summary className="small fw-bold">Live Preview (first 10 records with your mapping)</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr>
+                    <th>Topaz ID (line#)</th>
+                    <th>Chart / Jacket #{fieldMapping.chart_number && <span className="text-muted"> ({fieldMapping.chart_number})</span>}</th>
+                    <th>Patient Name{fieldMapping.patient_name && <span className="text-muted"> ({fieldMapping.patient_name})</span>}</th>
+                  </tr></thead>
+                  <tbody>
+                    {liveRows.map((r, i) => (
+                      <tr key={i}>
+                        <td><code>{r.topaz_id}</code></td>
+                        <td>{r.chart_number || <span className="text-muted">--</span>}</td>
+                        <td>{r.patient_name || <span className="text-muted">--</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+          </>
+        )}
+
+        {/* ── PREVIEW: Delimited / other formats with header override ── */}
+        {preview && !isFixedWidth && (
           <Alert variant="info" className="small">
             <strong>Preview:</strong> Detected format: <Badge bg="secondary">{preview.format}</Badge>
-            {preview.format_detail && <span> &mdash; {preview.format_detail}</span>}
-            {!preview.format_detail && <span> &mdash; {preview.total_rows?.toLocaleString()} rows found</span>}
+            {" "}&mdash; {preview.total_rows?.toLocaleString()} rows found
+
+            {preview.headers_found?.length > 0 && (
+              <div className="mt-2">
+                <strong>Headers found:</strong>{" "}
+                {preview.headers_found.map((h, i) => <Badge key={i} bg="outline-dark" className="border me-1">{h}</Badge>)}
+              </div>
+            )}
 
             {preview.column_mapping && Object.keys(preview.column_mapping).length > 0 && (
               <div className="mt-1">
-                Mapped: {Object.entries(preview.column_mapping).map(([k, v]) =>
+                <strong>Auto-mapped:</strong>{" "}
+                {Object.entries(preview.column_mapping).map(([k, v]) =>
                   <Badge key={k} bg="outline-dark" className="border me-1">{k} &larr; &ldquo;{v}&rdquo;</Badge>
                 )}
               </div>
             )}
+
+            {/* Let user override header mapping for delimited files */}
+            {preview.headers_found?.length > 0 && (
+              <div className="mt-2">
+                <strong>Override mapping:</strong>
+                <Row className="g-2 mt-1">
+                  {["chart_number", "patient_name", "service_date"].map(role => (
+                    <Col key={role} md={4}>
+                      <BsForm.Group>
+                        <BsForm.Label className="small mb-0">
+                          {role === "chart_number" ? "Chart / Jacket #" : role === "patient_name" ? "Patient Name" : "Service Date"}
+                        </BsForm.Label>
+                        <BsForm.Select size="sm" value={fieldMapping[role] || ""}
+                          onChange={e => setFieldMapping(prev => {
+                            const next = { ...prev };
+                            if (e.target.value) { next[role] = e.target.value; }
+                            else { delete next[role]; }
+                            return next;
+                          })}>
+                          <option value="">-- auto / none --</option>
+                          {preview.headers_found.map((h, i) => (
+                            <option key={i} value={h}>{h}</option>
+                          ))}
+                        </BsForm.Select>
+                      </BsForm.Group>
+                    </Col>
+                  ))}
+                </Row>
+              </div>
+            )}
+
             {preview.warnings?.length > 0 && (
               <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
             )}
 
-            {/* Fixed-width field zones */}
-            {preview.field_zones?.length > 0 && (
+            {/* Sample raw rows */}
+            {preview.raw_rows?.length > 0 && (
               <details className="mt-2">
-                <summary className="fw-bold">Field Zones ({preview.field_zones.length})</summary>
-                <div className="d-flex flex-wrap gap-1 mt-1">
-                  {preview.field_zones.map((z, i) => (
-                    <Badge key={i} bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>
-                      {z.label} ({z.start}-{z.end})
-                    </Badge>
-                  ))}
+                <summary className="fw-bold">Sample Rows ({preview.raw_rows.length})</summary>
+                <div style={{ maxHeight: 200, overflow: "auto" }}>
+                  <Table size="sm" className="small mt-1 mb-0">
+                    <thead><tr>{Object.keys(preview.raw_rows[0] || {}).map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {preview.raw_rows.slice(0, 10).map((row, i) => (
+                        <tr key={i}>{Object.values(row).map((v, j) => <td key={j}>{v || "--"}</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </Table>
                 </div>
               </details>
             )}
 
-            {/* Sample crosswalk pairs */}
-            {preview.sample_pairs?.length > 0 && (
+            {preview.sample_pairs?.length > 0 && !preview.raw_rows?.length && (
               <Table size="sm" className="mt-2 mb-0 small">
-                <thead><tr>
-                  <th>Topaz ID{isFixedWidth && " (line#)"}</th>
-                  <th>Chart / Jacket #</th>
-                  <th>Patient Name</th>
-                </tr></thead>
+                <thead><tr><th>Chart #</th><th>Topaz ID</th><th>Patient</th></tr></thead>
                 <tbody>
-                  {preview.sample_pairs.slice(0, 8).map((p, i) => (
+                  {preview.sample_pairs.slice(0, 5).map((p, i) => (
                     <tr key={i}>
-                      <td><code>{p.topaz_id || "--"}</code></td>
-                      <td>{p.chart_number || <span className="text-muted">--</span>}</td>
-                      <td>{p.patient_name || <span className="text-muted">--</span>}</td>
+                      <td>{p.chart_number || "--"}</td>
+                      <td>{p.topaz_id || "--"}</td>
+                      <td>{p.patient_name || "--"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -357,12 +548,11 @@ function TopazUpload({ onImported }) {
                   <strong>Import complete!</strong>{" "}
                   {result.format === "fixed_width" ? (
                     <>
-                      {result.total_records?.toLocaleString()} fixed-width records parsed.{" "}
-                      {result.crosswalk_pairs_extracted?.toLocaleString()} crosswalk pairs extracted
-                      (line# = Topaz ID).{" "}
+                      {result.total_records?.toLocaleString()} records parsed.{" "}
+                      {result.crosswalk_pairs_extracted?.toLocaleString()} crosswalk pairs extracted.{" "}
                     </>
                   ) : (
-                    <>{result.total_rows_parsed?.toLocaleString()} rows parsed from <Badge bg="secondary">{result.format}</Badge> file.{" "}</>
+                    <>{result.total_rows_parsed?.toLocaleString()} rows parsed from <Badge bg="secondary">{result.format}</Badge>.{" "}</>
                   )}
                   {result.crosswalk_applied?.applied > 0
                     ? <>Applied Topaz ID to <strong>{result.crosswalk_applied.applied}</strong> billing records
@@ -372,8 +562,16 @@ function TopazUpload({ onImported }) {
                   }
                   {result.crosswalk_applied?.skipped_name_mismatch > 0 && (
                     <span className="text-warning ms-1">
-                      {result.crosswalk_applied.skipped_name_mismatch} skipped (name mismatch &mdash; review below).
+                      {result.crosswalk_applied.skipped_name_mismatch} skipped (name mismatch).
                     </span>
+                  )}
+                  {result.field_mapping_used && (
+                    <div className="mt-1">
+                      <strong>Fields used:</strong>{" "}
+                      <Badge bg="dark" className="me-1">Topaz ID &larr; line#</Badge>
+                      {result.field_mapping_used.chart_number && <Badge bg="info" className="me-1">Chart# &larr; {result.field_mapping_used.chart_number}</Badge>}
+                      {result.field_mapping_used.patient_name && <Badge bg="success" className="me-1">Name &larr; {result.field_mapping_used.patient_name}</Badge>}
+                    </div>
                   )}
                   {result.warnings?.length > 0 && (
                     <div className="mt-1 text-warning">Warnings: {result.warnings.join("; ")}</div>
@@ -382,7 +580,7 @@ function TopazUpload({ onImported }) {
               )}
             </Alert>
 
-            {/* Applied crosswalk stats for fixed-width */}
+            {/* Stats row for fixed-width */}
             {result.crosswalk_applied && result.format === "fixed_width" && (
               <Row className="g-2 mb-3">
                 <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_pairs_extracted?.toLocaleString()}</div><small>Pairs Extracted</small></div></Col>
@@ -394,7 +592,7 @@ function TopazUpload({ onImported }) {
               </Row>
             )}
 
-            {/* Sample pairs that were applied */}
+            {/* Sample pairs */}
             {result.sample_pairs?.length > 0 && (
               <details className="mb-3" open>
                 <summary className="small fw-bold">
@@ -418,39 +616,16 @@ function TopazUpload({ onImported }) {
                 </Table>
               </details>
             )}
-
-            {/* Field zones for fixed-width imports */}
-            {result.field_zones?.length > 0 && (
-              <details className="mb-3">
-                <summary className="small fw-bold">Field Zones ({result.field_zones.length})</summary>
-                <Table size="sm" className="small mt-1">
-                  <thead><tr><th>Label</th><th>Pos</th><th>Width</th><th>Type</th><th>Sample Values</th></tr></thead>
-                  <tbody>
-                    {result.field_zones.map((z, i) => (
-                      <tr key={i} className={z.label.startsWith("id_") ? "table-info" : z.label.startsWith("name_") ? "table-success" : z.label.startsWith("date_") ? "table-warning" : ""}>
-                        <td><strong>{z.label}</strong></td>
-                        <td>{z.start}-{z.end}</td>
-                        <td>{z.width}</td>
-                        <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
-                        <td className="text-truncate" style={{ maxWidth: 250 }}>{z.sample_values?.slice(0, 3).map((v, j) => <code key={j} className="me-2">{v}</code>)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </details>
-            )}
           </>
         )}
 
-        {/* ── Manual corrections (save button + message) ── */}
+        {/* ── Manual corrections ── */}
         {Object.keys(editedRows).length > 0 && (
           <div className="d-flex align-items-center gap-2 mt-2">
             <Button variant="warning" size="sm" onClick={handleSaveCorrections} disabled={saving}>
               {saving ? <><Spinner size="sm" className="me-1" />Saving...</> : `Save ${Object.keys(editedRows).length} Correction(s)`}
             </Button>
-            <Button variant="outline-secondary" size="sm" onClick={() => setEditedRows({})}>
-              Discard Changes
-            </Button>
+            <Button variant="outline-secondary" size="sm" onClick={() => setEditedRows({})}>Discard</Button>
           </div>
         )}
         {saveMsg && <Alert variant={saveMsg.startsWith("Error") ? "danger" : "success"} className="small mt-2">{saveMsg}</Alert>}
