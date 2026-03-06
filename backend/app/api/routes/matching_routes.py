@@ -471,11 +471,21 @@ async def extract_crosswalk_pairs(
     content_bytes = content.encode("utf-8", errors="replace")
     pairs = []
 
+    # All recognized patient data roles for extraction
+    _PATIENT_ROLES = {
+        "chart_number", "topaz_id", "patient_name",
+        "last_name", "first_name", "date_of_birth",
+        "phone", "city", "state", "zip_code",
+        "insurance_number", "service_date",
+    }
+
     if record.format_detected == "fixed_width":
         fw_result = parse_fixed_width_records(content_bytes)
 
         chart_field = field_mapping.get("chart_number")
         name_field = field_mapping.get("patient_name")
+        last_name_field = field_mapping.get("last_name")
+        first_name_field = field_mapping.get("first_name")
         # For fixed-width, line number can be the topaz_id if user says so
         use_line_as_topaz = field_mapping.get("topaz_id") == "_line_num"
         topaz_field = field_mapping.get("topaz_id") if not use_line_as_topaz else None
@@ -499,14 +509,31 @@ async def extract_crosswalk_pairs(
                     except (ValueError, TypeError):
                         pair["chart_number"] = val
 
-            # Patient name
+            # Patient name (combined or split)
             if name_field:
                 val = rec.get(name_field, "").strip()
                 if val:
                     pair["patient_name"] = val
+            if last_name_field:
+                val = rec.get(last_name_field, "").strip()
+                if val:
+                    pair["last_name"] = val
+            if first_name_field:
+                val = rec.get(first_name_field, "").strip()
+                if val:
+                    pair["first_name"] = val
+
+            # Extract all other patient data fields from mapping
+            for role in ("date_of_birth", "phone", "city", "state",
+                         "zip_code", "insurance_number"):
+                src_field = field_mapping.get(role)
+                if src_field:
+                    val = rec.get(src_field, "").strip()
+                    if val:
+                        pair[role] = val
 
             # Only include if we have something useful
-            if pair.get("chart_number") or pair.get("patient_name"):
+            if pair.get("chart_number") or pair.get("patient_name") or pair.get("last_name"):
                 pairs.append(pair)
 
     else:
@@ -515,7 +542,7 @@ async def extract_crosswalk_pairs(
         for raw_row in parsed.raw_rows:
             pair = {}
             for role, header_name in field_mapping.items():
-                if role in ("chart_number", "topaz_id", "patient_name", "service_date"):
+                if role in _PATIENT_ROLES:
                     val = str(raw_row.get(header_name, "")).strip()
                     if val:
                         pair[role] = val
@@ -593,6 +620,8 @@ async def apply_crosswalk_import(
             detail="No extracted pairs. Run extract step first."
         )
 
+    from backend.app.models.patient import Patient
+
     pairs = record.extracted_pairs
 
     # Load billing records that need topaz_id, indexed by patient_id
@@ -606,38 +635,119 @@ async def apply_crosswalk_import(
         key = str(br.patient_id).strip()
         by_chart.setdefault(key, []).append(br)
 
+    # Load existing patients indexed by jacket+topaz for upsert
+    existing_patients_result = await db.execute(select(Patient))
+    existing_patients = list(existing_patients_result.scalars().all())
+    patient_index: dict[tuple, Patient] = {}
+    for p in existing_patients:
+        patient_index[(p.jacket_number, p.topaz_number)] = p
+
     applied = 0
     skipped_no_match = 0
     skipped_already_set = 0
+    patients_created = 0
+    patients_updated = 0
     updated_ids: set[int] = set()
 
     for pair in pairs:
         chart_num = pair.get("chart_number")
         topaz_id = pair.get("topaz_id")
-        if not chart_num or not topaz_id:
+
+        # --- Update BillingRecord.topaz_id (existing logic) ---
+        if chart_num and topaz_id:
+            candidates = by_chart.get(str(chart_num).strip(), [])
+            if not candidates:
+                skipped_no_match += 1
+            else:
+                for br in candidates:
+                    if br.id in updated_ids:
+                        continue
+                    if br.topaz_id and br.topaz_id == topaz_id:
+                        skipped_already_set += 1
+                        continue
+                    if br.topaz_id and br.topaz_id != topaz_id:
+                        continue
+                    br.topaz_id = str(topaz_id).strip()
+                    updated_ids.add(br.id)
+                    applied += 1
+        elif not chart_num and not topaz_id:
             skipped_no_match += 1
+
+        # --- Upsert Patient record with all demographics ---
+        jacket = str(chart_num).strip() if chart_num else None
+        topaz = str(topaz_id).strip() if topaz_id else None
+
+        if not jacket and not topaz:
             continue
 
-        candidates = by_chart.get(str(chart_num).strip(), [])
-        if not candidates:
-            skipped_no_match += 1
-            continue
+        # Build patient name from split or combined fields
+        last_name = pair.get("last_name")
+        first_name = pair.get("first_name")
+        if not last_name and pair.get("patient_name"):
+            # Try splitting "LAST FIRST" or "LAST, FIRST"
+            full = pair["patient_name"]
+            if "," in full:
+                parts = full.split(",", 1)
+                last_name = parts[0].strip()
+                first_name = parts[1].strip() if len(parts) > 1 else None
+            elif " " in full:
+                parts = full.split(None, 1)
+                last_name = parts[0].strip()
+                first_name = parts[1].strip() if len(parts) > 1 else None
+            else:
+                last_name = full.strip()
 
-        for br in candidates:
-            if br.id in updated_ids:
-                continue
-            if br.topaz_id and br.topaz_id == topaz_id:
-                skipped_already_set += 1
-                continue
-            if br.topaz_id and br.topaz_id != topaz_id:
-                # Don't overwrite existing different topaz_id
-                continue
-            br.topaz_id = str(topaz_id).strip()
-            updated_ids.add(br.id)
-            applied += 1
+        # Parse DOB
+        dob = None
+        dob_str = pair.get("date_of_birth")
+        if dob_str:
+            from backend.app.parsing.fixed_width_parser import _parse_date
+            parsed_dob = _parse_date(dob_str)
+            if parsed_dob:
+                from datetime import date as date_type
+                try:
+                    dob = date_type.fromisoformat(parsed_dob)
+                except ValueError:
+                    pass
 
-    if applied > 0:
-        await db.commit()
+        key = (jacket, topaz)
+        existing = patient_index.get(key)
+
+        if existing:
+            # Update existing patient with any new data
+            changed = False
+            for attr, val in [
+                ("last_name", last_name),
+                ("first_name", first_name),
+                ("date_of_birth", dob),
+                ("phone", pair.get("phone")),
+                ("city", pair.get("city")),
+                ("state", pair.get("state")),
+                ("zip_code", pair.get("zip_code")),
+                ("insurance_number", pair.get("insurance_number")),
+            ]:
+                if val and not getattr(existing, attr):
+                    setattr(existing, attr, val)
+                    changed = True
+            if changed:
+                patients_updated += 1
+        else:
+            patient = Patient(
+                jacket_number=jacket,
+                topaz_number=topaz,
+                last_name=last_name,
+                first_name=first_name,
+                date_of_birth=dob,
+                phone=pair.get("phone"),
+                city=pair.get("city"),
+                state=pair.get("state"),
+                zip_code=pair.get("zip_code"),
+                insurance_number=pair.get("insurance_number"),
+                crosswalk_import_id=import_id,
+            )
+            db.add(patient)
+            patient_index[key] = patient
+            patients_created += 1
 
     from datetime import datetime as dt
     apply_result = {
@@ -645,6 +755,8 @@ async def apply_crosswalk_import(
         "skipped_no_match": skipped_no_match,
         "skipped_already_set": skipped_already_set,
         "total_pairs": len(pairs),
+        "patients_created": patients_created,
+        "patients_updated": patients_updated,
     }
     record.applied_count = applied
     record.apply_result = apply_result
@@ -717,6 +829,139 @@ async def get_crosswalk_import(
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "mapped_at": record.mapped_at.isoformat() if record.mapped_at else None,
         "applied_at": record.applied_at.isoformat() if record.applied_at else None,
+    }
+
+
+@router.get("/patients/lookup")
+async def lookup_patient(
+    jacket_number: str | None = None,
+    topaz_number: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Look up a patient by jacket (chart) number or topaz (patient) number.
+
+    Returns all patient data and linked billing records for the identifier.
+    Either jacket_number or topaz_number must be provided.
+    """
+    from backend.app.models.patient import Patient
+
+    if not jacket_number and not topaz_number:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Provide jacket_number or topaz_number query parameter."
+        )
+
+    # Find matching patients
+    conditions = []
+    if jacket_number:
+        conditions.append(Patient.jacket_number == jacket_number.strip())
+    if topaz_number:
+        conditions.append(Patient.topaz_number == topaz_number.strip())
+
+    from sqlalchemy import or_
+    result = await db.execute(
+        select(Patient).where(or_(*conditions))
+    )
+    patients = list(result.scalars().all())
+
+    if not patients:
+        return {"patients": [], "billing_records": []}
+
+    # Collect all jacket and topaz numbers for billing record lookup
+    jacket_nums = {p.jacket_number for p in patients if p.jacket_number}
+    topaz_nums = {p.topaz_number for p in patients if p.topaz_number}
+
+    # Find linked billing records
+    br_conditions = []
+    if jacket_nums:
+        # patient_id is Integer, convert jacket numbers
+        int_jackets = set()
+        for j in jacket_nums:
+            try:
+                int_jackets.add(int(j))
+            except (ValueError, TypeError):
+                pass
+        if int_jackets:
+            br_conditions.append(BillingRecord.patient_id.in_(int_jackets))
+    if topaz_nums:
+        br_conditions.append(BillingRecord.topaz_id.in_(topaz_nums))
+
+    billing_records = []
+    if br_conditions:
+        from sqlalchemy import or_ as or_clause
+        br_result = await db.execute(
+            select(BillingRecord).where(or_clause(*br_conditions))
+        )
+        billing_records = list(br_result.scalars().all())
+
+    return {
+        "patients": [
+            {
+                "id": p.id,
+                "jacket_number": p.jacket_number,
+                "topaz_number": p.topaz_number,
+                "last_name": p.last_name,
+                "first_name": p.first_name,
+                "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
+                "phone": p.phone,
+                "city": p.city,
+                "state": p.state,
+                "zip_code": p.zip_code,
+                "insurance_number": p.insurance_number,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in patients
+        ],
+        "billing_records": [
+            {
+                "id": br.id,
+                "patient_name": br.patient_name,
+                "patient_id": br.patient_id,
+                "topaz_id": br.topaz_id,
+                "service_date": br.service_date.isoformat() if br.service_date else None,
+                "insurance_carrier": br.insurance_carrier,
+                "modality": br.modality,
+                "scan_type": br.scan_type,
+                "total_payment": float(br.total_payment) if br.total_payment else 0,
+                "denial_status": br.denial_status,
+            }
+            for br in billing_records
+        ],
+    }
+
+
+@router.get("/patients/stats")
+async def patient_stats(db: AsyncSession = Depends(get_db)):
+    """Summary stats for the patient directory."""
+    from backend.app.models.patient import Patient
+    from sqlalchemy import func
+
+    total = await db.execute(select(func.count(Patient.id)))
+    has_jacket = await db.execute(
+        select(func.count(Patient.id)).where(Patient.jacket_number.is_not(None))
+    )
+    has_topaz = await db.execute(
+        select(func.count(Patient.id)).where(Patient.topaz_number.is_not(None))
+    )
+    has_both = await db.execute(
+        select(func.count(Patient.id)).where(
+            Patient.jacket_number.is_not(None),
+            Patient.topaz_number.is_not(None),
+        )
+    )
+
+    total_count = total.scalar() or 0
+    jacket_count = has_jacket.scalar() or 0
+    topaz_count = has_topaz.scalar() or 0
+    both_count = has_both.scalar() or 0
+
+    return {
+        "total_patients": total_count,
+        "has_jacket_number": jacket_count,
+        "has_topaz_number": topaz_count,
+        "has_both_identifiers": both_count,
     }
 
 
