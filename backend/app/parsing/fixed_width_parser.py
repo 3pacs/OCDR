@@ -29,6 +29,24 @@ logger = logging.getLogger(__name__)
 # Common record widths in .NET/legacy systems
 CANDIDATE_WIDTHS = [128, 132, 64, 80, 100, 160, 200, 256, 512]
 
+# US state abbreviations for auto-detection
+US_STATES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC", "PR", "VI", "GU", "AS", "MP",
+}
+
+# Patterns for content-based field detection
+_RE_PHONE = re.compile(r"^\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{4}$")
+_RE_ZIP = re.compile(r"^\d{5}(-\d{4})?$")
+_RE_DATE = re.compile(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}")
+_RE_DATE_ISO = re.compile(r"\d{4}[/\-]\d{2}[/\-]\d{2}")
+_RE_DATE_COMPACT = re.compile(r"^\d{8}$")
+_RE_INSURANCE = re.compile(r"^[A-Z]{1,3}\d{6,12}$|^\d{9,15}$")
+
 
 @dataclass
 class FieldZone:
@@ -55,6 +73,11 @@ class FixedWidthResult:
     # Field labels that look like patient names
     date_fields: list[str] = field(default_factory=list)
     # Field labels that look like dates
+    phone_fields: list[str] = field(default_factory=list)
+    zip_fields: list[str] = field(default_factory=list)
+    state_fields: list[str] = field(default_factory=list)
+    city_fields: list[str] = field(default_factory=list)
+    insurance_fields: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     format_info: str = ""
 
@@ -326,39 +349,156 @@ def _classify_zones(zones: list[FieldZone]) -> list[FieldZone]:
     """
     Assign labels to field zones based on their content patterns.
 
-    - Short numeric (2-8 digits): likely an ID field
-    - Longer alpha (10+ chars): likely a name field
-    - 8-10 char mixed with / or -: likely a date field
-    - Short alpha (2-5 chars): likely a code/status
+    Uses content-aware heuristics to detect specific field types:
+    - Date fields (DOB, service dates)
+    - US state abbreviations
+    - ZIP codes (5-digit or 5+4)
+    - Phone numbers (10-digit, formatted)
+    - Insurance/policy numbers
+    - Last name / first name (consecutive alpha fields)
+    - City names (alpha fields after name fields, before state)
+    - Generic IDs (numeric fields)
     """
     id_count = 0
     name_count = 0
     date_count = 0
     text_count = 0
 
+    # First pass: detect high-confidence content types (dates, states)
     for zone in zones:
+        zone._detected = None  # Temporary attribute for classification
+
         if zone.field_type == "padding":
             zone.label = "padding"
             continue
 
-        # Check samples for date patterns
-        date_like = 0
-        for val in zone.sample_values[:10]:
-            if re.match(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}", val):
-                date_like += 1
-            elif re.match(r"\d{4}[/\-]\d{2}[/\-]\d{2}", val):
-                date_like += 1
-            elif re.match(r"\d{8}$", val) and len(val) == 8:
-                # YYYYMMDD or MMDDYYYY
-                date_like += 1
+        samples = zone.sample_values[:10]
+        if not samples:
+            continue
 
-        if zone.field_type == "date" or (date_like >= len(zone.sample_values[:10]) * 0.5 and date_like > 0):
+        # --- Date detection ---
+        date_like = 0
+        for val in samples:
+            if _RE_DATE.match(val) or _RE_DATE_ISO.match(val):
+                date_like += 1
+            elif _RE_DATE_COMPACT.match(val) and len(val) == 8:
+                date_like += 1
+        if zone.field_type == "date" or (date_like >= len(samples) * 0.5 and date_like > 0):
+            zone._detected = "date"
+            continue
+
+        # --- US state abbreviation (2-char alpha, matches state list) ---
+        if zone.field_type == "alpha" and zone.width <= 3:
+            state_match = sum(1 for v in samples if v.strip().upper() in US_STATES)
+            if state_match >= len(samples) * 0.5 and state_match > 0:
+                zone._detected = "state"
+                continue
+
+        # --- Phone number (10-digit, width 10-14) ---
+        if zone.width >= 7 and zone.width <= 15:
+            phone_match = sum(1 for v in samples if _RE_PHONE.match(v.strip()))
+            if phone_match >= len(samples) * 0.4 and phone_match > 0:
+                zone._detected = "phone"
+                continue
+
+        # --- Insurance / policy number (alphanumeric with letter prefix, 6-15 chars) ---
+        if zone.field_type in ("mixed",) and 6 <= zone.width <= 20:
+            ins_match = sum(1 for v in samples if _RE_INSURANCE.match(v.strip()))
+            if ins_match >= len(samples) * 0.4 and ins_match > 0:
+                zone._detected = "insurance"
+                continue
+
+    # Second pass: find state positions, then detect ZIP codes near them
+    state_indices = [i for i, z in enumerate(zones) if z._detected == "state"]
+    date_indices = [i for i, z in enumerate(zones) if z._detected == "date"]
+
+    for i, zone in enumerate(zones):
+        if zone._detected is not None or zone.field_type == "padding":
+            continue
+        samples = zone.sample_values[:10]
+        if not samples:
+            continue
+
+        # ZIP code: 5-digit numeric field that is NEAR a state field (within 3 positions)
+        if zone.field_type in ("digit", "mixed") and 4 <= zone.width <= 11:
+            near_state = any(abs(i - si) <= 3 for si in state_indices)
+            if near_state:
+                zip_match = sum(1 for v in samples if _RE_ZIP.match(v.strip()))
+                if zip_match >= len(samples) * 0.5 and zip_match > 0:
+                    zone._detected = "zip"
+                    continue
+
+    # Third pass: detect name fields vs city fields using positional context
+    # In medical billing, typical order is: IDs, last name, first name, DOB,
+    # address (city, state, zip), phone, insurance
+    first_date_idx = date_indices[0] if date_indices else None
+    first_state_idx = state_indices[0] if state_indices else None
+    zip_indices = [i for i, z in enumerate(zones) if z._detected == "zip"]
+    first_zip_idx = zip_indices[0] if zip_indices else None
+
+    alpha_name_candidates = []
+    for i, zone in enumerate(zones):
+        if zone._detected is None and zone.field_type == "alpha" and zone.width >= 5:
+            alpha_name_candidates.append(i)
+
+    # Classify alpha fields: ones before the first date/state/zip are likely names,
+    # ones near state/zip are likely city
+    for idx in alpha_name_candidates:
+        zone = zones[idx]
+        near_state_zip = False
+        if first_state_idx is not None and abs(idx - first_state_idx) <= 2:
+            near_state_zip = True
+        if first_zip_idx is not None and abs(idx - first_zip_idx) <= 2:
+            near_state_zip = True
+
+        # If close to state/zip, it's a city
+        if near_state_zip and zone.width >= 5:
+            zone._detected = "city"
+        elif first_date_idx is None or idx < first_date_idx:
+            # Before any date field = likely a name
+            zone._detected = "name"
+        elif zone.width >= 10:
+            # Large alpha field after date but not near state/zip
+            zone._detected = "name"
+        else:
+            zone._detected = None  # Leave for generic classification
+
+    # Third pass: assign labels
+    phone_count = 0
+    zip_count = 0
+    state_count = 0
+    city_count = 0
+    insurance_count = 0
+
+    for zone in zones:
+        if zone.field_type == "padding":
+            continue
+
+        det = getattr(zone, "_detected", None)
+
+        if det == "date":
             date_count += 1
             zone.label = f"date_{date_count}"
             zone.field_type = "date"
-            continue
-
-        if zone.field_type == "digit":
+        elif det == "state":
+            state_count += 1
+            zone.label = f"state_{state_count}"
+        elif det == "zip":
+            zip_count += 1
+            zone.label = f"zip_{zip_count}"
+        elif det == "phone":
+            phone_count += 1
+            zone.label = f"phone_{phone_count}"
+        elif det == "insurance":
+            insurance_count += 1
+            zone.label = f"insurance_{insurance_count}"
+        elif det == "city":
+            city_count += 1
+            zone.label = f"city_{city_count}"
+        elif det == "name":
+            name_count += 1
+            zone.label = f"name_{name_count}"
+        elif zone.field_type == "digit":
             id_count += 1
             zone.label = f"id_{id_count}"
         elif zone.field_type == "alpha":
@@ -371,6 +511,10 @@ def _classify_zones(zones: list[FieldZone]) -> list[FieldZone]:
         else:
             text_count += 1
             zone.label = f"field_{text_count}"
+
+        # Clean up temporary attribute
+        if hasattr(zone, "_detected"):
+            del zone._detected
 
     return zones
 
@@ -455,6 +599,11 @@ def parse_fixed_width_records(
     result.id_fields = [z.label for z in data_zones if z.label.startswith("id_")]
     result.name_fields = [z.label for z in data_zones if z.label.startswith("name_")]
     result.date_fields = [z.label for z in data_zones if z.label.startswith("date_")]
+    result.phone_fields = [z.label for z in data_zones if z.label.startswith("phone_")]
+    result.zip_fields = [z.label for z in data_zones if z.label.startswith("zip_")]
+    result.state_fields = [z.label for z in data_zones if z.label.startswith("state_")]
+    result.city_fields = [z.label for z in data_zones if z.label.startswith("city_")]
+    result.insurance_fields = [z.label for z in data_zones if z.label.startswith("insurance_")]
 
     # Extract records — line number (1-indexed) IS the Topaz patient ID
     # In .NET server exports, record position corresponds to the patient's

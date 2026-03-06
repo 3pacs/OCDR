@@ -364,8 +364,23 @@ async def upload_raw_crosswalk(
         auto_mapping = {}
         if fw_result.id_fields:
             auto_mapping["chart_number"] = fw_result.id_fields[0]
-        if fw_result.name_fields:
+        if len(fw_result.name_fields) >= 2:
+            auto_mapping["last_name"] = fw_result.name_fields[0]
+            auto_mapping["first_name"] = fw_result.name_fields[1]
+        elif fw_result.name_fields:
             auto_mapping["patient_name"] = fw_result.name_fields[0]
+        if fw_result.date_fields:
+            auto_mapping["date_of_birth"] = fw_result.date_fields[0]
+        if fw_result.insurance_fields:
+            auto_mapping["insurance_number"] = fw_result.insurance_fields[0]
+        if fw_result.phone_fields:
+            auto_mapping["phone"] = fw_result.phone_fields[0]
+        if fw_result.zip_fields:
+            auto_mapping["zip_code"] = fw_result.zip_fields[0]
+        if fw_result.state_fields:
+            auto_mapping["state"] = fw_result.state_fields[0]
+        if fw_result.city_fields:
+            auto_mapping["city"] = fw_result.city_fields[0]
 
         parsing_metadata = {
             "field_zones": zones_with_samples,
@@ -374,6 +389,11 @@ async def upload_raw_crosswalk(
             "id_fields": fw_result.id_fields,
             "name_fields": fw_result.name_fields,
             "date_fields": fw_result.date_fields,
+            "phone_fields": fw_result.phone_fields,
+            "zip_fields": fw_result.zip_fields,
+            "state_fields": fw_result.state_fields,
+            "city_fields": fw_result.city_fields,
+            "insurance_fields": fw_result.insurance_fields,
             "record_width": fw_result.record_width,
             "warnings": fw_result.warnings,
         }
