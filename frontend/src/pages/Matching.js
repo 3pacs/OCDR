@@ -186,124 +186,163 @@ function UnmatchedTable() {
 }
 
 function TopazUpload({ onImported }) {
-  const [uploading, setUploading] = useState(false);
-  const [previewing, setPreviewing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [preview, setPreview] = useState(null);
+  // 3-step flow: Upload → Map/Extract → Apply
+  const [step, setStep] = useState("upload"); // upload | map | applied
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [editedRows, setEditedRows] = useState({});
-  const [saveMsg, setSaveMsg] = useState(null);
-  // User-chosen field mapping: { chart_number: "id_2", patient_name: "name_1" }
+  const [uploadResult, setUploadResult] = useState(null); // from upload-raw
+  const [extractResult, setExtractResult] = useState(null); // from extract
+  const [applyResult, setApplyResult] = useState(null); // from apply
   const [fieldMapping, setFieldMapping] = useState({});
+  const [pastImports, setPastImports] = useState([]);
   const fileRef = React.useRef();
 
   const ROLE_OPTIONS = [
     { value: "", label: "-- ignore --" },
     { value: "chart_number", label: "Chart / Jacket #" },
     { value: "patient_name", label: "Patient Name" },
+    { value: "topaz_id", label: "Topaz ID" },
     { value: "service_date", label: "Service Date" },
   ];
 
-  const handlePreview = async () => {
+  // Load past imports on mount
+  useEffect(() => {
+    api.get("/matching/crosswalk/imports").then(r => setPastImports(r.data)).catch(() => {});
+  }, [applyResult]);
+
+  // ── Step 1: Upload raw file ──
+  const handleUpload = async () => {
     const file = fileRef.current?.files?.[0];
     if (!file) return;
-    setPreviewing(true);
+    setLoading(true);
     setError(null);
-    setPreview(null);
-    setResult(null);
-    setEditedRows({});
-    setSaveMsg(null);
+    setUploadResult(null);
+    setExtractResult(null);
+    setApplyResult(null);
     setFieldMapping({});
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await api.post("/matching/crosswalk/preview-topaz", form, {
+      const res = await api.post("/matching/crosswalk/upload-raw", form, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: 120000,
       });
-      setPreview(res.data);
+      setUploadResult(res.data);
       // Seed field mapping from auto-detected mapping
-      if (res.data.auto_mapping) {
-        setFieldMapping(res.data.auto_mapping);
-      } else if (res.data.column_mapping) {
-        setFieldMapping(res.data.column_mapping);
+      const meta = res.data.parsing_metadata;
+      if (meta?.auto_mapping) {
+        setFieldMapping(meta.auto_mapping);
       }
+      setStep("map");
     } catch (err) {
-      setError(err.response?.data?.detail || err.response?.data?.message || err.message);
+      setError(err.response?.data?.detail || err.message);
     } finally {
-      setPreviewing(false);
+      setLoading(false);
     }
   };
 
-  const handleImport = async () => {
-    const file = fileRef.current?.files?.[0];
-    if (!file) return;
-    setUploading(true);
+  // ── Step 2: Extract crosswalk pairs using user's mapping ──
+  const handleExtract = async () => {
+    if (!uploadResult?.id) return;
+    if (!fieldMapping.chart_number && !fieldMapping.patient_name) {
+      setError("Assign at least Chart/Jacket # or Patient Name before extracting.");
+      return;
+    }
+    setLoading(true);
     setError(null);
-    setResult(null);
-    setEditedRows({});
-    setSaveMsg(null);
+    setExtractResult(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      // Send user's field mapping as JSON
-      if (Object.keys(fieldMapping).length > 0) {
-        // Invert: our state is { chart_number: "id_2" } — that's what backend expects
-        form.append("field_mapping", JSON.stringify(fieldMapping));
+      // For fixed-width: always default topaz_id to line number
+      const mapping = { ...fieldMapping };
+      if (uploadResult.format === "fixed_width" && !mapping.topaz_id) {
+        mapping.topaz_id = "_line_num";
       }
-      const res = await api.post("/matching/crosswalk/import-topaz", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300000,
-      });
-      setResult(res.data);
-      if (onImported) onImported();
+      const res = await api.post(`/matching/crosswalk/extract/${uploadResult.id}`, mapping);
+      setExtractResult(res.data);
     } catch (err) {
-      setError(err.response?.data?.detail || err.response?.data?.message || err.message);
+      setError(err.response?.data?.detail || err.message);
     } finally {
-      setUploading(false);
+      setLoading(false);
     }
   };
 
-  const handleSaveCorrections = async () => {
-    const updates = Object.entries(editedRows).map(([billingId, fields]) => ({
-      billing_record_id: parseInt(billingId, 10),
-      ...fields,
-    }));
-    if (updates.length === 0) return;
-    setSaving(true);
-    setSaveMsg(null);
+  // ── Step 3: Apply to billing records ──
+  const handleApply = async () => {
+    if (!uploadResult?.id) return;
+    setLoading(true);
+    setError(null);
     try {
-      const res = await api.patch("/matching/crosswalk/update-ids", { updates });
-      setSaveMsg(`Saved ${res.data.applied} correction(s).`);
-      setEditedRows({});
+      const res = await api.post(`/matching/crosswalk/apply/${uploadResult.id}`);
+      setApplyResult(res.data);
+      setStep("applied");
       if (onImported) onImported();
     } catch (err) {
-      setSaveMsg(`Error: ${err.response?.data?.detail || err.message}`);
+      setError(err.response?.data?.detail || err.message);
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 
-  // When user changes a zone's role via dropdown
+  // Reset to start over
+  const handleReset = () => {
+    setStep("upload");
+    setUploadResult(null);
+    setExtractResult(null);
+    setApplyResult(null);
+    setFieldMapping({});
+    setError(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  // View a past import
+  const handleViewImport = async (id) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.get(`/matching/crosswalk/imports/${id}`);
+      const data = res.data;
+      setUploadResult({
+        id: data.id,
+        filename: data.filename,
+        format: data.format,
+        format_detail: data.format_detail,
+        total_records: data.total_records,
+        parsing_metadata: data.parsing_metadata,
+      });
+      if (data.field_mapping) setFieldMapping(data.field_mapping);
+      if (data.status === "APPLIED") {
+        setExtractResult({ extracted_count: data.extracted_count, sample_pairs: data.sample_pairs });
+        setApplyResult({ apply_result: data.apply_result });
+        setStep("applied");
+      } else if (data.status === "MAPPED") {
+        setExtractResult({ extracted_count: data.extracted_count, sample_pairs: data.sample_pairs, validation: {} });
+        setStep("map");
+      } else {
+        setStep("map");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helpers for zone role assignment (fixed-width)
   const handleZoneRoleChange = (zoneLabel, newRole) => {
     setFieldMapping(prev => {
       const next = { ...prev };
-      // Remove this zone from any existing role
       for (const [role, label] of Object.entries(next)) {
         if (label === zoneLabel) delete next[role];
       }
-      // Assign new role (if not "ignore")
       if (newRole) {
-        // If another zone already has this role, clear it
         delete next[newRole];
         next[newRole] = zoneLabel;
       }
       return next;
     });
+    setExtractResult(null); // Clear stale extract when mapping changes
   };
 
-  // Get the role currently assigned to a zone label
   const getZoneRole = (zoneLabel) => {
     for (const [role, label] of Object.entries(fieldMapping)) {
       if (label === zoneLabel) return role;
@@ -311,126 +350,217 @@ function TopazUpload({ onImported }) {
     return "";
   };
 
-  // Build a live preview of crosswalk pairs based on current field mapping
-  const getLivePreviewRows = () => {
-    if (!preview?.sample_records || !preview?.format === "fixed_width") return null;
+  const meta = uploadResult?.parsing_metadata;
+  const isFixedWidth = uploadResult?.format === "fixed_width";
+
+  // Live preview from sample records
+  const liveRows = (() => {
+    if (!isFixedWidth || !meta?.sample_records) return null;
     const chartField = fieldMapping.chart_number;
     const nameField = fieldMapping.patient_name;
     if (!chartField && !nameField) return null;
-
-    return preview.sample_records.slice(0, 10).map(rec => ({
-      topaz_id: rec._topaz_id,
+    return meta.sample_records.slice(0, 10).map(rec => ({
+      topaz_id: rec._line_num,
       chart_number: chartField ? (rec[chartField] || "") : "",
       patient_name: nameField ? (rec[nameField] || "") : "",
     }));
-  };
-
-  const isFixedWidth = preview?.format === "fixed_width" || result?.format === "fixed_width";
-  const liveRows = isFixedWidth ? getLivePreviewRows() : null;
+  })();
 
   return (
     <Card className="border-0 shadow-sm mb-4">
       <Card.Body>
-        <Card.Title>Upload Topaz Export</Card.Title>
+        <Card.Title className="d-flex justify-content-between align-items-center">
+          Crosswalk Import
+          {step !== "upload" && (
+            <Button variant="outline-secondary" size="sm" onClick={handleReset}>Start Over</Button>
+          )}
+        </Card.Title>
         <p className="text-muted small mb-3">
-          Upload a data export from the Topaz billing server to map Chart Numbers to Topaz IDs.
-          Supports pipe-delimited, tab, CSV, XML, or fixed-width .NET server files
-          (line# = Topaz patient ID). After preview, assign which fields are which before importing.
+          Upload raw data files, examine the contents, assign field mappings, then apply to billing records.
+          No auto-guessing &mdash; you control which fields map to what.
         </p>
 
-        <div className="d-flex align-items-center gap-2 mb-3">
-          <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 350 }}
-            onChange={() => { setPreview(null); setResult(null); setError(null); setEditedRows({}); setSaveMsg(null); setFieldMapping({}); }} />
-          <Button variant="outline-secondary" size="sm" onClick={handlePreview}
-            disabled={previewing || uploading}>
-            {previewing ? <><Spinner size="sm" className="me-1" />Previewing...</> : "Preview"}
-          </Button>
-          <Button variant="primary" size="sm" onClick={handleImport}
-            disabled={uploading || previewing || (!preview && !result)}>
-            {uploading ? <><Spinner size="sm" className="me-1" />Importing...</> : "Import & Apply"}
-          </Button>
+        {/* Step indicator */}
+        <div className="d-flex gap-2 mb-3">
+          <Badge bg={step === "upload" ? "primary" : "success"} className="px-3 py-2">
+            1. Upload{step !== "upload" && " \u2713"}
+          </Badge>
+          <Badge bg={step === "map" ? "primary" : step === "applied" ? "success" : "secondary"} className="px-3 py-2">
+            2. Map &amp; Extract{step === "applied" && " \u2713"}
+          </Badge>
+          <Badge bg={step === "applied" ? "success" : "secondary"} className="px-3 py-2">
+            3. Apply{step === "applied" && " \u2713"}
+          </Badge>
         </div>
 
-        {error && <Alert variant="danger" className="small">{error}</Alert>}
+        {error && <Alert variant="danger" className="small" dismissible onClose={() => setError(null)}>{error}</Alert>}
 
-        {/* ── PREVIEW: Fixed-width with interactive field mapping ── */}
-        {preview && isFixedWidth && (
+        {/* ══════════════ STEP 1: Upload ══════════════ */}
+        {step === "upload" && (
+          <>
+            <div className="d-flex align-items-center gap-2 mb-3">
+              <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 400 }} />
+              <Button variant="primary" size="sm" onClick={handleUpload} disabled={loading}>
+                {loading ? <><Spinner size="sm" className="me-1" />Uploading...</> : "Upload & Examine"}
+              </Button>
+            </div>
+
+            {/* Past imports */}
+            {pastImports.length > 0 && (
+              <details className="mb-2">
+                <summary className="small fw-bold">Past Imports ({pastImports.length})</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>File</th><th>Format</th><th>Records</th><th>Status</th><th>Extracted</th><th>Applied</th><th>Date</th><th></th></tr></thead>
+                  <tbody>
+                    {pastImports.map(imp => (
+                      <tr key={imp.id}>
+                        <td>{imp.filename}</td>
+                        <td><Badge bg="secondary">{imp.format}</Badge></td>
+                        <td>{imp.total_records?.toLocaleString()}</td>
+                        <td><Badge bg={imp.status === "APPLIED" ? "success" : imp.status === "MAPPED" ? "info" : "secondary"}>{imp.status}</Badge></td>
+                        <td>{imp.extracted_count || "--"}</td>
+                        <td>{imp.applied_count || "--"}</td>
+                        <td>{imp.created_at ? new Date(imp.created_at).toLocaleDateString() : "--"}</td>
+                        <td><Button variant="outline-primary" size="sm" onClick={() => handleViewImport(imp.id)}>View</Button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+          </>
+        )}
+
+        {/* ══════════════ STEP 2: Map & Extract ══════════════ */}
+        {step === "map" && uploadResult && (
           <>
             <Alert variant="info" className="small mb-3">
-              <strong>Detected:</strong> <Badge bg="secondary">{preview.format}</Badge>
-              {preview.format_detail && <span> &mdash; {preview.format_detail}</span>}
-              {preview.warnings?.length > 0 && (
-                <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
+              <strong>File:</strong> {uploadResult.filename} &mdash;{" "}
+              <Badge bg="secondary">{uploadResult.format}</Badge>{" "}
+              {uploadResult.format_detail && <span>&mdash; {uploadResult.format_detail}</span>}
+              {" "}({uploadResult.total_records?.toLocaleString()} records stored)
+              {meta?.warnings?.length > 0 && (
+                <div className="mt-1 text-warning">Warnings: {meta.warnings.join("; ")}</div>
               )}
             </Alert>
 
-            {/* Field zone table with role dropdowns */}
-            <div className="mb-3">
-              <h6 className="mb-2">Assign Field Roles</h6>
-              <p className="text-muted small mb-2">
-                Each row is a detected field zone. Use the dropdown to tell the system what each field contains.
-                The Topaz ID is always the line number (record position) &mdash; you just need to identify
-                which field holds the <strong>Chart / Jacket #</strong> and <strong>Patient Name</strong>.
-              </p>
-              <Table size="sm" className="small">
-                <thead>
-                  <tr>
-                    <th style={{ width: 100 }}>Label</th>
-                    <th style={{ width: 80 }}>Bytes</th>
-                    <th style={{ width: 50 }}>Width</th>
-                    <th style={{ width: 70 }}>Type</th>
-                    <th style={{ width: 180 }}>Role</th>
-                    <th>Sample Values</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.field_zones?.map((z, i) => {
-                    const role = getZoneRole(z.label);
-                    return (
-                      <tr key={i} className={role === "chart_number" ? "table-info" : role === "patient_name" ? "table-success" : role === "service_date" ? "table-warning" : ""}>
-                        <td><strong>{z.label}</strong></td>
-                        <td>{z.start}-{z.end}</td>
-                        <td>{z.width}</td>
-                        <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
-                        <td>
-                          <BsForm.Select size="sm" value={role}
-                            onChange={e => handleZoneRoleChange(z.label, e.target.value)}>
-                            {ROLE_OPTIONS.map(opt => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </BsForm.Select>
-                        </td>
-                        <td className="text-truncate" style={{ maxWidth: 350 }}>
-                          {z.sample_values?.slice(0, 5).map((v, j) => <code key={j} className="me-2">{v}</code>)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </Table>
-            </div>
+            {/* ── Fixed-width: zone table with role dropdowns ── */}
+            {isFixedWidth && meta?.field_zones && (
+              <div className="mb-3">
+                <h6 className="mb-2">Assign Field Roles</h6>
+                <p className="text-muted small mb-2">
+                  Each row is a detected field zone. Use the dropdown to assign what each field contains.
+                  For fixed-width files, the Topaz ID defaults to the line number unless you assign a different field.
+                </p>
+                <Table size="sm" className="small">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 100 }}>Label</th>
+                      <th style={{ width: 80 }}>Bytes</th>
+                      <th style={{ width: 50 }}>Width</th>
+                      <th style={{ width: 70 }}>Type</th>
+                      <th style={{ width: 180 }}>Role</th>
+                      <th>Sample Values</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {meta.field_zones.map((z, i) => {
+                      const role = getZoneRole(z.label);
+                      return (
+                        <tr key={i} className={role === "chart_number" ? "table-info" : role === "patient_name" ? "table-success" : role === "topaz_id" ? "table-primary" : role === "service_date" ? "table-warning" : ""}>
+                          <td><strong>{z.label}</strong></td>
+                          <td>{z.start}-{z.end}</td>
+                          <td>{z.width}</td>
+                          <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
+                          <td>
+                            <BsForm.Select size="sm" value={role}
+                              onChange={e => handleZoneRoleChange(z.label, e.target.value)}>
+                              {ROLE_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </BsForm.Select>
+                          </td>
+                          <td className="text-truncate" style={{ maxWidth: 350 }}>
+                            {z.sample_values?.slice(0, 5).map((v, j) => <code key={j} className="me-2">{v}</code>)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+            )}
+
+            {/* ── Delimited: header dropdowns ── */}
+            {!isFixedWidth && meta?.headers?.length > 0 && (
+              <div className="mb-3">
+                <h6 className="mb-2">Assign Headers</h6>
+                {meta.sample_rows?.length > 0 && (
+                  <details className="mb-2">
+                    <summary className="small fw-bold">Sample Rows ({meta.sample_rows.length})</summary>
+                    <div style={{ maxHeight: 200, overflow: "auto" }}>
+                      <Table size="sm" className="small mt-1 mb-0">
+                        <thead><tr>{meta.headers.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {meta.sample_rows.slice(0, 10).map((row, i) => (
+                            <tr key={i}>{meta.headers.map((h, j) => <td key={j}>{row[h] || "--"}</td>)}</tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </div>
+                  </details>
+                )}
+                <Row className="g-2">
+                  {["chart_number", "topaz_id", "patient_name", "service_date"].map(role => (
+                    <Col key={role} md={3}>
+                      <BsForm.Group>
+                        <BsForm.Label className="small mb-0 fw-bold">
+                          {role === "chart_number" ? "Chart / Jacket #" : role === "topaz_id" ? "Topaz ID" : role === "patient_name" ? "Patient Name" : "Service Date"}
+                        </BsForm.Label>
+                        <BsForm.Select size="sm" value={fieldMapping[role] || ""}
+                          onChange={e => {
+                            setFieldMapping(prev => {
+                              const next = { ...prev };
+                              if (e.target.value) { next[role] = e.target.value; }
+                              else { delete next[role]; }
+                              return next;
+                            });
+                            setExtractResult(null);
+                          }}>
+                          <option value="">-- none --</option>
+                          {meta.headers.map((h, i) => (
+                            <option key={i} value={h}>{h}</option>
+                          ))}
+                        </BsForm.Select>
+                      </BsForm.Group>
+                    </Col>
+                  ))}
+                </Row>
+              </div>
+            )}
 
             {/* Current mapping summary */}
             <div className="mb-3">
               <strong className="small">Current Mapping: </strong>
-              <Badge bg="dark" className="me-1">Topaz ID &larr; line# (always)</Badge>
+              {isFixedWidth && !fieldMapping.topaz_id && <Badge bg="dark" className="me-1">Topaz ID = line#</Badge>}
+              {fieldMapping.topaz_id && <Badge bg="dark" className="me-1">Topaz ID &larr; {fieldMapping.topaz_id}</Badge>}
               {fieldMapping.chart_number && <Badge bg="info" className="me-1">Chart/Jacket# &larr; {fieldMapping.chart_number}</Badge>}
               {fieldMapping.patient_name && <Badge bg="success" className="me-1">Patient Name &larr; {fieldMapping.patient_name}</Badge>}
               {fieldMapping.service_date && <Badge bg="warning" className="me-1">Date &larr; {fieldMapping.service_date}</Badge>}
               {!fieldMapping.chart_number && !fieldMapping.patient_name && (
-                <span className="text-danger small ms-1">Please assign at least Chart/Jacket# or Patient Name to import.</span>
+                <span className="text-danger small ms-2">Assign at least Chart/Jacket# or Patient Name.</span>
               )}
             </div>
 
-            {/* Live preview of crosswalk with current mapping */}
+            {/* Live preview for fixed-width */}
             {liveRows && liveRows.length > 0 && (
               <details open className="mb-3">
-                <summary className="small fw-bold">Live Preview (first 10 records with your mapping)</summary>
+                <summary className="small fw-bold">Live Preview (first 10 records)</summary>
                 <Table size="sm" className="small mt-1">
                   <thead><tr>
-                    <th>Topaz ID (line#)</th>
-                    <th>Chart / Jacket #{fieldMapping.chart_number && <span className="text-muted"> ({fieldMapping.chart_number})</span>}</th>
-                    <th>Patient Name{fieldMapping.patient_name && <span className="text-muted"> ({fieldMapping.patient_name})</span>}</th>
+                    <th>Topaz ID</th>
+                    <th>Chart / Jacket #</th>
+                    <th>Patient Name</th>
                   </tr></thead>
                   <tbody>
                     {liveRows.map((r, i) => (
@@ -444,191 +574,78 @@ function TopazUpload({ onImported }) {
                 </Table>
               </details>
             )}
+
+            {/* Extract button */}
+            <Button variant="primary" size="sm" onClick={handleExtract} disabled={loading} className="me-2">
+              {loading ? <><Spinner size="sm" className="me-1" />Extracting...</> : "Extract Crosswalk Pairs"}
+            </Button>
+
+            {/* ── Extract results ── */}
+            {extractResult && (
+              <div className="mt-3">
+                <Alert variant="info" className="small">
+                  <strong>Extracted {extractResult.extracted_count?.toLocaleString()} pairs</strong>
+                  {extractResult.validation?.chart_numbers_in_file != null && (
+                    <span>
+                      {" "}&mdash; {extractResult.validation.chart_numbers_found_in_db} of{" "}
+                      {extractResult.validation.chart_numbers_in_file} chart numbers found in billing records
+                      {extractResult.validation.chart_numbers_not_in_db > 0 && (
+                        <span className="text-warning"> ({extractResult.validation.chart_numbers_not_in_db} not in DB)</span>
+                      )}
+                    </span>
+                  )}
+                </Alert>
+
+                {extractResult.sample_pairs?.length > 0 && (
+                  <details open className="mb-3">
+                    <summary className="small fw-bold">
+                      Sample Pairs ({Math.min(extractResult.sample_pairs.length, 30)} of {extractResult.extracted_count?.toLocaleString()})
+                    </summary>
+                    <Table size="sm" className="small mt-1">
+                      <thead><tr><th>Topaz ID</th><th>Chart / Jacket #</th><th>Patient Name</th></tr></thead>
+                      <tbody>
+                        {extractResult.sample_pairs.slice(0, 30).map((p, i) => (
+                          <tr key={i}>
+                            <td><code>{p.topaz_id || "--"}</code></td>
+                            <td>{p.chart_number || "--"}</td>
+                            <td>{p.patient_name || <span className="text-muted">--</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </details>
+                )}
+
+                <Button variant="success" size="sm" onClick={handleApply} disabled={loading}>
+                  {loading ? <><Spinner size="sm" className="me-1" />Applying...</> : `Apply ${extractResult.extracted_count?.toLocaleString()} Pairs to Billing Records`}
+                </Button>
+                <span className="text-muted small ms-2">
+                  Only exact chart# matches will be updated. No fuzzy matching. Nothing is guessed.
+                </span>
+              </div>
+            )}
           </>
         )}
 
-        {/* ── PREVIEW: Delimited / other formats with header override ── */}
-        {preview && !isFixedWidth && (
-          <Alert variant="info" className="small">
-            <strong>Preview:</strong> Detected format: <Badge bg="secondary">{preview.format}</Badge>
-            {" "}&mdash; {preview.total_rows?.toLocaleString()} rows found
-
-            {preview.headers_found?.length > 0 && (
-              <div className="mt-2">
-                <strong>Headers found:</strong>{" "}
-                {preview.headers_found.map((h, i) => <Badge key={i} bg="outline-dark" className="border me-1">{h}</Badge>)}
-              </div>
-            )}
-
-            {preview.column_mapping && Object.keys(preview.column_mapping).length > 0 && (
-              <div className="mt-1">
-                <strong>Auto-mapped:</strong>{" "}
-                {Object.entries(preview.column_mapping).map(([k, v]) =>
-                  <Badge key={k} bg="outline-dark" className="border me-1">{k} &larr; &ldquo;{v}&rdquo;</Badge>
+        {/* ══════════════ STEP 3: Applied ══════════════ */}
+        {step === "applied" && applyResult && (
+          <Alert variant={applyResult.apply_result?.applied > 0 ? "success" : "warning"} className="small">
+            <strong>Applied!</strong>{" "}
+            {applyResult.apply_result?.applied > 0 ? (
+              <>
+                Updated <strong>{applyResult.apply_result.applied}</strong> billing records with Topaz IDs.
+                {applyResult.apply_result.skipped_no_match > 0 && (
+                  <span> {applyResult.apply_result.skipped_no_match} pairs had no matching chart# in billing records.</span>
                 )}
-              </div>
-            )}
-
-            {/* Let user override header mapping for delimited files */}
-            {preview.headers_found?.length > 0 && (
-              <div className="mt-2">
-                <strong>Override mapping:</strong>
-                <Row className="g-2 mt-1">
-                  {["chart_number", "patient_name", "service_date"].map(role => (
-                    <Col key={role} md={4}>
-                      <BsForm.Group>
-                        <BsForm.Label className="small mb-0">
-                          {role === "chart_number" ? "Chart / Jacket #" : role === "patient_name" ? "Patient Name" : "Service Date"}
-                        </BsForm.Label>
-                        <BsForm.Select size="sm" value={fieldMapping[role] || ""}
-                          onChange={e => setFieldMapping(prev => {
-                            const next = { ...prev };
-                            if (e.target.value) { next[role] = e.target.value; }
-                            else { delete next[role]; }
-                            return next;
-                          })}>
-                          <option value="">-- auto / none --</option>
-                          {preview.headers_found.map((h, i) => (
-                            <option key={i} value={h}>{h}</option>
-                          ))}
-                        </BsForm.Select>
-                      </BsForm.Group>
-                    </Col>
-                  ))}
-                </Row>
-              </div>
-            )}
-
-            {preview.warnings?.length > 0 && (
-              <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
-            )}
-
-            {/* Sample raw rows */}
-            {preview.raw_rows?.length > 0 && (
-              <details className="mt-2">
-                <summary className="fw-bold">Sample Rows ({preview.raw_rows.length})</summary>
-                <div style={{ maxHeight: 200, overflow: "auto" }}>
-                  <Table size="sm" className="small mt-1 mb-0">
-                    <thead><tr>{Object.keys(preview.raw_rows[0] || {}).map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {preview.raw_rows.slice(0, 10).map((row, i) => (
-                        <tr key={i}>{Object.values(row).map((v, j) => <td key={j}>{v || "--"}</td>)}</tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
-              </details>
-            )}
-
-            {preview.sample_pairs?.length > 0 && !preview.raw_rows?.length && (
-              <Table size="sm" className="mt-2 mb-0 small">
-                <thead><tr><th>Chart #</th><th>Topaz ID</th><th>Patient</th></tr></thead>
-                <tbody>
-                  {preview.sample_pairs.slice(0, 5).map((p, i) => (
-                    <tr key={i}>
-                      <td>{p.chart_number || "--"}</td>
-                      <td>{p.topaz_id || "--"}</td>
-                      <td>{p.patient_name || "--"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </Table>
+                {applyResult.apply_result.skipped_already_set > 0 && (
+                  <span> {applyResult.apply_result.skipped_already_set} already had the same Topaz ID.</span>
+                )}
+              </>
+            ) : (
+              "No billing records needed updating (all chart numbers already had Topaz IDs or no matches found)."
             )}
           </Alert>
         )}
-
-        {/* ── Import result ── */}
-        {result && (
-          <>
-            <Alert variant={result.crosswalk_applied?.applied > 0 ? "success" : "warning"} className="small">
-              {result.status === "no_crosswalk_data" ? (
-                <>{result.message}</>
-              ) : (
-                <>
-                  <strong>Import complete!</strong>{" "}
-                  {result.format === "fixed_width" ? (
-                    <>
-                      {result.total_records?.toLocaleString()} records parsed.{" "}
-                      {result.crosswalk_pairs_extracted?.toLocaleString()} crosswalk pairs extracted.{" "}
-                    </>
-                  ) : (
-                    <>{result.total_rows_parsed?.toLocaleString()} rows parsed from <Badge bg="secondary">{result.format}</Badge>.{" "}</>
-                  )}
-                  {result.crosswalk_applied?.applied > 0
-                    ? <>Applied Topaz ID to <strong>{result.crosswalk_applied.applied}</strong> billing records
-                      ({result.crosswalk_applied.by_chart_number} by chart#, {result.crosswalk_applied.by_name_match} by name).
-                    </>
-                    : "No new billing records needed updating."
-                  }
-                  {result.crosswalk_applied?.skipped_name_mismatch > 0 && (
-                    <span className="text-warning ms-1">
-                      {result.crosswalk_applied.skipped_name_mismatch} skipped (name mismatch).
-                    </span>
-                  )}
-                  {result.field_mapping_used && (
-                    <div className="mt-1">
-                      <strong>Fields used:</strong>{" "}
-                      <Badge bg="dark" className="me-1">Topaz ID &larr; line#</Badge>
-                      {result.field_mapping_used.chart_number && <Badge bg="info" className="me-1">Chart# &larr; {result.field_mapping_used.chart_number}</Badge>}
-                      {result.field_mapping_used.patient_name && <Badge bg="success" className="me-1">Name &larr; {result.field_mapping_used.patient_name}</Badge>}
-                    </div>
-                  )}
-                  {result.warnings?.length > 0 && (
-                    <div className="mt-1 text-warning">Warnings: {result.warnings.join("; ")}</div>
-                  )}
-                </>
-              )}
-            </Alert>
-
-            {/* Stats row for fixed-width */}
-            {result.crosswalk_applied && result.format === "fixed_width" && (
-              <Row className="g-2 mb-3">
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_pairs_extracted?.toLocaleString()}</div><small>Pairs Extracted</small></div></Col>
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.records_needing_topaz?.toLocaleString()}</div><small>Needing Topaz ID</small></div></Col>
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-success">{result.crosswalk_applied.applied}</div><small>Applied</small></div></Col>
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.by_chart_number}</div><small>By Chart #</small></div></Col>
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.by_name_match}</div><small>By Name</small></div></Col>
-                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-warning">{result.crosswalk_applied.skipped_name_mismatch || 0}</div><small>Name Mismatch</small></div></Col>
-              </Row>
-            )}
-
-            {/* Sample pairs */}
-            {result.sample_pairs?.length > 0 && (
-              <details className="mb-3" open>
-                <summary className="small fw-bold">
-                  Sample Crosswalk Pairs ({result.sample_pairs.length} of {result.crosswalk_pairs_extracted?.toLocaleString() || result.total_rows_parsed?.toLocaleString()})
-                </summary>
-                <Table size="sm" className="small mt-1">
-                  <thead><tr>
-                    <th>Topaz ID{result.format === "fixed_width" && " (line#)"}</th>
-                    <th>Chart / Jacket #</th>
-                    <th>Patient Name</th>
-                  </tr></thead>
-                  <tbody>
-                    {result.sample_pairs.map((p, i) => (
-                      <tr key={i}>
-                        <td><code>{p.topaz_id || "--"}</code></td>
-                        <td>{p.chart_number || "--"}</td>
-                        <td>{p.patient_name || <span className="text-muted">--</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </details>
-            )}
-          </>
-        )}
-
-        {/* ── Manual corrections ── */}
-        {Object.keys(editedRows).length > 0 && (
-          <div className="d-flex align-items-center gap-2 mt-2">
-            <Button variant="warning" size="sm" onClick={handleSaveCorrections} disabled={saving}>
-              {saving ? <><Spinner size="sm" className="me-1" />Saving...</> : `Save ${Object.keys(editedRows).length} Correction(s)`}
-            </Button>
-            <Button variant="outline-secondary" size="sm" onClick={() => setEditedRows({})}>Discard</Button>
-          </div>
-        )}
-        {saveMsg && <Alert variant={saveMsg.startsWith("Error") ? "danger" : "success"} className="small mt-2">{saveMsg}</Alert>}
       </Card.Body>
     </Card>
   );

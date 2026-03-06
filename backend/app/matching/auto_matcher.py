@@ -296,11 +296,9 @@ async def run_auto_match(session: AsyncSession) -> dict:
             claim.match_confidence = confidence
             matched_br.era_claim_id = claim.claim_id
 
-            # Learn topaz_id crosswalk
-            if claim.claim_id and not matched_br.topaz_id:
-                matched_br.topaz_id = claim.claim_id.strip()
-                # Also add to topaz index for subsequent claims
-                billing_by_topaz_id.setdefault(matched_br.topaz_id, []).append(matched_br)
+            # NOTE: We do NOT auto-assign topaz_id from ERA claim matches.
+            # topaz_id should only come from user-approved crosswalk imports.
+            # The era_claim_id (set above) tracks the ERA linkage separately.
 
             status = CLAIM_STATUS_MAP.get(claim.claim_status)
             if status:

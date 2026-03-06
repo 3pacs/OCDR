@@ -333,7 +333,7 @@ async def apply_topaz_crosswalk(
                         continue
                     br_name = br.patient_name.upper().strip() if br.patient_name else ""
                     name_score = fuzz.token_sort_ratio(name_upper, br_name) if br_name else 0
-                    if name_score >= 70:
+                    if name_score >= 90:
                         br.topaz_id = topaz_id
                         updated_ids.add(br.id)
                         applied += 1
@@ -369,7 +369,7 @@ async def apply_topaz_crosswalk(
                 best_brs = None
                 for norm_name, brs in by_name.items():
                     score = fuzz.token_sort_ratio(name_upper, norm_name)
-                    if score >= 92 and score > best_score:
+                    if score >= 95 and score > best_score:
                         best_score = score
                         best_brs = brs
                         if score == 100:

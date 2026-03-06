@@ -1,8 +1,7 @@
 """API routes for auto-matching, crosswalk, and match review."""
 
 import logging
-import json
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +15,6 @@ from backend.app.matching.auto_matcher import (
 )
 from backend.app.matching.pattern_clusterer import (
     analyze_crosswalk,
-    propagate_topaz_ids,
-    apply_topaz_crosswalk,
     get_crosswalk_stats,
 )
 from backend.app.models.billing import BillingRecord
@@ -81,17 +78,17 @@ async def crosswalk_analyze(db: AsyncSession = Depends(get_db)):
     return await analyze_crosswalk(db)
 
 
-class PropagateRequest(BaseModel):
-    offset: int | None = None
-
-
 @router.post("/crosswalk/propagate")
-async def crosswalk_propagate(
-    body: PropagateRequest = PropagateRequest(),
-    db: AsyncSession = Depends(get_db),
-):
-    """Apply discovered offset pattern to assign topaz_id to unlinked billing records."""
-    return await propagate_topaz_ids(db, offset=body.offset)
+async def crosswalk_propagate():
+    """Disabled — topaz_id assignment now only comes from user-approved crosswalk imports."""
+    return {
+        "status": "disabled",
+        "message": (
+            "Automatic topaz_id propagation has been disabled. "
+            "Use the 3-step crosswalk import flow instead: "
+            "upload-raw → extract → apply."
+        ),
+    }
 
 
 class TopazIdUpdate(BaseModel):
@@ -295,26 +292,21 @@ async def crosswalk_integrity_check(
     }
 
 
-# --- Topaz Export Crosswalk ---
+# --- Topaz Export Crosswalk (3-step: Upload → Map/Extract → Apply) ---
 
-@router.post("/crosswalk/import-topaz")
-async def import_topaz_crosswalk(
+@router.post("/crosswalk/upload-raw")
+async def upload_raw_crosswalk(
     file: UploadFile = File(...),
-    field_mapping: str = Form(default=""),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Upload a Topaz server export file to extract and apply the
-    chart_number ↔ topaz_id crosswalk.
+    Step 1: Upload a raw data file and store it for examination.
 
-    Accepts any file format — auto-detects pipe/tab/CSV/XML/fixed-width.
-
-    For fixed-width files, the line number IS the Topaz patient ID.
-
-    Optional field_mapping (JSON string) lets the user override auto-detected
-    field roles. Format: {"chart_number": "id_2", "patient_name": "name_1"}
-    where the values are zone labels from the preview step.
+    Detects format, extracts field zones / headers and sample values.
+    Does NOT parse crosswalk pairs or modify billing records.
+    Returns the import ID for subsequent extract and apply steps.
     """
+    from backend.app.models.crosswalk_import import CrosswalkImport
     from backend.app.parsing.fixed_width_parser import (
         looks_like_fixed_width,
         parse_fixed_width_records,
@@ -327,244 +319,380 @@ async def import_topaz_crosswalk(
         content = content_bytes.decode("latin-1", errors="replace")
 
     filename = file.filename or "upload"
+    parsing_metadata = {}
+    format_detected = "unknown"
+    format_detail = ""
+    total_records = 0
 
-    # Parse user-provided field mapping
-    user_mapping = {}
-    if field_mapping:
-        try:
-            user_mapping = json.loads(field_mapping)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # ── Fixed-width .NET server file: line number = Topaz patient ID ──
+    # ── Detect format and gather metadata for user review ──
     if looks_like_fixed_width(content_bytes):
         fw_result = parse_fixed_width_records(content_bytes)
-        if fw_result.total_records > 0:
-            # Determine which zone labels map to which roles.
-            # User mapping overrides auto-detected fields.
-            chart_fields = []
-            name_fields = []
+        format_detected = "fixed_width"
+        format_detail = (
+            f"Fixed-width: {fw_result.total_records:,} records x "
+            f"{fw_result.record_width} bytes"
+        )
+        total_records = fw_result.total_records
 
-            if user_mapping.get("chart_number"):
-                chart_fields = [user_mapping["chart_number"]]
-            else:
-                chart_fields = list(fw_result.id_fields)
+        # Build expanded sample values for each zone
+        zones_with_samples = []
+        for z in fw_result.field_zones:
+            samples = []
+            for rec in fw_result.records[:50]:
+                val = rec.get(z["label"], "")
+                if val and val not in samples:
+                    samples.append(val)
+                if len(samples) >= 8:
+                    break
+            zones_with_samples.append({**z, "sample_values": samples})
 
-            if user_mapping.get("patient_name"):
-                name_fields = [user_mapping["patient_name"]]
-            else:
-                name_fields = list(fw_result.name_fields)
+        # Sample records for display
+        sample_records = []
+        for rec in fw_result.records[:25]:
+            row = {"_line_num": rec.get("_line_num")}
+            for z in fw_result.field_zones:
+                val = rec.get(z["label"], "")
+                if val:
+                    row[z["label"]] = val
+            sample_records.append(row)
 
-            crosswalk_pairs = []
-            for rec in fw_result.records:
-                topaz_id = rec.get("_topaz_id")
-                if not topaz_id:
-                    continue
+        # Auto-suggested mapping (user will override)
+        auto_mapping = {}
+        if fw_result.id_fields:
+            auto_mapping["chart_number"] = fw_result.id_fields[0]
+        if fw_result.name_fields:
+            auto_mapping["patient_name"] = fw_result.name_fields[0]
 
-                chart_number = None
-                for field_label in chart_fields:
-                    val = rec.get(field_label, "").strip()
-                    if val:
-                        try:
-                            chart_number = str(int(float(val)))
-                        except (ValueError, TypeError):
-                            chart_number = val
-                        break
+        parsing_metadata = {
+            "field_zones": zones_with_samples,
+            "sample_records": sample_records,
+            "auto_mapping": auto_mapping,
+            "id_fields": fw_result.id_fields,
+            "name_fields": fw_result.name_fields,
+            "date_fields": fw_result.date_fields,
+            "record_width": fw_result.record_width,
+            "warnings": fw_result.warnings,
+        }
+    else:
+        # Delimited / XML
+        parsed = parse_topaz_export(content, filename)
+        format_detected = parsed.format_detected
+        total_records = parsed.total_rows
+        format_detail = f"{format_detected}: {total_records:,} rows"
 
-                patient_name = None
-                for field_label in name_fields:
-                    val = rec.get(field_label, "").strip()
-                    if val:
-                        patient_name = val
-                        break
-
-                if chart_number or patient_name:
-                    crosswalk_pairs.append({
-                        "topaz_id": topaz_id,
-                        "chart_number": chart_number,
-                        "patient_name": patient_name,
-                    })
-
-            if not crosswalk_pairs:
-                return {
-                    "status": "no_crosswalk_data",
-                    "format": "fixed_width",
-                    "total_records": fw_result.total_records,
-                    "field_zones": fw_result.field_zones,
-                    "warnings": fw_result.warnings + [
-                        "No records had usable data in the selected fields. "
-                        "Try assigning different field zones."
-                    ],
-                    "message": (
-                        f"Parsed {fw_result.total_records:,} fixed-width records "
-                        f"but the selected fields produced no crosswalk pairs. "
-                        f"Try a different field mapping."
-                    ),
-                }
-
-            apply_result = await apply_topaz_crosswalk(db, crosswalk_pairs)
-
-            return {
-                "status": "success",
-                "file": filename,
-                "format": "fixed_width",
-                "format_detail": (
-                    f"Fixed-width: {fw_result.total_records:,} records x "
-                    f"{fw_result.record_width} bytes. Line# = Topaz ID."
-                ),
-                "total_records": fw_result.total_records,
-                "crosswalk_pairs_extracted": len(crosswalk_pairs),
-                "field_mapping_used": {
-                    "chart_number": chart_fields[0] if chart_fields else None,
-                    "patient_name": name_fields[0] if name_fields else None,
-                },
-                "field_zones": fw_result.field_zones,
-                "crosswalk_applied": apply_result,
-                "sample_pairs": crosswalk_pairs[:20],
-                "warnings": fw_result.warnings,
-            }
-
-    # ── Delimited / XML / other formats ──
-    parsed = parse_topaz_export(content, filename)
-
-    # If user provided header overrides, re-extract crosswalk pairs
-    # using the user's column names instead of auto-detected ones.
-    if user_mapping and parsed.raw_rows:
-        crosswalk_pairs = []
-        for raw_row in parsed.raw_rows:
-            pair = {}
-            for role, header_name in user_mapping.items():
-                if role in ("chart_number", "topaz_id", "patient_name", "service_date"):
-                    val = raw_row.get(header_name, "").strip()
-                    if val:
-                        pair[role] = val
-            if pair.get("chart_number") or pair.get("topaz_id"):
-                crosswalk_pairs.append(pair)
-        if crosswalk_pairs:
-            parsed.crosswalk_pairs = crosswalk_pairs
-            parsed.total_rows = len(crosswalk_pairs)
-            parsed.column_mapping = {
-                role: header for role, header in user_mapping.items()
-                if role in ("chart_number", "topaz_id", "patient_name", "service_date")
-            }
-
-    if not parsed.crosswalk_pairs:
-        return {
-            "status": "no_crosswalk_data",
-            "format": parsed.format_detected,
-            "headers_found": parsed.headers_found[:20],
-            "column_mapping": parsed.column_mapping,
+        parsing_metadata = {
+            "headers": parsed.headers_found[:50],
+            "auto_mapping": parsed.column_mapping,
+            "sample_rows": [r for r in parsed.raw_rows[:25] if r],
             "warnings": parsed.warnings,
-            "message": (
-                "No chart_number or topaz_id columns detected. "
-                f"Headers found: {parsed.headers_found[:20]}. "
-                "Use the Preview step to see all headers and assign them manually."
-            ),
         }
 
-    # Apply crosswalk to billing records
-    apply_result = await apply_topaz_crosswalk(db, parsed.crosswalk_pairs)
+    # Store in database
+    record = CrosswalkImport(
+        filename=filename,
+        file_size_bytes=len(content_bytes),
+        raw_content=content,
+        format_detected=format_detected,
+        format_detail=format_detail,
+        total_records=total_records,
+        parsing_metadata=parsing_metadata,
+        status="UPLOADED",
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
 
     return {
-        "status": "success",
-        "file": filename,
-        "format": parsed.format_detected,
-        "headers_found": parsed.headers_found[:20],
-        "column_mapping": parsed.column_mapping,
-        "total_rows_parsed": parsed.total_rows,
-        "crosswalk_applied": apply_result,
-        "extra_fields": parsed.extra_fields[:20],
-        "warnings": parsed.warnings,
+        "id": record.id,
+        "status": "UPLOADED",
+        "filename": filename,
+        "format": format_detected,
+        "format_detail": format_detail,
+        "total_records": total_records,
+        "parsing_metadata": parsing_metadata,
     }
 
 
-@router.post("/crosswalk/preview-topaz")
-async def preview_topaz_crosswalk(
-    file: UploadFile = File(...),
+@router.post("/crosswalk/extract/{import_id}")
+async def extract_crosswalk_pairs(
+    import_id: int,
+    field_mapping: dict,
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Preview a Topaz export file without applying changes.
+    Step 2: User assigns field roles, system extracts crosswalk pairs.
 
-    Returns detected format, all field zones with sample values, and
-    auto-detected column mapping (which the user can override before import).
+    field_mapping example:
+      {"chart_number": "id_2", "patient_name": "name_1"}
+    For fixed-width: values are zone labels (id_1, name_1, etc.)
+    For delimited: values are header names ("Chart Number", "Patient Name", etc.)
+
+    Returns extracted pairs for review. Does NOT modify billing records.
     """
+    from backend.app.models.crosswalk_import import CrosswalkImport
     from backend.app.parsing.fixed_width_parser import (
         looks_like_fixed_width,
         parse_fixed_width_records,
     )
 
-    content_bytes = await file.read()
-    try:
-        content = content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        content = content_bytes.decode("latin-1", errors="replace")
+    result = await db.execute(
+        select(CrosswalkImport).where(CrosswalkImport.id == import_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Import not found")
 
-    # ── Fixed-width preview ──
-    if looks_like_fixed_width(content_bytes):
+    content = record.raw_content
+    content_bytes = content.encode("utf-8", errors="replace")
+    pairs = []
+
+    if record.format_detected == "fixed_width":
         fw_result = parse_fixed_width_records(content_bytes)
-        if fw_result.total_records > 0:
-            # Return ALL zones with expanded sample values so the user
-            # can see what each field contains and assign roles manually.
-            zones_with_samples = []
-            for z in fw_result.field_zones:
-                # Gather more sample values from populated records
-                samples = []
-                for rec in fw_result.records[:50]:
-                    val = rec.get(z["label"], "")
-                    if val and val not in samples:
-                        samples.append(val)
-                    if len(samples) >= 8:
-                        break
-                zones_with_samples.append({
-                    **z,
-                    "sample_values": samples,
-                })
 
-            # Build sample records showing all field values
-            sample_records = []
-            for rec in fw_result.records[:20]:
-                row = {"_line_num": rec.get("_line_num"), "_topaz_id": rec.get("_topaz_id")}
-                for z in fw_result.field_zones:
-                    val = rec.get(z["label"], "")
+        chart_field = field_mapping.get("chart_number")
+        name_field = field_mapping.get("patient_name")
+        # For fixed-width, line number can be the topaz_id if user says so
+        use_line_as_topaz = field_mapping.get("topaz_id") == "_line_num"
+        topaz_field = field_mapping.get("topaz_id") if not use_line_as_topaz else None
+
+        for rec in fw_result.records:
+            pair = {"_line_num": rec.get("_line_num")}
+
+            # Topaz ID: either from line number or a specific field
+            if use_line_as_topaz or not topaz_field:
+                pair["topaz_id"] = str(rec.get("_line_num", ""))
+            elif topaz_field:
+                val = rec.get(topaz_field, "").strip()
+                pair["topaz_id"] = val if val else None
+
+            # Chart/Jacket number
+            if chart_field:
+                val = rec.get(chart_field, "").strip()
+                if val:
+                    try:
+                        pair["chart_number"] = str(int(float(val)))
+                    except (ValueError, TypeError):
+                        pair["chart_number"] = val
+
+            # Patient name
+            if name_field:
+                val = rec.get(name_field, "").strip()
+                if val:
+                    pair["patient_name"] = val
+
+            # Only include if we have something useful
+            if pair.get("chart_number") or pair.get("patient_name"):
+                pairs.append(pair)
+
+    else:
+        # Delimited / XML: re-parse and extract using user's header mapping
+        parsed = parse_topaz_export(content, record.filename)
+        for raw_row in parsed.raw_rows:
+            pair = {}
+            for role, header_name in field_mapping.items():
+                if role in ("chart_number", "topaz_id", "patient_name", "service_date"):
+                    val = str(raw_row.get(header_name, "")).strip()
                     if val:
-                        row[z["label"]] = val
-                sample_records.append(row)
+                        pair[role] = val
+            if pair.get("chart_number") or pair.get("topaz_id"):
+                pairs.append(pair)
 
-            # Auto-detected mapping (user can override)
-            auto_mapping = {}
-            if fw_result.id_fields:
-                auto_mapping["chart_number"] = fw_result.id_fields[0]
-            if fw_result.name_fields:
-                auto_mapping["patient_name"] = fw_result.name_fields[0]
+    # Validate: check how many chart_numbers actually exist in billing_records
+    chart_numbers_in_file = {p["chart_number"] for p in pairs if p.get("chart_number")}
+    validation = {"total_extracted": len(pairs)}
 
-            return {
-                "format": "fixed_width",
-                "format_detail": (
-                    f"Fixed-width: {fw_result.total_records:,} records x "
-                    f"{fw_result.record_width} bytes. Line# = Topaz patient ID."
-                ),
-                "total_records": fw_result.total_records,
-                "field_zones": zones_with_samples,
-                "sample_records": sample_records,
-                "auto_mapping": auto_mapping,
-                "warnings": fw_result.warnings,
-            }
+    if chart_numbers_in_file:
+        br_result = await db.execute(
+            select(BillingRecord.patient_id)
+            .where(BillingRecord.patient_id.is_not(None))
+            .distinct()
+        )
+        db_chart_numbers = {str(r[0]).strip() for r in br_result.all()}
+        matched = chart_numbers_in_file & db_chart_numbers
+        validation["chart_numbers_in_file"] = len(chart_numbers_in_file)
+        validation["chart_numbers_found_in_db"] = len(matched)
+        validation["chart_numbers_not_in_db"] = len(chart_numbers_in_file - db_chart_numbers)
 
-    # ── Delimited / XML / other formats ──
-    parsed = parse_topaz_export(content, file.filename or "preview")
-
-    # For delimited files, also allow header override
-    all_headers = parsed.headers_found[:50]
+    # Save to record
+    from datetime import datetime as dt
+    record.field_mapping = field_mapping
+    record.extracted_pairs = pairs[:50000]  # Cap storage
+    record.extracted_count = len(pairs)
+    record.status = "MAPPED"
+    record.mapped_at = dt.utcnow()
+    await db.commit()
 
     return {
-        "format": parsed.format_detected,
-        "headers_found": all_headers,
-        "column_mapping": parsed.column_mapping,
-        "total_rows": parsed.total_rows,
-        "sample_pairs": parsed.crosswalk_pairs[:20],
-        "raw_rows": [r for r in parsed.raw_rows[:15] if r],
-        "extra_fields": parsed.extra_fields[:20],
-        "warnings": parsed.warnings,
+        "id": import_id,
+        "status": "MAPPED",
+        "field_mapping": field_mapping,
+        "extracted_count": len(pairs),
+        "sample_pairs": pairs[:30],
+        "validation": validation,
+    }
+
+
+@router.post("/crosswalk/apply/{import_id}")
+async def apply_crosswalk_import(
+    import_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Step 3: User approves — apply extracted pairs to billing records.
+
+    Only updates BillingRecord.topaz_id where chart_number matches
+    patient_id exactly. No fuzzy matching. No guessing.
+    """
+    from backend.app.models.crosswalk_import import CrosswalkImport
+
+    result = await db.execute(
+        select(CrosswalkImport).where(CrosswalkImport.id == import_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    if record.status == "APPLIED":
+        return {
+            "id": import_id,
+            "status": "ALREADY_APPLIED",
+            "message": "This import was already applied.",
+            "apply_result": record.apply_result,
+        }
+
+    if not record.extracted_pairs:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="No extracted pairs. Run extract step first."
+        )
+
+    pairs = record.extracted_pairs
+
+    # Load billing records that need topaz_id, indexed by patient_id
+    br_result = await db.execute(
+        select(BillingRecord).where(BillingRecord.patient_id.is_not(None))
+    )
+    all_billing = list(br_result.scalars().all())
+
+    by_chart: dict[str, list] = {}
+    for br in all_billing:
+        key = str(br.patient_id).strip()
+        by_chart.setdefault(key, []).append(br)
+
+    applied = 0
+    skipped_no_match = 0
+    skipped_already_set = 0
+    updated_ids: set[int] = set()
+
+    for pair in pairs:
+        chart_num = pair.get("chart_number")
+        topaz_id = pair.get("topaz_id")
+        if not chart_num or not topaz_id:
+            skipped_no_match += 1
+            continue
+
+        candidates = by_chart.get(str(chart_num).strip(), [])
+        if not candidates:
+            skipped_no_match += 1
+            continue
+
+        for br in candidates:
+            if br.id in updated_ids:
+                continue
+            if br.topaz_id and br.topaz_id == topaz_id:
+                skipped_already_set += 1
+                continue
+            if br.topaz_id and br.topaz_id != topaz_id:
+                # Don't overwrite existing different topaz_id
+                continue
+            br.topaz_id = str(topaz_id).strip()
+            updated_ids.add(br.id)
+            applied += 1
+
+    if applied > 0:
+        await db.commit()
+
+    from datetime import datetime as dt
+    apply_result = {
+        "applied": applied,
+        "skipped_no_match": skipped_no_match,
+        "skipped_already_set": skipped_already_set,
+        "total_pairs": len(pairs),
+    }
+    record.applied_count = applied
+    record.apply_result = apply_result
+    record.status = "APPLIED"
+    record.applied_at = dt.utcnow()
+    await db.commit()
+
+    return {
+        "id": import_id,
+        "status": "APPLIED",
+        "apply_result": apply_result,
+    }
+
+
+@router.get("/crosswalk/imports")
+async def list_crosswalk_imports(db: AsyncSession = Depends(get_db)):
+    """List all past crosswalk imports."""
+    from backend.app.models.crosswalk_import import CrosswalkImport
+
+    result = await db.execute(
+        select(CrosswalkImport).order_by(CrosswalkImport.created_at.desc())
+    )
+    records = result.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "filename": r.filename,
+            "format": r.format_detected,
+            "total_records": r.total_records,
+            "extracted_count": r.extracted_count,
+            "applied_count": r.applied_count,
+            "status": r.status,
+            "field_mapping": r.field_mapping,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "applied_at": r.applied_at.isoformat() if r.applied_at else None,
+        }
+        for r in records
+    ]
+
+
+@router.get("/crosswalk/imports/{import_id}")
+async def get_crosswalk_import(
+    import_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """View a stored crosswalk import with raw data, mapping, and results."""
+    from backend.app.models.crosswalk_import import CrosswalkImport
+
+    result = await db.execute(
+        select(CrosswalkImport).where(CrosswalkImport.id == import_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    return {
+        "id": record.id,
+        "filename": record.filename,
+        "format": record.format_detected,
+        "format_detail": record.format_detail,
+        "total_records": record.total_records,
+        "status": record.status,
+        "parsing_metadata": record.parsing_metadata,
+        "field_mapping": record.field_mapping,
+        "extracted_count": record.extracted_count,
+        "sample_pairs": record.extracted_pairs[:30] if record.extracted_pairs else [],
+        "applied_count": record.applied_count,
+        "apply_result": record.apply_result,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "mapped_at": record.mapped_at.isoformat() if record.mapped_at else None,
+        "applied_at": record.applied_at.isoformat() if record.applied_at else None,
     }
 
 
