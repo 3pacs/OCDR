@@ -1,8 +1,12 @@
 """
 Excel Import Engine (F-01).
 
-Handles OCMRI.xlsx import: parses the 'Current' sheet, maps columns per DATA_SCHEMA,
-converts Excel serial dates, deduplicates, and batch-inserts into billing_records.
+Handles OCMRI.xlsx import: parses the 'Current' sheet, maps columns by header
+name (case-insensitive), converts Excel serial dates, deduplicates, and
+batch-inserts into billing_records.
+
+Supports both the original 22-column layout and the updated 23-column layout
+where "ID" was renamed to "Chart ID" and a new "Patient ID" column was added.
 """
 
 import io
@@ -17,31 +21,74 @@ from backend.app.models.billing import BillingRecord
 
 logger = logging.getLogger(__name__)
 
-# Column index mapping (0-based) per BUILD_SPEC DATA_SCHEMA
-COL_MAP = {
+# Header name → BillingRecord field name (case-insensitive matching)
+# Multiple aliases per field handle both old and new OCMRI layouts.
+HEADER_MAP = {
+    # Core fields
+    "patient": "patient_name",
+    "doctor": "referring_doctor",
+    "scan": "scan_type",
+    "gado": "gado_used",
+    "insurance": "insurance_carrier",
+    "type": "modality",
+    "date": "service_date",
+    "primary": "primary_payment",
+    "secondary": "secondary_payment",
+    "total": "total_payment",
+    "extra": "extra_charges",
+    "readby": "reading_physician",
+    "read by": "reading_physician",
+
+    # ID columns: old layout had "ID" for jacket number,
+    # new layout renamed it "Chart ID" and added "Patient ID"
+    "id": "patient_id",                  # old layout generic "ID" = jacket/chart number
+    "jacket id": "patient_id",           # alternate name
+    "chart id": "patient_id",            # new layout: renamed column
+    "chart number": "patient_id",
+    "patient id": "patient_id_new",      # new layout: new column (Topaz patient number)
+
+    # Other source columns
+    "birth date": "birth_date",
+    "patient name": "patient_name_display",
+    "s date": "schedule_date",
+    "modalities": "modality_code",
+    "description": "description",
+    "month": "service_month",
+    "year": "service_year",
+    "new": "is_new_patient",
+
+    # Topaz ID column (present in both layouts)
+    "topaz id": "topaz_id",
+
+    # Payer group (column W/X depending on layout)
+    "payer group": "payer_group",
+}
+
+# Legacy fallback: positional index mapping for files with no header row
+COL_MAP_LEGACY = {
     0: "patient_name",        # A - Patient
-    1: "referring_doctor",    # B - Doctor
-    2: "scan_type",           # C - Scan
-    3: "gado_used",           # D - Gado
-    4: "insurance_carrier",   # E - Insurance
-    5: "modality",            # F - Type
-    6: "service_date",        # G - Date
-    7: "primary_payment",     # H - Primary
-    8: "secondary_payment",   # I - Secondary
-    9: "total_payment",       # J - Total
-    10: "extra_charges",      # K - Extra
-    11: "reading_physician",  # L - ReadBy
-    12: "patient_id",         # M - Jacket ID
-    13: "birth_date",         # N - Birth Date
+    1: "referring_doctor",     # B - Doctor
+    2: "scan_type",            # C - Scan
+    3: "gado_used",            # D - Gado
+    4: "insurance_carrier",    # E - Insurance
+    5: "modality",             # F - Type
+    6: "service_date",         # G - Date
+    7: "primary_payment",      # H - Primary
+    8: "secondary_payment",    # I - Secondary
+    9: "total_payment",        # J - Total
+    10: "extra_charges",       # K - Extra
+    11: "reading_physician",   # L - ReadBy
+    12: "patient_id",          # M - Jacket ID / Chart ID
+    13: "birth_date",          # N - Birth Date
     14: "patient_name_display",  # O - Patient Name
-    15: "schedule_date",      # P - S Date
-    16: "modality_code",      # Q - Modalities
-    17: "description",        # R - Description
-    18: "service_month",      # S - Month
-    19: "service_year",       # T - Year
-    20: "is_new_patient",     # U - New
-    21: "topaz_id",           # V - Topaz ID
-    22: "payer_group",        # W - Payer Group
+    15: "schedule_date",       # P - S Date
+    16: "modality_code",       # Q - Modalities
+    17: "description",         # R - Description
+    18: "service_month",       # S - Month
+    19: "service_year",        # T - Year
+    20: "is_new_patient",      # U - New
+    21: "topaz_id",            # V - Topaz ID
+    22: "payer_group",         # W - Payer Group
 }
 
 EXCEL_EPOCH = date(1899, 12, 30)
@@ -120,63 +167,136 @@ def _safe_int_str(val) -> str | None:
         return s if s else None
 
 
-def _build_extra(row: tuple) -> dict | None:
-    """Capture columns beyond the standard 22 into extra_data."""
+def _detect_headers(ws) -> tuple[dict[int, str], int]:
+    """
+    Detect column headers from the first row of the worksheet.
+
+    Returns (col_index_to_field mapping, header_row_number).
+    Falls back to legacy positional mapping if no headers detected.
+    """
+    first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+    if first_row is None:
+        return COL_MAP_LEGACY, 1
+
+    # Try header-based detection
+    col_map = {}
+    used_fields = set()
+    header_count = 0
+
+    for col_idx, cell in enumerate(first_row):
+        if cell is None:
+            continue
+        header = str(cell).strip().lower()
+        if not header:
+            continue
+
+        # Try exact match against HEADER_MAP
+        if header in HEADER_MAP:
+            field = HEADER_MAP[header]
+            if field not in used_fields:
+                col_map[col_idx] = field
+                used_fields.add(field)
+                header_count += 1
+                continue
+
+        # Try partial/fuzzy match — check if any HEADER_MAP key is contained
+        for alias, field in HEADER_MAP.items():
+            if field in used_fields:
+                continue
+            if alias in header or header in alias:
+                col_map[col_idx] = field
+                used_fields.add(field)
+                header_count += 1
+                break
+
+    # If we matched at least 5 headers, use header-based mapping
+    if header_count >= 5:
+        logger.info(f"Header-based detection: matched {header_count} columns")
+        return col_map, 1
+
+    # Fall back to legacy positional mapping
+    logger.info("Falling back to legacy positional column mapping")
+    return COL_MAP_LEGACY, 0
+
+
+def _parse_row(row: tuple, col_map: dict[int, str]) -> dict | None:
+    """Parse a single Excel row into a dict for BillingRecord using header mapping."""
+    # Build raw dict from column mapping
+    raw = {}
     extra = {}
-    if len(row) > 22 and row[22] is not None:
-        extra["payer_group"] = str(row[22]).strip()
-    # Capture any additional columns beyond 23
-    for i in range(23, len(row)):
-        if row[i] is not None:
-            extra[f"col_{i}"] = str(row[i]).strip()
-    return extra if extra else None
+    for col_idx, val in enumerate(row):
+        if col_idx in col_map:
+            raw[col_map[col_idx]] = val
+        elif val is not None:
+            extra[f"col_{col_idx}"] = str(val).strip()
 
-
-def _parse_row(row: tuple) -> dict | None:
-    """Parse a single Excel row into a dict for BillingRecord. Returns None if row is invalid."""
-    patient_name = _clean_text(row[0]) if len(row) > 0 else None
+    patient_name = _clean_text(raw.get("patient_name"))
     if not patient_name:
         return None
 
-    referring_doctor = _clean_text(row[1]) if len(row) > 1 else None
-    scan_type = _clean_text(row[2]) if len(row) > 2 else None
-    insurance_carrier = _clean_text(row[4]) if len(row) > 4 else None
-    modality = _clean_text(row[5]) if len(row) > 5 else None
-    service_date = _excel_serial_to_date(row[6]) if len(row) > 6 else None
+    referring_doctor = _clean_text(raw.get("referring_doctor"))
+    scan_type = _clean_text(raw.get("scan_type"))
+    insurance_carrier = _clean_text(raw.get("insurance_carrier"))
+    modality = _clean_text(raw.get("modality"))
+    service_date = _excel_serial_to_date(raw.get("service_date"))
 
     # Required fields check
     if not all([referring_doctor, scan_type, insurance_carrier, modality, service_date]):
         return None
 
     insurance_carrier = _normalize_carrier(insurance_carrier)
-    description = _clean_text(row[17]) if len(row) > 17 else None
+    description = _clean_text(raw.get("description"))
+
+    # Handle patient_id (chart/jacket number)
+    patient_id = None
+    pid_val = raw.get("patient_id")
+    if pid_val is not None:
+        try:
+            patient_id = int(float(pid_val))
+        except (ValueError, TypeError):
+            pass
+
+    # Handle topaz_id — from Topaz ID column or the new Patient ID column
+    topaz_id = _safe_int_str(raw.get("topaz_id"))
+    # If we have a "patient_id_new" column (new layout's "Patient ID"),
+    # use it as topaz_id when the dedicated topaz column is empty
+    patient_id_new = _safe_int_str(raw.get("patient_id_new"))
+    if patient_id_new and not topaz_id:
+        topaz_id = patient_id_new
+    # Store payer_group in extra_data
+    payer_group = _clean_text(raw.get("payer_group"))
+    if payer_group:
+        extra["payer_group"] = payer_group
+    # Also preserve the new Patient ID column value in extra_data
+    if patient_id_new:
+        extra["patient_id_new"] = patient_id_new
 
     return {
         "patient_name": patient_name,
         "referring_doctor": referring_doctor,
         "scan_type": scan_type,
-        "gado_used": _parse_bool(row[3]) if len(row) > 3 else False,
+        "gado_used": _parse_bool(raw.get("gado_used")),
         "insurance_carrier": insurance_carrier,
         "modality": modality,
         "service_date": service_date,
-        "primary_payment": _parse_money(row[7]) if len(row) > 7 else 0.0,
-        "secondary_payment": _parse_money(row[8]) if len(row) > 8 else 0.0,
-        "total_payment": _parse_money(row[9]) if len(row) > 9 else 0.0,
-        "extra_charges": _parse_money(row[10]) if len(row) > 10 else 0.0,
-        "reading_physician": _clean_text(row[11]) if len(row) > 11 else None,
-        "patient_id": int(float(row[12])) if len(row) > 12 and row[12] is not None else None,
-        "birth_date": _excel_serial_to_date(row[13]) if len(row) > 13 else None,
-        "patient_name_display": _clean_text(row[14]) if len(row) > 14 else None,
-        "schedule_date": _excel_serial_to_date(row[15]) if len(row) > 15 else None,
-        "modality_code": _clean_text(row[16]) if len(row) > 16 else None,
+        "primary_payment": _parse_money(raw.get("primary_payment")),
+        "secondary_payment": _parse_money(raw.get("secondary_payment")),
+        "total_payment": _parse_money(raw.get("total_payment")),
+        "extra_charges": _parse_money(raw.get("extra_charges")),
+        "reading_physician": _clean_text(raw.get("reading_physician")),
+        "patient_id": patient_id,
+        "birth_date": _excel_serial_to_date(raw.get("birth_date")),
+        "patient_name_display": _clean_text(raw.get("patient_name_display")),
+        "schedule_date": _excel_serial_to_date(raw.get("schedule_date")),
+        "modality_code": _clean_text(raw.get("modality_code")),
         "description": description,
-        "service_month": _clean_text(row[18]) if len(row) > 18 else None,
-        "service_year": _clean_text(row[19]) if len(row) > 19 else None,
-        "is_new_patient": _parse_bool(row[20]) if len(row) > 20 else None,
-        "topaz_id": _safe_int_str(row[21]) if len(row) > 21 else None,
+        "service_month": _clean_text(raw.get("service_month")),
+        "service_year": _clean_text(raw.get("service_year")),
+        "is_new_patient": _parse_bool(raw.get("is_new_patient")),
+        "topaz_id": topaz_id,
         "is_psma": _derive_psma(description, modality),
         "import_source": "EXCEL_IMPORT",
-        "extra_data": _build_extra(row),
+        "extra_data": extra if extra else None,
     }
 
 
@@ -188,7 +308,11 @@ async def import_excel(
     """
     Import an OCMRI Excel file into billing_records.
 
-    Returns dict with imported, skipped, errors counts.
+    Uses header-based column detection so the import works regardless of
+    column order or count. Falls back to positional mapping for legacy
+    files without headers.
+
+    Returns dict with imported, skipped, errors counts + detected mapping.
     """
     wb = load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
 
@@ -197,6 +321,16 @@ async def import_excel(
         raise ValueError(f"Sheet '{sheet_name}' not found. Available: {available}")
 
     ws = wb[sheet_name]
+
+    # Detect column layout
+    col_map, header_row = _detect_headers(ws)
+    data_start_row = header_row + 1 if header_row > 0 else 2
+
+    # Build readable mapping for response
+    detected_mapping = {}
+    for col_idx, field in sorted(col_map.items()):
+        col_letter = chr(ord('A') + col_idx) if col_idx < 26 else f"col_{col_idx}"
+        detected_mapping[col_letter] = field
 
     # Load existing dedup keys
     existing_result = await session.execute(
@@ -216,9 +350,9 @@ async def import_excel(
     errors = 0
     batch: list[BillingRecord] = []
 
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+    for row_idx, row in enumerate(ws.iter_rows(min_row=data_start_row, values_only=True), start=data_start_row):
         try:
-            parsed = _parse_row(row)
+            parsed = _parse_row(row, col_map)
             if parsed is None:
                 skipped += 1
                 continue
@@ -263,4 +397,10 @@ async def import_excel(
     wb.close()
 
     logger.info(f"Excel import complete: {imported} imported, {skipped} skipped, {errors} errors")
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "detected_mapping": detected_mapping,
+        "total_columns": len(col_map),
+    }

@@ -65,8 +65,10 @@ class BillingRecord(Base):
     is_new_patient: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # STATIC: Crosswalk identifiers
-    # patient_id = chart_number (from OCMRI.xlsx col M)
+    # patient_id = chart_number / Chart ID (from OCMRI.xlsx)
     # topaz_id = Topaz billing system ID (== ERA claim_id in 835 files)
+    #   Sources: Topaz ID column in OCMRI, Patient ID column (new layout),
+    #            or crosswalk import from Topaz server exports
     topaz_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
 
     # --- DERIVED: Computed by system ---

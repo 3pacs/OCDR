@@ -81,14 +81,15 @@ COLUMN_ALIASES = {
         "read", "interp",
     ],
     "patient_id": [
-        "patient id", "patient_id", "id", "mrn", "medical record",
-        "record number", "chart number", "acct", "account",
-        "patient number", "patid", "pt id",
+        "chart id", "chart_id", "chartid", "chart number", "chart#",
         "jacket id", "jacket", "jacket number", "jacket#", "jacket no",
+        "id", "mrn", "medical record", "record number", "acct", "account",
+        "patid", "pt id",
     ],
     "topaz_id": [
         "topaz id", "topaz_id", "topazid", "topaz", "topaz #",
         "topaz number", "topaz no", "billing id", "billing_id",
+        "patient id", "patient_id", "patient number", "patient #",
     ],
     "birth_date": [
         "birth date", "birth_date", "dob", "date of birth", "birthdate",
