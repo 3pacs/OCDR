@@ -318,6 +318,10 @@ async def upload_raw_crosswalk(
     except UnicodeDecodeError:
         content = content_bytes.decode("latin-1", errors="replace")
 
+    # Strip null bytes — .NET binary files often contain 0x00 padding
+    # which PostgreSQL TEXT columns reject
+    content = content.replace("\x00", "")
+
     filename = file.filename or "upload"
     parsing_metadata = {}
     format_detected = "unknown"

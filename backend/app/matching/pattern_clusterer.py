@@ -245,12 +245,16 @@ async def get_crosswalk_stats(session: AsyncSession) -> dict:
         )
     )
 
+    chart_count = has_chart.scalar() or 0
+    topaz_count = has_topaz.scalar() or 0
+    both_count = has_both.scalar() or 0
+
     return {
         "total_records": total_count,
-        "has_chart_number": has_chart.scalar() or 0,
-        "has_topaz_id": has_topaz.scalar() or 0,
-        "has_both": has_both.scalar() or 0,
-        "missing_topaz": (has_chart.scalar() or 0) - (has_both.scalar() or 0),
+        "has_chart_number": chart_count,
+        "has_topaz_id": topaz_count,
+        "has_both": both_count,
+        "missing_topaz": chart_count - both_count,
     }
 
 
