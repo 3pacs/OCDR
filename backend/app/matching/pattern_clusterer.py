@@ -275,7 +275,8 @@ async def apply_topaz_crosswalk(
          - Find billing records where patient_id == chart_number
          - Set topaz_id on those records (if not already set)
       2. For pairs with only topaz_id + patient_name:
-         - Find billing records by fuzzy name match and set topaz_id
+         - Find billing records by exact name match and set topaz_id
+         - Fuzzy matching capped at 500 attempts to avoid timeouts
       3. For pairs with only chart_number + patient_name:
          - Store the mapping for future use when topaz_id becomes available
 
@@ -291,24 +292,25 @@ async def apply_topaz_crosswalk(
     records_missing_topaz = list(result.scalars().all())
 
     # Build indexes
-    by_chart_number = {}
+    by_chart_number: dict[str, list] = {}
     for br in records_missing_topaz:
         if br.patient_id is not None:
             key = str(br.patient_id).strip()
             by_chart_number.setdefault(key, []).append(br)
 
-    by_name = {}
+    by_name: dict[str, list] = {}
     for br in records_missing_topaz:
         if br.patient_name:
             norm = br.patient_name.upper().strip()
             by_name.setdefault(norm, []).append(br)
 
     applied = 0
-    skipped_already_set = 0
     skipped_no_match = 0
     skipped_name_mismatch = 0
     name_matched = 0
-    updated_ids = set()
+    updated_ids: set[int] = set()
+    fuzzy_attempts = 0
+    MAX_FUZZY = 500  # Cap fuzzy matching to avoid O(n*m) blowup
 
     for pair in crosswalk_pairs:
         chart_num = str(pair.get("chart_number", "")).strip() if pair.get("chart_number") else None
@@ -319,11 +321,12 @@ async def apply_topaz_crosswalk(
             skipped_no_match += 1
             continue
 
+        matched_this_pair = False
+
         # Strategy 1: Chart_number match WITH name corroboration
         if chart_num:
             candidates = by_chart_number.get(chart_num, [])
             if candidates and patient_name:
-                # Cross-verify: chart_number matched, now confirm name similarity
                 name_upper = patient_name.upper().strip()
                 for br in candidates:
                     if br.id in updated_ids:
@@ -334,21 +337,22 @@ async def apply_topaz_crosswalk(
                         br.topaz_id = topaz_id
                         updated_ids.add(br.id)
                         applied += 1
+                        matched_this_pair = True
                     else:
                         skipped_name_mismatch += 1
             elif candidates:
-                # No name to cross-check — accept chart_number match
                 for br in candidates:
                     if br.id in updated_ids:
                         continue
                     br.topaz_id = topaz_id
                     updated_ids.add(br.id)
                     applied += 1
+                    matched_this_pair = True
 
-        # Strategy 2: Name-based match if no chart_number or chart didn't match
-        if chart_num not in by_chart_number and patient_name:
+        # Strategy 2: Name-based match if chart didn't match
+        if not matched_this_pair and patient_name:
             name_upper = patient_name.upper().strip()
-            # Try exact name match first
+            # Exact name match (fast — dict lookup)
             exact_matches = by_name.get(name_upper, [])
             for br in exact_matches:
                 if br.id in updated_ids:
@@ -358,27 +362,36 @@ async def apply_topaz_crosswalk(
                 applied += 1
                 name_matched += 1
 
-            # If no exact match, try fuzzy
-            if not exact_matches and len(name_upper) > 3:
+            # Fuzzy match only if no exact match AND under the cap
+            if not exact_matches and len(name_upper) > 3 and fuzzy_attempts < MAX_FUZZY:
+                fuzzy_attempts += 1
+                best_score = 0
+                best_brs = None
                 for norm_name, brs in by_name.items():
                     score = fuzz.token_sort_ratio(name_upper, norm_name)
-                    if score >= 92:
-                        for br in brs:
-                            if br.id in updated_ids:
-                                continue
-                            br.topaz_id = topaz_id
-                            updated_ids.add(br.id)
-                            applied += 1
-                            name_matched += 1
-                        break
+                    if score >= 92 and score > best_score:
+                        best_score = score
+                        best_brs = brs
+                        if score == 100:
+                            break
+                if best_brs:
+                    for br in best_brs:
+                        if br.id in updated_ids:
+                            continue
+                        br.topaz_id = topaz_id
+                        updated_ids.add(br.id)
+                        applied += 1
+                        name_matched += 1
 
+    # Batch commit
     if applied > 0:
         await session.commit()
 
     logger.info(
         f"Topaz crosswalk: applied {applied} ({name_matched} by name), "
         f"skipped {skipped_no_match} (no topaz_id), "
-        f"skipped {skipped_name_mismatch} (name mismatch)"
+        f"skipped {skipped_name_mismatch} (name mismatch), "
+        f"fuzzy attempts {fuzzy_attempts}/{MAX_FUZZY}"
     )
 
     return {
