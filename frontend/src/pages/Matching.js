@@ -369,7 +369,114 @@ function FileVerifier() {
 
         {error && <Alert variant="danger" className="small">{error}</Alert>}
 
-        {result && (
+        {result && result.verdict === "fixed_width" && (
+          <>
+            <Alert variant="primary" className="small">
+              <strong>Fixed-Width Record File</strong> &mdash; {result.verdict_detail}
+            </Alert>
+
+            <Row className="g-2 mb-3">
+              <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.total_records?.toLocaleString()}</div><small>Total Records</small></div></Col>
+              <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.record_width} bytes</div><small>Record Width</small></div></Col>
+              <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.field_zones?.length}</div><small>Field Zones</small></div></Col>
+              <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.unique_jacket_ids_in_db}</div><small>Jacket IDs in DB</small></div></Col>
+            </Row>
+
+            {result.field_zones?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">Field Zones (byte positions)</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Label</th><th>Pos</th><th>Width</th><th>Type</th><th>Sample Values</th></tr></thead>
+                  <tbody>
+                    {result.field_zones.map((z, i) => (
+                      <tr key={i} className={z.label.startsWith("id_") ? "table-info" : z.label.startsWith("name_") ? "table-success" : z.label.startsWith("date_") ? "table-warning" : ""}>
+                        <td><strong>{z.label}</strong></td>
+                        <td>{z.start}-{z.end}</td>
+                        <td>{z.width}</td>
+                        <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
+                        <td className="text-truncate" style={{ maxWidth: 300 }}>{z.sample_values?.slice(0, 3).map((v, j) => <code key={j} className="me-2">{v}</code>)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.field_cross_reference && Object.keys(result.field_cross_reference).length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">Cross-Reference Against Billing Records</summary>
+                {Object.entries(result.field_cross_reference).map(([label, ref]) => (
+                  <Card key={label} className="mb-2 border">
+                    <Card.Body className="py-2 px-3">
+                      <div className="d-flex align-items-center gap-3 mb-2">
+                        <strong>{label}</strong>
+                        <span className="text-muted small">({ref.zone?.type}, bytes {ref.zone?.start}-{ref.zone?.end})</span>
+                        <Badge bg={ref.hit_rate > 50 ? "success" : ref.hit_rate > 10 ? "warning" : "secondary"}>
+                          {ref.hit_rate}% match rate
+                        </Badge>
+                        <span className="small">
+                          {ref.jacket_id_hits > 0 && <Badge bg="success" className="me-1">{ref.jacket_id_hits} Jacket</Badge>}
+                          {ref.topaz_id_hits > 0 && <Badge bg="info" className="me-1">{ref.topaz_id_hits} Topaz</Badge>}
+                          {ref.name_hits > 0 && <Badge bg="primary" className="me-1">{ref.name_hits} Name</Badge>}
+                          <span className="text-muted">/ {ref.checked} checked</span>
+                        </span>
+                      </div>
+                      {ref.sample_matches?.length > 0 && (
+                        <Table size="sm" className="small mb-0">
+                          <thead>
+                            <tr>
+                              <th>File Value</th>
+                              <th>Match Type</th>
+                              <th>DB Patient</th>
+                              <th>Name Corroboration</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ref.sample_matches.slice(0, 10).map((m, i) => (
+                              <tr key={i}>
+                                <td><code>{m.value}</code></td>
+                                <td><Badge bg={m.match_type === "jacket_id" ? "success" : m.match_type === "topaz_id" ? "info" : "primary"}>{m.match_type}</Badge></td>
+                                <td>{m.patient || m.db_name || "--"}</td>
+                                <td>
+                                  {m.name_corroboration ? (
+                                    <>
+                                      <code>{m.name_corroboration.file_name}</code>
+                                      {" "}&harr;{" "}
+                                      <code>{m.name_corroboration.db_name}</code>
+                                      {" "}
+                                      <Badge bg={m.name_corroboration.similarity >= 85 ? "success" : m.name_corroboration.similarity >= 70 ? "warning" : "danger"}>
+                                        {m.name_corroboration.similarity}%
+                                      </Badge>
+                                    </>
+                                  ) : m.similarity ? (
+                                    <Badge bg={m.similarity >= 85 ? "success" : "warning"}>{m.similarity}%</Badge>
+                                  ) : "--"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </Table>
+                      )}
+                    </Card.Body>
+                  </Card>
+                ))}
+              </details>
+            )}
+
+            {result.sample_records?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold">Sample Records (first 10)</summary>
+                <pre className="bg-light p-2 small mt-1" style={{ maxHeight: 250, overflow: "auto" }}>
+                  {result.sample_records.slice(0, 10).map((r, i) =>
+                    `Record ${i + 1}: ${JSON.stringify(r)}`
+                  ).join("\n")}
+                </pre>
+              </details>
+            )}
+          </>
+        )}
+
+        {result && result.verdict !== "fixed_width" && (
           <>
             <Alert variant={verdictColor(result.verdict)} className="small">
               <strong>Verdict: <Badge bg={verdictColor(result.verdict)}>{result.verdict}</Badge></strong>{" "}

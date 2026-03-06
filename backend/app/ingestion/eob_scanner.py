@@ -25,6 +25,10 @@ from backend.app.parsing.topaz_export_parser import (
     parse_topaz_export,
     looks_like_topaz_export,
 )
+from backend.app.parsing.fixed_width_parser import (
+    parse_fixed_width_records,
+    looks_like_fixed_width,
+)
 from backend.app.ingestion.flexible_excel_ingestor import import_excel_flexible
 
 logger = logging.getLogger(__name__)
@@ -167,44 +171,66 @@ async def scan_eob_folder(
                     claims_found += result.get("claims_found", 0)
 
                 else:
-                    # Try Topaz export parser on ANY text file —
-                    # extensionless .NET server exports may not match
-                    # the heuristic but can still be parsed successfully.
-                    topaz_result = None
-                    try:
-                        topaz_result = parse_topaz_export(content, rel_name)
-                    except Exception as te:
-                        logger.debug(f"Topaz parse attempt failed for {rel_name}: {te}")
+                    # Try fixed-width record format first (common .NET exports)
+                    fw_result = None
+                    if looks_like_fixed_width(content):
+                        try:
+                            fw_result = parse_fixed_width_records(content)
+                        except Exception as fwe:
+                            logger.debug(f"Fixed-width parse failed for {rel_name}: {fwe}")
 
-                    if topaz_result and topaz_result.total_rows > 0:
+                    if fw_result and fw_result.total_records > 0:
                         results.append({
                             "file": rel_name,
-                            "type": "topaz_export",
+                            "type": "fixed_width",
                             "status": "ok",
-                            "format": topaz_result.format_detected,
-                            "crosswalk_pairs": topaz_result.total_rows,
-                            "headers": topaz_result.headers_found[:15],
-                            "column_mapping": topaz_result.column_mapping,
-                            "warnings": topaz_result.warnings,
+                            "format_info": fw_result.format_info,
+                            "total_records": fw_result.total_records,
+                            "record_width": fw_result.record_width,
+                            "field_zones": fw_result.field_zones[:20],
+                            "id_fields": fw_result.id_fields,
+                            "name_fields": fw_result.name_fields,
+                            "date_fields": fw_result.date_fields,
+                            "warnings": fw_result.warnings,
                         })
                         imported_topaz += 1
-                        crosswalk_pairs_found += topaz_result.total_rows
-                    elif topaz_result and topaz_result.headers_found:
-                        results.append({
-                            "file": rel_name,
-                            "type": "topaz_export",
-                            "status": "no_crosswalk_data",
-                            "format": topaz_result.format_detected,
-                            "headers": topaz_result.headers_found[:15],
-                            "warnings": topaz_result.warnings,
-                        })
                     else:
-                        results.append({
-                            "file": rel_name,
-                            "type": ext.lstrip(".") or "extensionless",
-                            "status": "skipped",
-                            "reason": "not X12, Excel, or recognized data format",
-                        })
+                        # Try delimited Topaz export parser
+                        topaz_result = None
+                        try:
+                            topaz_result = parse_topaz_export(content, rel_name)
+                        except Exception as te:
+                            logger.debug(f"Topaz parse attempt failed for {rel_name}: {te}")
+
+                        if topaz_result and topaz_result.total_rows > 0:
+                            results.append({
+                                "file": rel_name,
+                                "type": "topaz_export",
+                                "status": "ok",
+                                "format": topaz_result.format_detected,
+                                "crosswalk_pairs": topaz_result.total_rows,
+                                "headers": topaz_result.headers_found[:15],
+                                "column_mapping": topaz_result.column_mapping,
+                                "warnings": topaz_result.warnings,
+                            })
+                            imported_topaz += 1
+                            crosswalk_pairs_found += topaz_result.total_rows
+                        elif topaz_result and topaz_result.headers_found:
+                            results.append({
+                                "file": rel_name,
+                                "type": "topaz_export",
+                                "status": "no_crosswalk_data",
+                                "format": topaz_result.format_detected,
+                                "headers": topaz_result.headers_found[:15],
+                                "warnings": topaz_result.warnings,
+                            })
+                        else:
+                            results.append({
+                                "file": rel_name,
+                                "type": ext.lstrip(".") or "extensionless",
+                                "status": "skipped",
+                                "reason": "not X12, Excel, or recognized data format",
+                            })
 
         except Exception as e:
             logger.warning(f"EOB scan error for {rel_name}: {e}")
