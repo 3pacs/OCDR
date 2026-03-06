@@ -1224,6 +1224,109 @@ function CrosswalkTab() {
   );
 }
 
+function DataReset() {
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [options, setOptions] = useState({
+    clear_topaz_ids: true,
+    clear_era_matches: false,
+    clear_era_data: false,
+    clear_billing_records: false,
+    clear_crosswalk_imports: true,
+  });
+
+  const loadPreview = async () => {
+    try {
+      const res = await api.get("/matching/reset/preview");
+      setPreview(res.data);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => { loadPreview(); }, []);
+
+  const handleReset = async () => {
+    if (!window.confirm("Are you sure? This will permanently clear the selected data. This cannot be undone.")) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api.post("/matching/reset/execute", { ...options, confirm: "RESET" });
+      setResult(res.data);
+      loadPreview(); // Refresh counts
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const RESET_OPTIONS = [
+    { key: "clear_topaz_ids", label: "Clear all Topaz IDs", desc: "Remove topaz_id from all billing records. Use this to undo bad crosswalk assignments before reimporting.", count: preview?.billing_with_topaz_id, danger: false },
+    { key: "clear_era_matches", label: "Clear ERA match linkages", desc: "Unlink ERA claims from billing records (clears era_claim_id, denial_status, denial_reason_code on billing records + match links on ERA claims). ERA data itself is kept.", count: preview?.billing_with_era_claim_id, danger: false },
+    { key: "clear_crosswalk_imports", label: "Clear crosswalk import history", desc: "Delete all stored crosswalk imports (raw files, mappings, results).", count: preview?.crosswalk_imports, danger: false },
+    { key: "clear_era_data", label: "Delete all ERA data", desc: "Delete all ERA payments and claim lines. You'll need to re-upload 835 files.", count: preview ? (preview.era_payments + preview.era_claim_lines) : null, danger: true },
+    { key: "clear_billing_records", label: "Delete ALL billing records", desc: "Full wipe — deletes every billing record. You'll need to reimport the OCMRI spreadsheet.", count: preview?.billing_records, danger: true },
+  ];
+
+  return (
+    <Card className="border-0 shadow-sm mb-4">
+      <Card.Body>
+        <Card.Title>Database Reset</Card.Title>
+        <p className="text-muted small mb-3">
+          Clear corrupted data and start fresh. Pick what to clear, review the counts, then confirm.
+        </p>
+
+        {error && <Alert variant="danger" className="small">{error}</Alert>}
+        {result && (
+          <Alert variant="success" className="small">
+            <strong>Reset complete.</strong>{" "}
+            {Object.entries(result.results || {}).map(([k, v]) => (
+              <span key={k} className="me-2">{k.replace(/_/g, " ")}: <strong>{v}</strong></span>
+            ))}
+          </Alert>
+        )}
+
+        {preview && (
+          <Row className="g-2 mb-3">
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.billing_records?.toLocaleString()}</div><small>Billing Records</small></div></Col>
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.billing_with_topaz_id?.toLocaleString()}</div><small>With Topaz ID</small></div></Col>
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.billing_with_era_claim_id?.toLocaleString()}</div><small>With ERA Match</small></div></Col>
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.era_payments?.toLocaleString()}</div><small>ERA Payments</small></div></Col>
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.era_claim_lines?.toLocaleString()}</div><small>ERA Claims</small></div></Col>
+            <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{preview.crosswalk_imports?.toLocaleString()}</div><small>Crosswalk Imports</small></div></Col>
+          </Row>
+        )}
+
+        <div className="mb-3">
+          {RESET_OPTIONS.map(opt => (
+            <div key={opt.key} className={`form-check mb-2 p-2 rounded ${options[opt.key] ? (opt.danger ? "bg-danger bg-opacity-10" : "bg-warning bg-opacity-10") : ""}`}>
+              <input className="form-check-input" type="checkbox" id={opt.key}
+                checked={options[opt.key]}
+                onChange={e => setOptions(prev => ({ ...prev, [opt.key]: e.target.checked }))} />
+              <label className="form-check-label" htmlFor={opt.key}>
+                <strong>{opt.label}</strong>
+                {opt.count != null && <Badge bg="secondary" className="ms-2">{opt.count.toLocaleString()}</Badge>}
+                {opt.danger && <Badge bg="danger" className="ms-2">Destructive</Badge>}
+                <div className="text-muted small">{opt.desc}</div>
+              </label>
+            </div>
+          ))}
+        </div>
+
+        <Button variant="danger" size="sm" onClick={handleReset}
+          disabled={loading || !Object.values(options).some(v => v)}>
+          {loading ? <><Spinner size="sm" className="me-1" />Resetting...</> : "Reset Selected Data"}
+        </Button>
+        <span className="text-muted small ms-2">You'll be asked to confirm.</span>
+      </Card.Body>
+    </Card>
+  );
+}
+
 function Matching() {
   const [summary, setSummary] = useState(null);
   const [running, setRunning] = useState(false);
@@ -1294,6 +1397,9 @@ function Matching() {
         </Tab>
         <Tab eventKey="crosswalk" title="ID Crosswalk">
           <CrosswalkTab />
+        </Tab>
+        <Tab eventKey="reset" title="Reset">
+          <DataReset />
         </Tab>
       </Tabs>
     </>

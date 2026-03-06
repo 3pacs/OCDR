@@ -3,7 +3,7 @@
 import logging
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
@@ -1108,3 +1108,113 @@ async def verify_file_against_records(
         "sample_no_match": no_match[:25],
         "first_10_lines": [l["raw"][:200] for l in lines[:10]],
     }
+
+
+# --- Database Reset ---
+
+@router.get("/reset/preview")
+async def reset_preview(db: AsyncSession = Depends(get_db)):
+    """Preview what a reset would clear — shows counts for each table."""
+    from backend.app.models.crosswalk_import import CrosswalkImport
+    from backend.app.models.era import ERAPayment, ERAClaimLine
+    from backend.app.models.import_file import ImportFile
+
+    total_billing = (await db.execute(func.count(BillingRecord.id))).scalar() or 0
+    with_topaz = (await db.execute(
+        select(func.count(BillingRecord.id)).where(BillingRecord.topaz_id.is_not(None))
+    )).scalar() or 0
+    with_era = (await db.execute(
+        select(func.count(BillingRecord.id)).where(BillingRecord.era_claim_id.is_not(None))
+    )).scalar() or 0
+    total_era_payments = (await db.execute(select(func.count(ERAPayment.id)))).scalar() or 0
+    total_era_claims = (await db.execute(select(func.count(ERAClaimLine.id)))).scalar() or 0
+    total_crosswalk = (await db.execute(select(func.count(CrosswalkImport.id)))).scalar() or 0
+    total_imports = (await db.execute(select(func.count(ImportFile.id)))).scalar() or 0
+
+    return {
+        "billing_records": total_billing,
+        "billing_with_topaz_id": with_topaz,
+        "billing_with_era_claim_id": with_era,
+        "era_payments": total_era_payments,
+        "era_claim_lines": total_era_claims,
+        "crosswalk_imports": total_crosswalk,
+        "import_files": total_imports,
+    }
+
+
+class ResetRequest(BaseModel):
+    clear_topaz_ids: bool = False
+    clear_era_matches: bool = False
+    clear_era_data: bool = False
+    clear_billing_records: bool = False
+    clear_crosswalk_imports: bool = False
+    confirm: str = ""
+
+
+@router.post("/reset/execute")
+async def reset_execute(
+    body: ResetRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Clear selected data from the database for a clean reimport.
+
+    Requires confirm="RESET" to proceed.
+    """
+    if body.confirm != "RESET":
+        return {"status": "error", "message": "Set confirm to 'RESET' to proceed."}
+
+    from backend.app.models.crosswalk_import import CrosswalkImport
+    from backend.app.models.era import ERAPayment, ERAClaimLine
+    from backend.app.models.import_file import ImportFile
+
+    results = {}
+
+    # Clear topaz_id from billing records (undo bad crosswalk assignments)
+    if body.clear_topaz_ids:
+        r = await db.execute(
+            update(BillingRecord)
+            .where(BillingRecord.topaz_id.is_not(None))
+            .values(topaz_id=None)
+        )
+        results["topaz_ids_cleared"] = r.rowcount
+
+    # Clear ERA match linkages on billing records
+    if body.clear_era_matches:
+        r = await db.execute(
+            update(BillingRecord)
+            .where(BillingRecord.era_claim_id.is_not(None))
+            .values(era_claim_id=None, denial_status=None, denial_reason_code=None)
+        )
+        results["era_matches_cleared"] = r.rowcount
+        # Also clear match linkages on ERA claim lines
+        r2 = await db.execute(
+            update(ERAClaimLine)
+            .where(ERAClaimLine.matched_billing_id.is_not(None))
+            .values(matched_billing_id=None, match_confidence=None)
+        )
+        results["era_claim_links_cleared"] = r2.rowcount
+
+    # Delete all ERA data (payments + claim lines)
+    if body.clear_era_data:
+        r1 = await db.execute(delete(ERAClaimLine))
+        r2 = await db.execute(delete(ERAPayment))
+        results["era_claim_lines_deleted"] = r1.rowcount
+        results["era_payments_deleted"] = r2.rowcount
+
+    # Delete all billing records (full wipe for reimport)
+    if body.clear_billing_records:
+        r = await db.execute(delete(BillingRecord))
+        results["billing_records_deleted"] = r.rowcount
+        # Also clear import file tracking
+        r2 = await db.execute(delete(ImportFile))
+        results["import_files_deleted"] = r2.rowcount
+
+    # Delete crosswalk import history
+    if body.clear_crosswalk_imports:
+        r = await db.execute(delete(CrosswalkImport))
+        results["crosswalk_imports_deleted"] = r.rowcount
+
+    await db.commit()
+
+    return {"status": "success", "results": results}
