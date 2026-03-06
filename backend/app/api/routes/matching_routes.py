@@ -1487,3 +1487,376 @@ async def reset_execute(
     await db.commit()
 
     return {"status": "success", "results": results}
+
+
+# --- Server Source Management (autonomous .NET file sync) ---
+
+
+class ServerSourceCreate(BaseModel):
+    """Request body for registering a new server source."""
+    name: str = Field(..., description="Display name for this source")
+    directory_path: str = Field(..., description="Path to .NET server text files")
+    poll_interval_minutes: int = Field(60, ge=5, le=1440)
+
+
+@router.post("/server-sources")
+async def register_server_source(
+    body: ServerSourceCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Register a .NET server file directory for autonomous sync.
+
+    After registration, upload a sample file or trigger a preview scan
+    to auto-detect fields, then confirm the field mapping. Once mapped,
+    the background scheduler will poll for new data automatically.
+    """
+    import os
+    from backend.app.models.server_source import ServerSource
+
+    path = body.directory_path.strip()
+
+    # Validate directory exists and is readable
+    if not os.path.isdir(path):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Directory not found: {path}",
+        )
+
+    source = ServerSource(
+        name=body.name,
+        directory_path=path,
+        poll_interval_minutes=body.poll_interval_minutes,
+        status="PENDING_SETUP",
+    )
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+
+    # Preview: list files and auto-detect fields from first suitable file
+    preview = await _preview_server_directory(path)
+
+    return {
+        "id": source.id,
+        "name": source.name,
+        "directory_path": path,
+        "status": source.status,
+        "preview": preview,
+    }
+
+
+@router.post("/server-sources/{source_id}/configure")
+async def configure_server_source(
+    source_id: int,
+    field_mapping: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Set the field mapping for a server source and activate it.
+
+    field_mapping example:
+      {"chart_number": "id_1", "last_name": "name_1", "first_name": "name_2",
+       "date_of_birth": "date_1", "topaz_id": "_line_num"}
+    """
+    from backend.app.models.server_source import ServerSource
+
+    result = await db.execute(
+        select(ServerSource).where(ServerSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Server source not found")
+
+    source.field_mapping = field_mapping
+    source.status = "ACTIVE"
+    source.last_error = None
+    await db.commit()
+
+    return {
+        "id": source.id,
+        "status": "ACTIVE",
+        "field_mapping": field_mapping,
+        "message": "Source configured and activated. Background sync will start automatically.",
+    }
+
+
+@router.post("/server-sources/{source_id}/sync")
+async def trigger_server_sync(
+    source_id: int,
+    force_full: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually trigger a sync for a server source.
+
+    Set force_full=true to re-process all files regardless of change detection.
+    """
+    from backend.app.models.server_source import ServerSource
+    from backend.app.tasks.server_sync import sync_server_source
+
+    result = await db.execute(
+        select(ServerSource).where(ServerSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Server source not found")
+
+    if not source.field_mapping:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Source not configured. Set field mapping first via /configure endpoint.",
+        )
+
+    sync_result = await sync_server_source(source, db, force_full=force_full)
+
+    return {
+        "id": source.id,
+        "name": source.name,
+        "sync_result": sync_result,
+    }
+
+
+@router.get("/server-sources")
+async def list_server_sources(db: AsyncSession = Depends(get_db)):
+    """List all registered server sources."""
+    from backend.app.models.server_source import ServerSource
+
+    result = await db.execute(
+        select(ServerSource).order_by(ServerSource.created_at.desc())
+    )
+    sources = list(result.scalars().all())
+
+    return [
+        {
+            "id": s.id,
+            "name": s.name,
+            "directory_path": s.directory_path,
+            "status": s.status,
+            "enabled": s.enabled,
+            "poll_interval_minutes": s.poll_interval_minutes,
+            "total_files_processed": s.total_files_processed,
+            "total_records_imported": s.total_records_imported,
+            "last_sync_at": s.last_sync_at.isoformat() if s.last_sync_at else None,
+            "last_sync_result": s.last_sync_result,
+            "last_error": s.last_error,
+            "field_mapping": s.field_mapping,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in sources
+    ]
+
+
+@router.get("/server-sources/{source_id}")
+async def get_server_source(
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """View a server source with full details including file states."""
+    from backend.app.models.server_source import ServerSource
+
+    result = await db.execute(
+        select(ServerSource).where(ServerSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Server source not found")
+
+    return {
+        "id": source.id,
+        "name": source.name,
+        "directory_path": source.directory_path,
+        "status": source.status,
+        "enabled": source.enabled,
+        "poll_interval_minutes": source.poll_interval_minutes,
+        "field_mapping": source.field_mapping,
+        "file_states": source.file_states,
+        "total_files_processed": source.total_files_processed,
+        "total_records_imported": source.total_records_imported,
+        "last_sync_at": source.last_sync_at.isoformat() if source.last_sync_at else None,
+        "last_sync_result": source.last_sync_result,
+        "last_error": source.last_error,
+        "created_at": source.created_at.isoformat() if source.created_at else None,
+    }
+
+
+@router.post("/server-sources/{source_id}/preview")
+async def preview_server_source(
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Scan the server directory and auto-detect fields from the first file.
+
+    Returns detected field zones with sample values and suggested mapping,
+    so the user can confirm or adjust before activating.
+    """
+    from backend.app.models.server_source import ServerSource
+
+    result = await db.execute(
+        select(ServerSource).where(ServerSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Server source not found")
+
+    preview = await _preview_server_directory(source.directory_path)
+
+    return {
+        "id": source.id,
+        "name": source.name,
+        "preview": preview,
+    }
+
+
+@router.patch("/server-sources/{source_id}")
+async def update_server_source(
+    source_id: int,
+    updates: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update server source settings (enable/disable, change interval, etc.)."""
+    from backend.app.models.server_source import ServerSource
+
+    result = await db.execute(
+        select(ServerSource).where(ServerSource.id == source_id)
+    )
+    source = result.scalar_one_or_none()
+    if not source:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Server source not found")
+
+    allowed = {"enabled", "poll_interval_minutes", "name", "directory_path"}
+    for key, val in updates.items():
+        if key in allowed:
+            setattr(source, key, val)
+
+    await db.commit()
+
+    return {"id": source.id, "status": source.status, "updated": list(updates.keys())}
+
+
+async def _preview_server_directory(directory: str) -> dict:
+    """Scan a directory and auto-detect fields from the first fixed-width file."""
+    import os
+    from backend.app.parsing.fixed_width_parser import (
+        looks_like_fixed_width,
+        parse_fixed_width_records,
+    )
+
+    files = []
+    auto_mapping = {}
+    field_zones = []
+    sample_records = []
+
+    try:
+        entries = sorted(os.listdir(directory))
+    except (OSError, PermissionError) as e:
+        return {"error": str(e), "files": []}
+
+    for entry in entries:
+        filepath = os.path.join(directory, entry)
+        if not os.path.isfile(filepath):
+            continue
+        stat = os.stat(filepath)
+        files.append({
+            "name": entry,
+            "size_bytes": stat.st_size,
+            "modified": stat.st_mtime,
+        })
+
+    # Auto-detect from first suitable file
+    for f_info in files:
+        filepath = os.path.join(directory, f_info["name"])
+        if not _should_process_preview(f_info["name"]):
+            continue
+        try:
+            with open(filepath, "rb") as f:
+                content_bytes = f.read()
+
+            # Strip null bytes
+            try:
+                text = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                text = content_bytes.decode("latin-1", errors="replace")
+            content_clean = text.replace("\x00", "").encode("utf-8")
+
+            if not looks_like_fixed_width(content_clean):
+                continue
+
+            fw_result = parse_fixed_width_records(content_clean)
+            if fw_result.total_records == 0:
+                continue
+
+            # Build auto-mapping suggestion
+            if fw_result.id_fields:
+                auto_mapping["chart_number"] = fw_result.id_fields[0]
+            if len(fw_result.name_fields) >= 2:
+                auto_mapping["last_name"] = fw_result.name_fields[0]
+                auto_mapping["first_name"] = fw_result.name_fields[1]
+            elif fw_result.name_fields:
+                auto_mapping["patient_name"] = fw_result.name_fields[0]
+            if fw_result.date_fields:
+                auto_mapping["date_of_birth"] = fw_result.date_fields[0]
+            if fw_result.insurance_fields:
+                auto_mapping["insurance_number"] = fw_result.insurance_fields[0]
+            if fw_result.phone_fields:
+                auto_mapping["phone"] = fw_result.phone_fields[0]
+            if fw_result.zip_fields:
+                auto_mapping["zip_code"] = fw_result.zip_fields[0]
+            if fw_result.state_fields:
+                auto_mapping["state"] = fw_result.state_fields[0]
+            if fw_result.city_fields:
+                auto_mapping["city"] = fw_result.city_fields[0]
+            # Default: line number = topaz ID for .NET server exports
+            auto_mapping["topaz_id"] = "_line_num"
+
+            # Build zone info with expanded samples
+            zones_with_samples = []
+            for z in fw_result.field_zones:
+                samples = []
+                for rec in fw_result.records[:50]:
+                    val = rec.get(z["label"], "")
+                    if val and val not in samples:
+                        samples.append(val)
+                    if len(samples) >= 8:
+                        break
+                zones_with_samples.append({**z, "sample_values": samples})
+            field_zones = zones_with_samples
+
+            # Sample records
+            for rec in fw_result.records[:15]:
+                row = {"_line_num": rec.get("_line_num")}
+                for z in fw_result.field_zones:
+                    val = rec.get(z["label"], "")
+                    if val:
+                        row[z["label"]] = val
+                sample_records.append(row)
+
+            f_info["detected"] = True
+            f_info["record_width"] = fw_result.record_width
+            f_info["total_records"] = fw_result.total_records
+            break  # Only need first file for detection
+
+        except Exception as e:
+            f_info["error"] = str(e)
+            continue
+
+    return {
+        "files": files[:50],
+        "auto_mapping": auto_mapping,
+        "field_zones": field_zones,
+        "sample_records": sample_records,
+    }
+
+
+def _should_process_preview(filename: str) -> bool:
+    """Check if a file should be previewed."""
+    from pathlib import Path
+    ext = Path(filename).suffix.lower()
+    return ext in {"", ".txt", ".dat", ".bin", ".raw", ".exp"}

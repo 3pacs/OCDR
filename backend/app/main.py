@@ -104,9 +104,35 @@ async def lifespan(app: FastAPI):
         result = await run_all_seeds(session)
         logger.info(f"Seed data: {result}")
 
+    # Start background server sync scheduler
+    import asyncio
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from backend.app.tasks.server_sync import sync_all_sources
+
+    scheduler = AsyncIOScheduler()
+
+    async def _run_server_sync():
+        """Background job: sync all enabled server sources."""
+        try:
+            async with AsyncSessionLocal() as session:
+                results = await sync_all_sources(session)
+                for r in results:
+                    if "error" in r:
+                        logger.warning(f"Server sync error for '{r['name']}': {r['error']}")
+                    else:
+                        logger.info(f"Server sync '{r['name']}': {r['result']}")
+        except Exception as e:
+            logger.error(f"Server sync scheduler error: {e}")
+
+    # Run server sync every 15 minutes (individual sources have their own intervals)
+    scheduler.add_job(_run_server_sync, "interval", minutes=15, id="server_sync")
+    scheduler.start()
+    logger.info("Background server sync scheduler started (every 15 min)")
+
     yield
 
     # Shutdown
+    scheduler.shutdown(wait=False)
     await engine.dispose()
 
 
