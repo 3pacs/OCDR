@@ -252,7 +252,16 @@ async def import_topaz_crosswalk(
 
     Accepts any file format — auto-detects pipe/tab/CSV/XML/fixed-width.
     Extensionless .NET export files from the Topaz server are supported.
+
+    For fixed-width .NET server files, the line number IS the Topaz
+    patient ID. ID fields within the record are treated as chart/jacket
+    numbers for crosswalk purposes.
     """
+    from backend.app.parsing.fixed_width_parser import (
+        looks_like_fixed_width,
+        parse_fixed_width_records,
+    )
+
     content_bytes = await file.read()
     try:
         content = content_bytes.decode("utf-8")
@@ -261,7 +270,87 @@ async def import_topaz_crosswalk(
 
     filename = file.filename or "upload"
 
-    # Parse the export
+    # ── Fixed-width .NET server file: line number = Topaz patient ID ──
+    if looks_like_fixed_width(content_bytes):
+        fw_result = parse_fixed_width_records(content_bytes)
+        if fw_result.total_records > 0:
+            # Build crosswalk pairs from records:
+            #   topaz_id = line number (record position)
+            #   chart_number = first non-empty ID field in the record
+            #   patient_name = first non-empty name field in the record
+            crosswalk_pairs = []
+            for rec in fw_result.records:
+                topaz_id = rec.get("_topaz_id")
+                if not topaz_id:
+                    continue
+
+                # Extract chart number from ID fields
+                chart_number = None
+                for id_field in fw_result.id_fields:
+                    val = rec.get(id_field, "").strip()
+                    if val:
+                        try:
+                            chart_number = str(int(float(val)))
+                        except (ValueError, TypeError):
+                            chart_number = val
+                        break
+
+                # Extract patient name
+                patient_name = None
+                for name_field in fw_result.name_fields:
+                    val = rec.get(name_field, "").strip()
+                    if val:
+                        patient_name = val
+                        break
+
+                # Only add if we have at least a chart number or patient name
+                # to match against billing records
+                if chart_number or patient_name:
+                    crosswalk_pairs.append({
+                        "topaz_id": topaz_id,
+                        "chart_number": chart_number,
+                        "patient_name": patient_name,
+                    })
+
+            if not crosswalk_pairs:
+                return {
+                    "status": "no_crosswalk_data",
+                    "format": "fixed_width",
+                    "total_records": fw_result.total_records,
+                    "id_fields": fw_result.id_fields,
+                    "name_fields": fw_result.name_fields,
+                    "warnings": fw_result.warnings + [
+                        "Fixed-width file parsed but no records had ID or name "
+                        "fields to build crosswalk pairs."
+                    ],
+                    "message": (
+                        f"Parsed {fw_result.total_records:,} fixed-width records "
+                        f"but found no usable ID or name data for crosswalk."
+                    ),
+                }
+
+            # Apply crosswalk
+            apply_result = await apply_topaz_crosswalk(db, crosswalk_pairs)
+
+            return {
+                "status": "success",
+                "file": filename,
+                "format": "fixed_width",
+                "format_detail": (
+                    f"Fixed-width: {fw_result.total_records:,} records x "
+                    f"{fw_result.record_width} bytes. Line number = Topaz ID."
+                ),
+                "total_records": fw_result.total_records,
+                "crosswalk_pairs_extracted": len(crosswalk_pairs),
+                "id_fields": fw_result.id_fields,
+                "name_fields": fw_result.name_fields,
+                "field_zones": fw_result.field_zones,
+                "crosswalk_applied": apply_result,
+                "sample_pairs": crosswalk_pairs[:20],
+                "warnings": fw_result.warnings,
+            }
+
+    # ── Delimited / XML / other formats ──
     parsed = parse_topaz_export(content, filename)
 
     if not parsed.crosswalk_pairs:
@@ -304,12 +393,73 @@ async def preview_topaz_crosswalk(
 
     Returns detected format, headers, column mapping, and sample crosswalk pairs.
     """
+    from backend.app.parsing.fixed_width_parser import (
+        looks_like_fixed_width,
+        parse_fixed_width_records,
+    )
+
     content_bytes = await file.read()
     try:
         content = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
         content = content_bytes.decode("latin-1", errors="replace")
 
+    # ── Fixed-width preview ──
+    if looks_like_fixed_width(content_bytes):
+        fw_result = parse_fixed_width_records(content_bytes)
+        if fw_result.total_records > 0:
+            sample_pairs = []
+            for rec in fw_result.records[:20]:
+                topaz_id = rec.get("_topaz_id")
+                chart_number = None
+                for id_field in fw_result.id_fields:
+                    val = rec.get(id_field, "").strip()
+                    if val:
+                        try:
+                            chart_number = str(int(float(val)))
+                        except (ValueError, TypeError):
+                            chart_number = val
+                        break
+                patient_name = None
+                for name_field in fw_result.name_fields:
+                    val = rec.get(name_field, "").strip()
+                    if val:
+                        patient_name = val
+                        break
+                sample_pairs.append({
+                    "topaz_id": topaz_id,
+                    "chart_number": chart_number,
+                    "patient_name": patient_name,
+                })
+
+            # Count how many records have usable data
+            usable = sum(
+                1 for rec in fw_result.records
+                if any(rec.get(f, "").strip() for f in fw_result.id_fields)
+                or any(rec.get(f, "").strip() for f in fw_result.name_fields)
+            )
+
+            return {
+                "format": "fixed_width",
+                "format_detail": (
+                    f"Fixed-width: {fw_result.total_records:,} records x "
+                    f"{fw_result.record_width} bytes. Line number = Topaz ID."
+                ),
+                "total_records": fw_result.total_records,
+                "total_rows": usable,
+                "id_fields": fw_result.id_fields,
+                "name_fields": fw_result.name_fields,
+                "field_zones": fw_result.field_zones,
+                "sample_pairs": sample_pairs,
+                "column_mapping": {
+                    "topaz_id": "line_number (record position)",
+                    **({"chart_number": fw_result.id_fields[0]} if fw_result.id_fields else {}),
+                    **({"patient_name": fw_result.name_fields[0]} if fw_result.name_fields else {}),
+                },
+                "warnings": fw_result.warnings,
+            }
+
+    # ── Delimited / XML / other formats ──
     parsed = parse_topaz_export(content, file.filename or "preview")
 
     return {
