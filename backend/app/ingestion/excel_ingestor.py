@@ -102,8 +102,10 @@ def _excel_serial_to_date(serial) -> date | None:
     """Convert Excel serial date number to Python date."""
     if serial is None:
         return None
-    if isinstance(serial, (datetime, date)):
-        return serial if isinstance(serial, date) else serial.date()
+    if isinstance(serial, datetime):
+        return serial.date()
+    if isinstance(serial, date):
+        return serial
     try:
         serial = int(float(serial))
         if serial < 1:
