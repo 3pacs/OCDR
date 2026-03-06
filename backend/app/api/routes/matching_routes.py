@@ -666,7 +666,7 @@ async def extract_crosswalk_pairs(
         "chart_number", "topaz_id", "patient_name",
         "last_name", "first_name", "date_of_birth",
         "phone", "city", "state", "zip_code",
-        "insurance_number", "service_date",
+        "insurance_number", "service_date", "researcher",
     }
     # Custom/TBD roles: any key starting with "custom_" stores raw data
     # for future re-parsing (e.g. "custom_1", "custom_referral_source")
@@ -718,7 +718,8 @@ async def extract_crosswalk_pairs(
 
             # Extract all other patient data fields from mapping
             for role in ("date_of_birth", "phone", "city", "state",
-                         "zip_code", "insurance_number", "service_date"):
+                         "zip_code", "insurance_number", "service_date",
+                         "researcher"):
                 src_field = field_mapping.get(role)
                 if src_field:
                     val = rec.get(src_field, "").strip()
@@ -845,6 +846,7 @@ async def apply_crosswalk_import(
     applied = 0
     skipped_no_match = 0
     skipped_already_set = 0
+    research_patients = 0
     patients_created = 0
     patients_updated = 0
     updated_ids: set[int] = set()
@@ -870,6 +872,9 @@ async def apply_crosswalk_import(
                     br.topaz_id = str(topaz_id).strip()
                     updated_ids.add(br.id)
                     applied += 1
+        elif chart_num and not topaz_id:
+            # Research patient — no Topaz ID expected
+            research_patients += 1
         elif not chart_num and not topaz_id:
             skipped_no_match += 1
 
@@ -910,6 +915,10 @@ async def apply_crosswalk_import(
                 except ValueError:
                     pass
 
+        # Research patient detection
+        researcher_name = pair.get("researcher")
+        is_research = bool(researcher_name) or (not topaz_id and jacket)
+
         # Collect custom/TBD fields from the pair
         custom_fields = {
             k: v for k, v in pair.items()
@@ -931,6 +940,8 @@ async def apply_crosswalk_import(
                 ("state", pair.get("state")),
                 ("zip_code", pair.get("zip_code")),
                 ("insurance_number", pair.get("insurance_number")),
+                ("is_research", is_research if is_research else None),
+                ("researcher", researcher_name),
             ]:
                 if val and not getattr(existing, attr):
                     setattr(existing, attr, val)
@@ -955,6 +966,8 @@ async def apply_crosswalk_import(
                 state=pair.get("state"),
                 zip_code=pair.get("zip_code"),
                 insurance_number=pair.get("insurance_number"),
+                is_research=is_research,
+                researcher=researcher_name,
                 custom_data=custom_fields if custom_fields else None,
                 crosswalk_import_id=import_id,
             )
@@ -967,6 +980,7 @@ async def apply_crosswalk_import(
         "applied": applied,
         "skipped_no_match": skipped_no_match,
         "skipped_already_set": skipped_already_set,
+        "research_patients_no_topaz": research_patients,
         "total_pairs": len(pairs),
         "patients_created": patients_created,
         "patients_updated": patients_updated,
@@ -1123,6 +1137,8 @@ async def lookup_patient(
                 "state": p.state,
                 "zip_code": p.zip_code,
                 "insurance_number": p.insurance_number,
+                "is_research": p.is_research,
+                "researcher": p.researcher,
                 "custom_data": p.custom_data,
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }

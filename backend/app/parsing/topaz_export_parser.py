@@ -134,6 +134,11 @@ FIELD_PATTERNS = {
     "city": CITY_PATTERNS,
     "state": STATE_PATTERNS,
     "zip_code": ZIP_CODE_PATTERNS,
+    "researcher": [
+        "researcher", "research", "investigator", "pi",
+        "principal investigator", "study", "study name", "protocol",
+        "billing entity", "billed to", "responsible party",
+    ],
 }
 
 

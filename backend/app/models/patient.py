@@ -35,6 +35,10 @@ class Patient(Base):
     zip_code: Mapped[str | None] = mapped_column(String(15), nullable=True)
     insurance_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    # --- Research / billing entity ---
+    is_research: Mapped[bool | None] = mapped_column(default=False)
+    researcher: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+
     # --- Custom / TBD fields (raw data stored for future re-parsing) ---
     custom_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
