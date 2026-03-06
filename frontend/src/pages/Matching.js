@@ -382,8 +382,87 @@ function FileVerifier() {
               <Col md={3}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.unique_jacket_ids_in_db}</div><small>Jacket IDs in DB</small></div></Col>
             </Row>
 
-            {result.field_zones?.length > 0 && (
+            {result.position_crosswalk && (
+              <Row className="g-2 mb-3">
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.position_crosswalk.total_known_topaz_ids}</div><small>Known Topaz IDs</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.position_crosswalk.total_checked}</div><small>Positions Checked</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-success">{result.position_crosswalk.name_corroborated}</div><small>Name Corroborated</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{result.position_crosswalk.name_mismatch}</div><small>Name Mismatch</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-primary">{result.position_crosswalk.corroboration_rate}%</div><small>Corroboration Rate</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.unique_topaz_ids_in_db}</div><small>Topaz IDs in DB</small></div></Col>
+              </Row>
+            )}
+
+            {result.sample_corroborated?.length > 0 && (
               <details className="mb-3" open>
+                <summary className="small fw-bold text-success">
+                  Corroborated Matches &mdash; line# = Topaz ID, name verified
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line#/Topaz ID</th><th>File Name</th><th>DB Patient</th><th>Jacket ID</th><th>Name Match</th></tr></thead>
+                  <tbody>
+                    {result.sample_corroborated.map((m, i) => (
+                      <tr key={i}>
+                        <td><code>{m.topaz_id}</code></td>
+                        <td>{m.file_name || <span className="text-muted">--</span>}</td>
+                        <td>{m.db_patient}</td>
+                        <td>{m.db_jacket_id || "--"}</td>
+                        <td><Badge bg={m.name_similarity >= 85 ? "success" : m.name_similarity >= 70 ? "warning" : "danger"}>{m.name_similarity}%</Badge></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.sample_mismatches?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold text-danger">
+                  Name Mismatches &mdash; line# matched Topaz ID but name doesn&apos;t match
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line#/Topaz ID</th><th>File Name</th><th>DB Patient</th><th>Jacket ID</th><th>Similarity</th></tr></thead>
+                  <tbody>
+                    {result.sample_mismatches.map((m, i) => (
+                      <tr key={i}>
+                        <td><code>{m.topaz_id}</code></td>
+                        <td>{m.file_name || "--"}</td>
+                        <td>{m.db_patient}</td>
+                        <td>{m.db_jacket_id || "--"}</td>
+                        <td><Badge bg="danger">{m.name_similarity}%</Badge></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.jacket_id_cross_ref?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold">
+                  Jacket ID Cross-Ref &mdash; data fields matching Jacket IDs at other positions
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Line#</th><th>Field</th><th>Jacket ID</th><th>File Name</th><th>DB Patient</th><th>DB Topaz</th><th>Name Match</th></tr></thead>
+                  <tbody>
+                    {result.jacket_id_cross_ref.map((m, i) => (
+                      <tr key={i}>
+                        <td>{m.line_num}</td>
+                        <td><Badge bg="secondary">{m.id_field}</Badge></td>
+                        <td><code>{m.id_value}</code></td>
+                        <td>{m.file_name || "--"}</td>
+                        <td>{m.db_patient}</td>
+                        <td>{m.db_topaz_id || "--"}</td>
+                        <td>{m.name_similarity != null ? <Badge bg={m.name_similarity >= 85 ? "success" : m.name_similarity >= 70 ? "warning" : "danger"}>{m.name_similarity}%</Badge> : "--"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {result.field_zones?.length > 0 && (
+              <details className="mb-3">
                 <summary className="small fw-bold">Field Zones (byte positions)</summary>
                 <Table size="sm" className="small mt-1">
                   <thead><tr><th>Label</th><th>Pos</th><th>Width</th><th>Type</th><th>Sample Values</th></tr></thead>
@@ -402,73 +481,14 @@ function FileVerifier() {
               </details>
             )}
 
-            {result.field_cross_reference && Object.keys(result.field_cross_reference).length > 0 && (
-              <details className="mb-3" open>
-                <summary className="small fw-bold">Cross-Reference Against Billing Records</summary>
-                {Object.entries(result.field_cross_reference).map(([label, ref]) => (
-                  <Card key={label} className="mb-2 border">
-                    <Card.Body className="py-2 px-3">
-                      <div className="d-flex align-items-center gap-3 mb-2">
-                        <strong>{label}</strong>
-                        <span className="text-muted small">({ref.zone?.type}, bytes {ref.zone?.start}-{ref.zone?.end})</span>
-                        <Badge bg={ref.hit_rate > 50 ? "success" : ref.hit_rate > 10 ? "warning" : "secondary"}>
-                          {ref.hit_rate}% match rate
-                        </Badge>
-                        <span className="small">
-                          {ref.jacket_id_hits > 0 && <Badge bg="success" className="me-1">{ref.jacket_id_hits} Jacket</Badge>}
-                          {ref.topaz_id_hits > 0 && <Badge bg="info" className="me-1">{ref.topaz_id_hits} Topaz</Badge>}
-                          {ref.name_hits > 0 && <Badge bg="primary" className="me-1">{ref.name_hits} Name</Badge>}
-                          <span className="text-muted">/ {ref.checked} checked</span>
-                        </span>
-                      </div>
-                      {ref.sample_matches?.length > 0 && (
-                        <Table size="sm" className="small mb-0">
-                          <thead>
-                            <tr>
-                              <th>File Value</th>
-                              <th>Match Type</th>
-                              <th>DB Patient</th>
-                              <th>Name Corroboration</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {ref.sample_matches.slice(0, 10).map((m, i) => (
-                              <tr key={i}>
-                                <td><code>{m.value}</code></td>
-                                <td><Badge bg={m.match_type === "jacket_id" ? "success" : m.match_type === "topaz_id" ? "info" : "primary"}>{m.match_type}</Badge></td>
-                                <td>{m.patient || m.db_name || "--"}</td>
-                                <td>
-                                  {m.name_corroboration ? (
-                                    <>
-                                      <code>{m.name_corroboration.file_name}</code>
-                                      {" "}&harr;{" "}
-                                      <code>{m.name_corroboration.db_name}</code>
-                                      {" "}
-                                      <Badge bg={m.name_corroboration.similarity >= 85 ? "success" : m.name_corroboration.similarity >= 70 ? "warning" : "danger"}>
-                                        {m.name_corroboration.similarity}%
-                                      </Badge>
-                                    </>
-                                  ) : m.similarity ? (
-                                    <Badge bg={m.similarity >= 85 ? "success" : "warning"}>{m.similarity}%</Badge>
-                                  ) : "--"}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </Table>
-                      )}
-                    </Card.Body>
-                  </Card>
-                ))}
-              </details>
-            )}
-
             {result.sample_records?.length > 0 && (
               <details className="mb-3">
                 <summary className="small fw-bold">Sample Records (first 10)</summary>
                 <pre className="bg-light p-2 small mt-1" style={{ maxHeight: 250, overflow: "auto" }}>
                   {result.sample_records.slice(0, 10).map((r, i) =>
-                    `Record ${i + 1}: ${JSON.stringify(r)}`
+                    `Record ${r._line_num || i + 1} (Topaz ID ${r._topaz_id || "?"}): ${JSON.stringify(
+                      Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith("_")))
+                    )}`
                   ).join("\n")}
                 </pre>
               </details>

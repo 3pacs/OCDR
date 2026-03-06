@@ -456,9 +456,11 @@ def parse_fixed_width_records(
     result.name_fields = [z.label for z in data_zones if z.label.startswith("name_")]
     result.date_fields = [z.label for z in data_zones if z.label.startswith("date_")]
 
-    # Extract records
-    for rec in records:
-        row = {}
+    # Extract records — line number (1-indexed) IS the Topaz patient ID
+    # In .NET server exports, record position corresponds to the patient's
+    # Topaz billing system ID. Record #9125 = Topaz patient 9125.
+    for line_num, rec in enumerate(records, start=1):
+        row = {"_line_num": line_num, "_topaz_id": str(line_num)}
         for zone in data_zones:
             val = rec[zone.start:zone.end].strip() if zone.start < len(rec) else ""
             if val:
@@ -467,8 +469,7 @@ def parse_fixed_width_records(
                     row[zone.label] = parsed if parsed else val
                 else:
                     row[zone.label] = val
-        if row:
-            result.records.append(row)
+        result.records.append(row)
 
     return result
 

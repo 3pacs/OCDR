@@ -349,190 +349,181 @@ async def verify_file_against_records(
         content = content_bytes.decode("latin-1", errors="replace")
 
     # ── Fixed-width record detection ──
-    # Check if this is a fixed-width record file (e.g., 128-byte .NET exports)
+    # .NET server exports use fixed-width records where the LINE NUMBER
+    # is the Topaz patient ID. Record #9125 = Topaz patient 9125.
     if looks_like_fixed_width(content_bytes):
         fw_result = parse_fixed_width_records(content_bytes)
         if fw_result.total_records > 0:
-            # Load billing records for cross-referencing
+            from rapidfuzz import fuzz as rfuzz
+
+            # Load billing records with topaz_id for cross-referencing
             br_result = await db.execute(
                 select(
+                    BillingRecord.id,
                     BillingRecord.patient_id,
                     BillingRecord.patient_name,
                     BillingRecord.topaz_id,
                     BillingRecord.service_date,
-                ).where(BillingRecord.patient_id.is_not(None))
+                )
             )
             billing_rows = br_result.all()
 
-            jacket_lookup = {}
-            for pid, pname, tid, sdate in billing_rows:
-                jacket_lookup.setdefault(str(pid).strip(), []).append({
-                    "patient_name": pname, "topaz_id": tid,
-                    "service_date": str(sdate) if sdate else None,
-                })
+            # Build topaz_id lookup: topaz_id -> list of billing records
             topaz_lookup = {}
-            for pid, pname, tid, sdate in billing_rows:
+            for bid, pid, pname, tid, sdate in billing_rows:
                 if tid:
                     topaz_lookup.setdefault(str(tid).strip(), []).append({
-                        "patient_id": pid, "patient_name": pname,
+                        "billing_id": bid,
+                        "patient_id": pid,
+                        "patient_name": pname,
                         "service_date": str(sdate) if sdate else None,
                     })
 
-            # Also load names for name-based cross-referencing
-            name_result = await db.execute(
-                select(
-                    BillingRecord.patient_name,
-                    BillingRecord.patient_id,
-                    BillingRecord.topaz_id,
-                ).where(BillingRecord.patient_name.is_not(None))
-            )
-            name_rows = name_result.all()
-            name_lookup = {}
-            for pname, pid, tid in name_rows:
-                key = pname.upper().strip() if pname else ""
-                if key:
-                    name_lookup.setdefault(key, []).append({
-                        "patient_id": pid, "topaz_id": tid,
+            # Build jacket_id lookup too
+            jacket_lookup = {}
+            for bid, pid, pname, tid, sdate in billing_rows:
+                if pid is not None:
+                    jacket_lookup.setdefault(str(pid).strip(), []).append({
+                        "billing_id": bid,
+                        "patient_name": pname,
+                        "topaz_id": tid,
+                        "service_date": str(sdate) if sdate else None,
                     })
 
-            # Cross-reference each ID field's values against billing records
-            from rapidfuzz import fuzz as rfuzz
-            field_cross_ref = {}
-            for zone in fw_result.field_zones:
-                label = zone["label"]
-                if not label.startswith("id_") and not label.startswith("name_"):
+            # Position-based crosswalk: line_num = Topaz patient ID
+            # Cross-reference against billing records that have topaz_id set
+            position_matches = []
+            position_mismatches = []
+            position_no_record = []
+            name_corroborated = 0
+            name_mismatch = 0
+            total_checked = 0
+
+            # Only check records at positions matching known topaz_ids
+            # to avoid iterating all 61k records unnecessarily
+            known_topaz_ids = set(topaz_lookup.keys())
+
+            for rec in fw_result.records:
+                topaz_id = rec.get("_topaz_id", "")
+                if topaz_id not in known_topaz_ids:
                     continue
 
-                jacket_hits = 0
-                topaz_hits = 0
-                name_hits = 0
-                sample_matches = []
-                checked = 0
+                total_checked += 1
+                db_records = topaz_lookup[topaz_id]
 
-                for rec in fw_result.records[:2000]:
-                    val = rec.get(label, "")
-                    if not val:
-                        continue
-                    checked += 1
+                # Extract name from the file record (first name field)
+                file_name = ""
+                for nf in fw_result.name_fields:
+                    file_name = rec.get(nf, "")
+                    if file_name:
+                        break
 
-                    if label.startswith("id_"):
-                        # Try numeric ID matching
-                        test_val = val.strip()
+                # Extract any other useful fields
+                file_data = {k: v for k, v in rec.items()
+                             if not k.startswith("_") and v}
+
+                # Check name corroboration against each billing record
+                best_name_score = 0
+                best_db_rec = db_records[0]
+                for db_rec in db_records:
+                    if file_name and db_rec["patient_name"]:
+                        score = rfuzz.token_sort_ratio(
+                            file_name.upper().strip(),
+                            db_rec["patient_name"].upper().strip(),
+                        )
+                        if score > best_name_score:
+                            best_name_score = score
+                            best_db_rec = db_rec
+
+                match_entry = {
+                    "topaz_id": topaz_id,
+                    "line_num": int(topaz_id),
+                    "file_name": file_name or None,
+                    "db_patient": best_db_rec["patient_name"],
+                    "db_jacket_id": best_db_rec.get("patient_id"),
+                    "name_similarity": best_name_score if file_name else None,
+                    "file_data": file_data,
+                    "db_record_count": len(db_records),
+                }
+
+                if not file_name:
+                    # No name to corroborate — still a position match
+                    position_matches.append(match_entry)
+                elif best_name_score >= 70:
+                    name_corroborated += 1
+                    match_entry["status"] = "corroborated"
+                    position_matches.append(match_entry)
+                else:
+                    name_mismatch += 1
+                    match_entry["status"] = "name_mismatch"
+                    position_mismatches.append(match_entry)
+
+            # Also check a broader sample: pick some positions that are
+            # NOT in our topaz_id lookup, but might match jacket_ids
+            jacket_cross_ref = []
+            for rec in fw_result.records:
+                topaz_id = rec.get("_topaz_id", "")
+                if topaz_id in known_topaz_ids:
+                    continue
+                # Check if the content at this line has ID fields
+                # that match jacket_ids
+                for id_field in fw_result.id_fields:
+                    val = rec.get(id_field, "")
+                    if val:
                         try:
-                            test_val = str(int(float(test_val)))
+                            val = str(int(float(val)))
                         except (ValueError, TypeError):
                             pass
-
-                        if test_val in jacket_lookup:
-                            jacket_hits += 1
-                            recs = jacket_lookup[test_val]
-                            if len(sample_matches) < 15:
-                                # Cross-verify: check if ANY name field in same
-                                # record matches the patient name
-                                name_corroboration = None
-                                for nf in fw_result.name_fields:
-                                    name_val = rec.get(nf, "")
-                                    if name_val:
-                                        best_name_score = 0
-                                        for r in recs:
-                                            ns = rfuzz.token_sort_ratio(
-                                                name_val.upper(),
-                                                (r["patient_name"] or "").upper()
-                                            )
-                                            best_name_score = max(best_name_score, ns)
-                                        name_corroboration = {
-                                            "file_name": name_val,
-                                            "db_name": recs[0]["patient_name"],
-                                            "similarity": best_name_score,
-                                        }
-                                        break
-                                sample_matches.append({
-                                    "value": test_val,
-                                    "match_type": "jacket_id",
-                                    "patient": recs[0]["patient_name"],
-                                    "topaz_id": recs[0]["topaz_id"],
-                                    "name_corroboration": name_corroboration,
+                        if val in jacket_lookup:
+                            file_name = ""
+                            for nf in fw_result.name_fields:
+                                file_name = rec.get(nf, "")
+                                if file_name:
+                                    break
+                            db_rec = jacket_lookup[val][0]
+                            name_score = 0
+                            if file_name and db_rec["patient_name"]:
+                                name_score = rfuzz.token_sort_ratio(
+                                    file_name.upper().strip(),
+                                    db_rec["patient_name"].upper().strip(),
+                                )
+                            if len(jacket_cross_ref) < 25:
+                                jacket_cross_ref.append({
+                                    "line_num": int(topaz_id),
+                                    "id_field": id_field,
+                                    "id_value": val,
+                                    "file_name": file_name or None,
+                                    "db_patient": db_rec["patient_name"],
+                                    "db_topaz_id": db_rec.get("topaz_id"),
+                                    "name_similarity": name_score if file_name else None,
                                 })
-                        elif test_val in topaz_lookup:
-                            topaz_hits += 1
-                            recs = topaz_lookup[test_val]
-                            if len(sample_matches) < 15:
-                                name_corroboration = None
-                                for nf in fw_result.name_fields:
-                                    name_val = rec.get(nf, "")
-                                    if name_val:
-                                        best_name_score = 0
-                                        for r in recs:
-                                            ns = rfuzz.token_sort_ratio(
-                                                name_val.upper(),
-                                                (r["patient_name"] or "").upper()
-                                            )
-                                            best_name_score = max(best_name_score, ns)
-                                        name_corroboration = {
-                                            "file_name": name_val,
-                                            "db_name": recs[0]["patient_name"],
-                                            "similarity": best_name_score,
-                                        }
-                                        break
-                                sample_matches.append({
-                                    "value": test_val,
-                                    "match_type": "topaz_id",
-                                    "patient": recs[0]["patient_name"],
-                                    "jacket_id": recs[0].get("patient_id"),
-                                    "name_corroboration": name_corroboration,
-                                })
+                            break
+                if len(jacket_cross_ref) >= 25:
+                    break
 
-                    elif label.startswith("name_"):
-                        # Name field — try matching against billing names
-                        name_upper = val.upper().strip()
-                        if name_upper in name_lookup:
-                            name_hits += 1
-                            if len(sample_matches) < 15:
-                                sample_matches.append({
-                                    "value": val,
-                                    "match_type": "exact_name",
-                                    "jacket_id": name_lookup[name_upper][0].get("patient_id"),
-                                    "topaz_id": name_lookup[name_upper][0].get("topaz_id"),
-                                })
-                        else:
-                            # Fuzzy name match
-                            best_match = None
-                            best_score = 0
-                            for db_name in list(name_lookup.keys())[:500]:
-                                score = rfuzz.token_sort_ratio(name_upper, db_name)
-                                if score > best_score:
-                                    best_score = score
-                                    best_match = db_name
-                            if best_score >= 85:
-                                name_hits += 1
-                                if len(sample_matches) < 15:
-                                    sample_matches.append({
-                                        "value": val,
-                                        "match_type": "fuzzy_name",
-                                        "db_name": best_match,
-                                        "similarity": best_score,
-                                        "jacket_id": name_lookup.get(best_match, [{}])[0].get("patient_id"),
-                                    })
-
-                total_hits = jacket_hits + topaz_hits + name_hits
-                field_cross_ref[label] = {
-                    "zone": zone,
-                    "checked": checked,
-                    "jacket_id_hits": jacket_hits,
-                    "topaz_id_hits": topaz_hits,
-                    "name_hits": name_hits,
-                    "total_hits": total_hits,
-                    "hit_rate": round(total_hits / checked * 100, 1) if checked > 0 else 0,
-                    "sample_matches": sample_matches,
-                }
+            # Summary
+            verdict_parts = []
+            if name_corroborated > 0:
+                verdict_parts.append(
+                    f"{name_corroborated} records corroborated by name"
+                )
+            if name_mismatch > 0:
+                verdict_parts.append(
+                    f"{name_mismatch} records have name mismatches"
+                )
+            if position_no_record:
+                verdict_parts.append(
+                    f"{len(position_no_record)} positions had no DB match"
+                )
 
             return {
                 "filename": file.filename,
                 "verdict": "fixed_width",
                 "verdict_detail": (
-                    f"Fixed-width record file detected. "
-                    f"{fw_result.total_records} records x {fw_result.record_width} bytes/record. "
-                    f"{len(fw_result.field_zones)} field zones discovered."
+                    f"Fixed-width file: {fw_result.total_records:,} records x "
+                    f"{fw_result.record_width} bytes. Line number = Topaz patient ID. "
+                    f"{total_checked} positions matched billing records. "
+                    + ". ".join(verdict_parts)
                 ),
                 "format_info": fw_result.format_info,
                 "total_records": fw_result.total_records,
@@ -541,10 +532,27 @@ async def verify_file_against_records(
                 "id_fields": fw_result.id_fields,
                 "name_fields": fw_result.name_fields,
                 "date_fields": fw_result.date_fields,
-                "field_cross_reference": field_cross_ref,
+                "position_crosswalk": {
+                    "total_known_topaz_ids": len(known_topaz_ids),
+                    "total_checked": total_checked,
+                    "name_corroborated": name_corroborated,
+                    "name_mismatch": name_mismatch,
+                    "corroboration_rate": (
+                        round(name_corroborated / total_checked * 100, 1)
+                        if total_checked > 0 else 0
+                    ),
+                },
+                "sample_corroborated": [
+                    m for m in position_matches if m.get("status") == "corroborated"
+                ][:25],
+                "sample_mismatches": position_mismatches[:25],
+                "sample_no_name": [
+                    m for m in position_matches if m.get("status") is None
+                ][:10],
+                "jacket_id_cross_ref": jacket_cross_ref,
                 "sample_records": fw_result.records[:20],
-                "unique_jacket_ids_in_db": len(jacket_lookup),
                 "unique_topaz_ids_in_db": len(topaz_lookup),
+                "unique_jacket_ids_in_db": len(jacket_lookup),
                 "warnings": fw_result.warnings,
             }
 
