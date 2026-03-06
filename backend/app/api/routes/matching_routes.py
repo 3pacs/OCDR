@@ -2,7 +2,8 @@
 
 import logging
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
@@ -90,6 +91,60 @@ async def crosswalk_propagate(
 ):
     """Apply discovered offset pattern to assign topaz_id to unlinked billing records."""
     return await propagate_topaz_ids(db, offset=body.offset)
+
+
+class TopazIdUpdate(BaseModel):
+    billing_record_id: int
+    topaz_id: str | None = None
+    patient_id: str | None = None
+
+
+class TopazIdBulkUpdate(BaseModel):
+    updates: list[TopazIdUpdate] = Field(..., max_length=500)
+
+
+@router.patch("/crosswalk/update-ids")
+async def update_crosswalk_ids(
+    body: TopazIdBulkUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update topaz_id and/or patient_id on individual billing records.
+
+    Used for manual correction after reviewing crosswalk import results.
+    Accepts up to 500 updates at once.
+    """
+    applied = 0
+    not_found = 0
+
+    for upd in body.updates:
+        result = await db.execute(
+            select(BillingRecord).where(BillingRecord.id == upd.billing_record_id)
+        )
+        record = result.scalar_one_or_none()
+        if not record:
+            not_found += 1
+            continue
+
+        changed = False
+        if upd.topaz_id is not None:
+            record.topaz_id = upd.topaz_id if upd.topaz_id else None
+            changed = True
+        if upd.patient_id is not None:
+            record.patient_id = upd.patient_id if upd.patient_id else None
+            changed = True
+        if changed:
+            applied += 1
+
+    if applied > 0:
+        await db.commit()
+
+    return {
+        "status": "success",
+        "applied": applied,
+        "not_found": not_found,
+        "total_requested": len(body.updates),
+    }
 
 
 @router.get("/crosswalk/integrity")

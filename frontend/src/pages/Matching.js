@@ -191,6 +191,9 @@ function TopazUpload({ onImported }) {
   const [result, setResult] = useState(null);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [editedRows, setEditedRows] = useState({});
+  const [saveMsg, setSaveMsg] = useState(null);
   const fileRef = React.useRef();
 
   const handlePreview = async () => {
@@ -200,6 +203,8 @@ function TopazUpload({ onImported }) {
     setError(null);
     setPreview(null);
     setResult(null);
+    setEditedRows({});
+    setSaveMsg(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -221,6 +226,8 @@ function TopazUpload({ onImported }) {
     setUploading(true);
     setError(null);
     setResult(null);
+    setEditedRows({});
+    setSaveMsg(null);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -237,18 +244,42 @@ function TopazUpload({ onImported }) {
     }
   };
 
+  // Save manual corrections via PATCH
+  const handleSaveCorrections = async () => {
+    const updates = Object.entries(editedRows).map(([billingId, fields]) => ({
+      billing_record_id: parseInt(billingId, 10),
+      ...fields,
+    }));
+    if (updates.length === 0) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const res = await api.patch("/matching/crosswalk/update-ids", { updates });
+      setSaveMsg(`Saved ${res.data.applied} correction(s).`);
+      setEditedRows({});
+      if (onImported) onImported();
+    } catch (err) {
+      setSaveMsg(`Error: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isFixedWidth = preview?.format === "fixed_width" || result?.format === "fixed_width";
+
   return (
     <Card className="border-0 shadow-sm mb-4">
       <Card.Body>
         <Card.Title>Upload Topaz Export</Card.Title>
         <p className="text-muted small mb-3">
           Upload a data export from the Topaz billing server to map Chart Numbers to Topaz IDs.
-          Supports any format &mdash; pipe-delimited, tab, CSV, XML, or extensionless .NET files.
+          Supports pipe-delimited, tab, CSV, XML, or fixed-width .NET server files
+          (where line number = Topaz patient ID).
         </p>
 
         <div className="d-flex align-items-center gap-2 mb-3">
           <input type="file" ref={fileRef} className="form-control form-control-sm" style={{ maxWidth: 350 }}
-            onChange={() => { setPreview(null); setResult(null); setError(null); }} />
+            onChange={() => { setPreview(null); setResult(null); setError(null); setEditedRows({}); setSaveMsg(null); }} />
           <Button variant="outline-secondary" size="sm" onClick={handlePreview}
             disabled={previewing || uploading}>
             {previewing ? <><Spinner size="sm" className="me-1" />Previewing...</> : "Preview"}
@@ -261,27 +292,52 @@ function TopazUpload({ onImported }) {
 
         {error && <Alert variant="danger" className="small">{error}</Alert>}
 
+        {/* ── Preview ── */}
         {preview && (
           <Alert variant="info" className="small">
-            <strong>Preview:</strong> Detected format: <Badge bg="secondary">{preview.format}</Badge>{" "}
-            &mdash; {preview.total_rows} rows found
+            <strong>Preview:</strong> Detected format: <Badge bg="secondary">{preview.format}</Badge>
+            {preview.format_detail && <span> &mdash; {preview.format_detail}</span>}
+            {!preview.format_detail && <span> &mdash; {preview.total_rows?.toLocaleString()} rows found</span>}
+
             {preview.column_mapping && Object.keys(preview.column_mapping).length > 0 && (
-              <span> &mdash; Mapped: {Object.entries(preview.column_mapping).map(([k, v]) =>
-                <Badge key={k} bg="outline-dark" className="border me-1">{k} &larr; &ldquo;{v}&rdquo;</Badge>
-              )}</span>
+              <div className="mt-1">
+                Mapped: {Object.entries(preview.column_mapping).map(([k, v]) =>
+                  <Badge key={k} bg="outline-dark" className="border me-1">{k} &larr; &ldquo;{v}&rdquo;</Badge>
+                )}
+              </div>
             )}
             {preview.warnings?.length > 0 && (
               <div className="mt-1 text-warning">Warnings: {preview.warnings.join("; ")}</div>
             )}
+
+            {/* Fixed-width field zones */}
+            {preview.field_zones?.length > 0 && (
+              <details className="mt-2">
+                <summary className="fw-bold">Field Zones ({preview.field_zones.length})</summary>
+                <div className="d-flex flex-wrap gap-1 mt-1">
+                  {preview.field_zones.map((z, i) => (
+                    <Badge key={i} bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>
+                      {z.label} ({z.start}-{z.end})
+                    </Badge>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {/* Sample crosswalk pairs */}
             {preview.sample_pairs?.length > 0 && (
               <Table size="sm" className="mt-2 mb-0 small">
-                <thead><tr><th>Chart #</th><th>Topaz ID</th><th>Patient</th></tr></thead>
+                <thead><tr>
+                  <th>Topaz ID{isFixedWidth && " (line#)"}</th>
+                  <th>Chart / Jacket #</th>
+                  <th>Patient Name</th>
+                </tr></thead>
                 <tbody>
-                  {preview.sample_pairs.slice(0, 5).map((p, i) => (
+                  {preview.sample_pairs.slice(0, 8).map((p, i) => (
                     <tr key={i}>
-                      <td>{p.chart_number || "--"}</td>
-                      <td>{p.topaz_id || "--"}</td>
-                      <td>{p.patient_name || "--"}</td>
+                      <td><code>{p.topaz_id || "--"}</code></td>
+                      <td>{p.chart_number || <span className="text-muted">--</span>}</td>
+                      <td>{p.patient_name || <span className="text-muted">--</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -290,27 +346,114 @@ function TopazUpload({ onImported }) {
           </Alert>
         )}
 
+        {/* ── Import result ── */}
         {result && (
-          <Alert variant={result.crosswalk_applied?.applied > 0 ? "success" : "warning"} className="small">
-            {result.status === "no_crosswalk_data" ? (
-              <>{result.message}</>
-            ) : (
-              <>
-                <strong>Import complete!</strong>{" "}
-                {result.total_rows_parsed} rows parsed from <Badge bg="secondary">{result.format}</Badge> file.{" "}
-                {result.crosswalk_applied?.applied > 0
-                  ? <>Applied Topaz ID to <strong>{result.crosswalk_applied.applied}</strong> billing records
-                    ({result.crosswalk_applied.by_chart_number} by chart#, {result.crosswalk_applied.by_name_match} by name).
-                  </>
-                  : "No new records needed updating."
-                }
-                {result.warnings?.length > 0 && (
-                  <div className="mt-1 text-warning">Warnings: {result.warnings.join("; ")}</div>
-                )}
-              </>
+          <>
+            <Alert variant={result.crosswalk_applied?.applied > 0 ? "success" : "warning"} className="small">
+              {result.status === "no_crosswalk_data" ? (
+                <>{result.message}</>
+              ) : (
+                <>
+                  <strong>Import complete!</strong>{" "}
+                  {result.format === "fixed_width" ? (
+                    <>
+                      {result.total_records?.toLocaleString()} fixed-width records parsed.{" "}
+                      {result.crosswalk_pairs_extracted?.toLocaleString()} crosswalk pairs extracted
+                      (line# = Topaz ID).{" "}
+                    </>
+                  ) : (
+                    <>{result.total_rows_parsed?.toLocaleString()} rows parsed from <Badge bg="secondary">{result.format}</Badge> file.{" "}</>
+                  )}
+                  {result.crosswalk_applied?.applied > 0
+                    ? <>Applied Topaz ID to <strong>{result.crosswalk_applied.applied}</strong> billing records
+                      ({result.crosswalk_applied.by_chart_number} by chart#, {result.crosswalk_applied.by_name_match} by name).
+                    </>
+                    : "No new billing records needed updating."
+                  }
+                  {result.crosswalk_applied?.skipped_name_mismatch > 0 && (
+                    <span className="text-warning ms-1">
+                      {result.crosswalk_applied.skipped_name_mismatch} skipped (name mismatch &mdash; review below).
+                    </span>
+                  )}
+                  {result.warnings?.length > 0 && (
+                    <div className="mt-1 text-warning">Warnings: {result.warnings.join("; ")}</div>
+                  )}
+                </>
+              )}
+            </Alert>
+
+            {/* Applied crosswalk stats for fixed-width */}
+            {result.crosswalk_applied && result.format === "fixed_width" && (
+              <Row className="g-2 mb-3">
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_pairs_extracted?.toLocaleString()}</div><small>Pairs Extracted</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.records_needing_topaz?.toLocaleString()}</div><small>Needing Topaz ID</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-success">{result.crosswalk_applied.applied}</div><small>Applied</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.by_chart_number}</div><small>By Chart #</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{result.crosswalk_applied.by_name_match}</div><small>By Name</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-warning">{result.crosswalk_applied.skipped_name_mismatch || 0}</div><small>Name Mismatch</small></div></Col>
+              </Row>
             )}
-          </Alert>
+
+            {/* Sample pairs that were applied */}
+            {result.sample_pairs?.length > 0 && (
+              <details className="mb-3" open>
+                <summary className="small fw-bold">
+                  Sample Crosswalk Pairs ({result.sample_pairs.length} of {result.crosswalk_pairs_extracted?.toLocaleString() || result.total_rows_parsed?.toLocaleString()})
+                </summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr>
+                    <th>Topaz ID{result.format === "fixed_width" && " (line#)"}</th>
+                    <th>Chart / Jacket #</th>
+                    <th>Patient Name</th>
+                  </tr></thead>
+                  <tbody>
+                    {result.sample_pairs.map((p, i) => (
+                      <tr key={i}>
+                        <td><code>{p.topaz_id || "--"}</code></td>
+                        <td>{p.chart_number || "--"}</td>
+                        <td>{p.patient_name || <span className="text-muted">--</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+
+            {/* Field zones for fixed-width imports */}
+            {result.field_zones?.length > 0 && (
+              <details className="mb-3">
+                <summary className="small fw-bold">Field Zones ({result.field_zones.length})</summary>
+                <Table size="sm" className="small mt-1">
+                  <thead><tr><th>Label</th><th>Pos</th><th>Width</th><th>Type</th><th>Sample Values</th></tr></thead>
+                  <tbody>
+                    {result.field_zones.map((z, i) => (
+                      <tr key={i} className={z.label.startsWith("id_") ? "table-info" : z.label.startsWith("name_") ? "table-success" : z.label.startsWith("date_") ? "table-warning" : ""}>
+                        <td><strong>{z.label}</strong></td>
+                        <td>{z.start}-{z.end}</td>
+                        <td>{z.width}</td>
+                        <td><Badge bg={z.type === "digit" ? "info" : z.type === "alpha" ? "success" : z.type === "date" ? "warning" : "secondary"}>{z.type}</Badge></td>
+                        <td className="text-truncate" style={{ maxWidth: 250 }}>{z.sample_values?.slice(0, 3).map((v, j) => <code key={j} className="me-2">{v}</code>)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </details>
+            )}
+          </>
         )}
+
+        {/* ── Manual corrections (save button + message) ── */}
+        {Object.keys(editedRows).length > 0 && (
+          <div className="d-flex align-items-center gap-2 mt-2">
+            <Button variant="warning" size="sm" onClick={handleSaveCorrections} disabled={saving}>
+              {saving ? <><Spinner size="sm" className="me-1" />Saving...</> : `Save ${Object.keys(editedRows).length} Correction(s)`}
+            </Button>
+            <Button variant="outline-secondary" size="sm" onClick={() => setEditedRows({})}>
+              Discard Changes
+            </Button>
+          </div>
+        )}
+        {saveMsg && <Alert variant={saveMsg.startsWith("Error") ? "danger" : "success"} className="small mt-2">{saveMsg}</Alert>}
       </Card.Body>
     </Card>
   );
