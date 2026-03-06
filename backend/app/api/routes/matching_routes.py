@@ -64,6 +64,189 @@ async def list_matched(
     return await get_matched_claims(db, page, per_page)
 
 
+# --- Interactive Match Correction ---
+
+
+class MatchCorrectionRequest(BaseModel):
+    era_claim_line_id: int = Field(..., description="ERA claim line to reassign")
+    billing_record_id: int = Field(..., description="Target billing record to match to")
+    notes: str | None = Field(None, description="Reason for manual correction")
+
+
+@router.post("/correct-match")
+async def correct_match(
+    body: MatchCorrectionRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Manually reassign an ERA claim line to a different billing record.
+
+    Use this when auto-matching made a wrong assignment or failed to match.
+    The old match is removed and the new one is set with confidence 1.0 (manual).
+    """
+    from backend.app.models.era import ERAClaimLine
+
+    # Get the ERA claim line
+    ecl_result = await db.execute(
+        select(ERAClaimLine).where(ERAClaimLine.id == body.era_claim_line_id)
+    )
+    ecl = ecl_result.scalar_one_or_none()
+    if not ecl:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="ERA claim line not found")
+
+    # Get the target billing record
+    br_result = await db.execute(
+        select(BillingRecord).where(BillingRecord.id == body.billing_record_id)
+    )
+    br = br_result.scalar_one_or_none()
+    if not br:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Billing record not found")
+
+    # Remove old match from previous billing record if exists
+    old_billing_id = ecl.matched_billing_id
+    if old_billing_id:
+        old_br_result = await db.execute(
+            select(BillingRecord).where(BillingRecord.id == old_billing_id)
+        )
+        old_br = old_br_result.scalar_one_or_none()
+        if old_br and old_br.era_claim_id == ecl.claim_id:
+            old_br.era_claim_id = None
+
+    # Set new match
+    ecl.matched_billing_id = body.billing_record_id
+    ecl.match_confidence = 1.0  # Manual match = full confidence
+
+    # Update billing record with ERA data
+    br.era_claim_id = ecl.claim_id
+    if ecl.paid_amount is not None and float(br.total_payment or 0) == 0:
+        br.total_payment = ecl.paid_amount
+    if ecl.cas_reason_code:
+        br.denial_reason_code = ecl.cas_reason_code
+    # Map claim status to denial status
+    status_map = {"4": "DENIED", "22": "DENIED"}
+    if ecl.claim_status in status_map:
+        br.denial_status = status_map[ecl.claim_status]
+    elif ecl.claim_status in ("1", "2", "3"):
+        br.denial_status = None  # Paid
+
+    # Store correction metadata
+    extra = br.extra_data or {}
+    extra["manual_match"] = {
+        "corrected_at": str(datetime.utcnow()),
+        "era_claim_line_id": ecl.id,
+        "old_billing_id": old_billing_id,
+        "notes": body.notes,
+    }
+    br.extra_data = extra
+
+    await db.commit()
+
+    return {
+        "status": "corrected",
+        "era_claim_line_id": ecl.id,
+        "claim_id": ecl.claim_id,
+        "old_billing_id": old_billing_id,
+        "new_billing_id": body.billing_record_id,
+        "patient_name": br.patient_name,
+        "confidence": 1.0,
+    }
+
+
+class ManualMatchRequest(BaseModel):
+    claim_id: str = Field(..., description="ERA claim_id to search for")
+    billing_record_id: int = Field(..., description="Billing record to match to")
+
+
+@router.post("/manual-match")
+async def manual_match_by_claim_id(
+    body: ManualMatchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Match an unmatched ERA claim to a billing record by claim_id.
+
+    For when you know which billing record an ERA claim belongs to
+    but auto-matching failed to find it.
+    """
+    from backend.app.models.era import ERAClaimLine
+    from datetime import datetime
+
+    # Find the ERA claim line by claim_id
+    ecl_result = await db.execute(
+        select(ERAClaimLine).where(
+            ERAClaimLine.claim_id == body.claim_id,
+            ERAClaimLine.matched_billing_id.is_(None),
+        )
+    )
+    ecl = ecl_result.scalar_one_or_none()
+    if not ecl:
+        # Check if already matched
+        ecl_result2 = await db.execute(
+            select(ERAClaimLine).where(ERAClaimLine.claim_id == body.claim_id)
+        )
+        ecl2 = ecl_result2.scalar_one_or_none()
+        if ecl2:
+            return {
+                "status": "already_matched",
+                "claim_id": body.claim_id,
+                "matched_billing_id": ecl2.matched_billing_id,
+            }
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"ERA claim {body.claim_id} not found")
+
+    # Get billing record
+    br_result = await db.execute(
+        select(BillingRecord).where(BillingRecord.id == body.billing_record_id)
+    )
+    br = br_result.scalar_one_or_none()
+    if not br:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Billing record not found")
+
+    # Apply match
+    ecl.matched_billing_id = body.billing_record_id
+    ecl.match_confidence = 1.0
+    br.era_claim_id = ecl.claim_id
+    if ecl.paid_amount is not None and float(br.total_payment or 0) == 0:
+        br.total_payment = ecl.paid_amount
+    if ecl.cas_reason_code:
+        br.denial_reason_code = ecl.cas_reason_code
+    status_map = {"4": "DENIED", "22": "DENIED"}
+    if ecl.claim_status in status_map:
+        br.denial_status = status_map[ecl.claim_status]
+
+    await db.commit()
+
+    return {
+        "status": "matched",
+        "claim_id": body.claim_id,
+        "billing_record_id": body.billing_record_id,
+        "patient_name": br.patient_name,
+        "paid_amount": float(ecl.paid_amount or 0),
+        "confidence": 1.0,
+    }
+
+
+@router.post("/re-match")
+async def trigger_rematch(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Re-run the auto-matcher on all unmatched ERA claims.
+
+    Does NOT clear existing matches — only attempts to match
+    currently unmatched claims. Use after fixing crosswalk data
+    or correcting patient identifiers.
+    """
+    result = await run_auto_match(db)
+    return {
+        "status": "completed",
+        "match_result": result,
+    }
+
+
 # --- Crosswalk (Chart Number <-> Topaz ID) ---
 
 @router.get("/crosswalk/stats")
@@ -447,9 +630,16 @@ async def extract_crosswalk_pairs(
     Step 2: User assigns field roles, system extracts crosswalk pairs.
 
     field_mapping example:
-      {"chart_number": "id_2", "patient_name": "name_1"}
+      {"chart_number": "id_2", "patient_name": "name_1", "custom_referral": "misc_3"}
     For fixed-width: values are zone labels (id_1, name_1, etc.)
     For delimited: values are header names ("Chart Number", "Patient Name", etc.)
+
+    Recognized roles: chart_number, topaz_id, patient_name, last_name,
+      first_name, date_of_birth, phone, city, state, zip_code,
+      insurance_number, service_date.
+
+    Custom/TBD roles: any key starting with "custom_" preserves raw data
+    for future re-parsing (e.g. "custom_1", "custom_referral_source").
 
     Returns extracted pairs for review. Does NOT modify billing records.
     """
@@ -478,6 +668,9 @@ async def extract_crosswalk_pairs(
         "phone", "city", "state", "zip_code",
         "insurance_number", "service_date",
     }
+    # Custom/TBD roles: any key starting with "custom_" stores raw data
+    # for future re-parsing (e.g. "custom_1", "custom_referral_source")
+    _CUSTOM_PREFIX = "custom_"
 
     if record.format_detected == "fixed_width":
         fw_result = parse_fixed_width_records(content_bytes)
@@ -525,9 +718,16 @@ async def extract_crosswalk_pairs(
 
             # Extract all other patient data fields from mapping
             for role in ("date_of_birth", "phone", "city", "state",
-                         "zip_code", "insurance_number"):
+                         "zip_code", "insurance_number", "service_date"):
                 src_field = field_mapping.get(role)
                 if src_field:
+                    val = rec.get(src_field, "").strip()
+                    if val:
+                        pair[role] = val
+
+            # Extract custom/TBD fields (any role starting with "custom_")
+            for role, src_field in field_mapping.items():
+                if role.startswith(_CUSTOM_PREFIX) and src_field:
                     val = rec.get(src_field, "").strip()
                     if val:
                         pair[role] = val
@@ -542,7 +742,7 @@ async def extract_crosswalk_pairs(
         for raw_row in parsed.raw_rows:
             pair = {}
             for role, header_name in field_mapping.items():
-                if role in _PATIENT_ROLES:
+                if role in _PATIENT_ROLES or role.startswith(_CUSTOM_PREFIX):
                     val = str(raw_row.get(header_name, "")).strip()
                     if val:
                         pair[role] = val
@@ -710,6 +910,12 @@ async def apply_crosswalk_import(
                 except ValueError:
                     pass
 
+        # Collect custom/TBD fields from the pair
+        custom_fields = {
+            k: v for k, v in pair.items()
+            if k.startswith("custom_") and v
+        }
+
         key = (jacket, topaz)
         existing = patient_index.get(key)
 
@@ -729,6 +935,12 @@ async def apply_crosswalk_import(
                 if val and not getattr(existing, attr):
                     setattr(existing, attr, val)
                     changed = True
+            # Merge custom data
+            if custom_fields:
+                existing_custom = existing.custom_data or {}
+                existing_custom.update(custom_fields)
+                existing.custom_data = existing_custom
+                changed = True
             if changed:
                 patients_updated += 1
         else:
@@ -743,6 +955,7 @@ async def apply_crosswalk_import(
                 state=pair.get("state"),
                 zip_code=pair.get("zip_code"),
                 insurance_number=pair.get("insurance_number"),
+                custom_data=custom_fields if custom_fields else None,
                 crosswalk_import_id=import_id,
             )
             db.add(patient)
@@ -910,6 +1123,7 @@ async def lookup_patient(
                 "state": p.state,
                 "zip_code": p.zip_code,
                 "insurance_number": p.insurance_number,
+                "custom_data": p.custom_data,
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }
             for p in patients
@@ -1853,6 +2067,89 @@ async def _preview_server_directory(directory: str) -> dict:
         "field_zones": field_zones,
         "sample_records": sample_records,
     }
+
+
+@router.post("/crosswalk/re-extract/{import_id}")
+async def re_extract_crosswalk(
+    import_id: int,
+    field_mapping: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Re-parse a previously imported file with a new field mapping.
+
+    Raw data is preserved in the database, so you can re-extract
+    with different roles at any time — including new custom_ TBD fields.
+    Resets status back to MAPPED and overwrites previous extraction.
+    """
+    from backend.app.models.crosswalk_import import CrosswalkImport
+
+    result = await db.execute(
+        select(CrosswalkImport).where(CrosswalkImport.id == import_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    if not record.raw_content:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="No raw content stored for this import. Cannot re-extract."
+        )
+
+    # Reset status so it can be re-applied
+    record.status = "UPLOADED"
+    record.extracted_pairs = None
+    record.extracted_count = None
+    record.applied_count = None
+    record.apply_result = None
+    record.applied_at = None
+    await db.commit()
+
+    # Re-run the extract step with the new mapping
+    return await extract_crosswalk_pairs(import_id, field_mapping, db)
+
+
+@router.post("/crosswalk/re-import/{import_id}")
+async def re_import_crosswalk(
+    import_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Re-apply a previously extracted crosswalk import.
+
+    Use this after re-extracting with updated field mappings, or to
+    retry applying after fixing billing data issues. Resets applied
+    status and re-runs the apply step.
+    """
+    from backend.app.models.crosswalk_import import CrosswalkImport
+
+    result = await db.execute(
+        select(CrosswalkImport).where(CrosswalkImport.id == import_id)
+    )
+    record = result.scalar_one_or_none()
+    if not record:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    if not record.extracted_pairs:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="No extracted pairs. Run extract step first."
+        )
+
+    # Reset apply status so it can be re-applied
+    record.status = "MAPPED"
+    record.applied_count = None
+    record.apply_result = None
+    record.applied_at = None
+    await db.commit()
+
+    # Re-run the apply step
+    return await apply_crosswalk_import(import_id, db)
 
 
 def _should_process_preview(filename: str) -> bool:

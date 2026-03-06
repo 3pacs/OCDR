@@ -56,11 +56,28 @@ TOPAZ_ID_PATTERNS = [
     "charge id", "charge_id", "chargeid",
 ]
 
-# Patterns for patient name
+# Patterns for patient name (full/combined)
 PATIENT_NAME_PATTERNS = [
     "patient", "patient name", "patient_name", "patientname", "name",
     "pt name", "ptname", "pt_name", "client", "client name",
-    "last name", "lastname", "last_name",  # partial — combine with first
+]
+
+# Patterns for last name
+LAST_NAME_PATTERNS = [
+    "last name", "lastname", "last_name", "lname", "l_name", "surname",
+    "family name", "familyname",
+]
+
+# Patterns for first name
+FIRST_NAME_PATTERNS = [
+    "first name", "firstname", "first_name", "fname", "f_name",
+    "given name", "givenname", "forename",
+]
+
+# Patterns for date of birth
+DATE_OF_BIRTH_PATTERNS = [
+    "dob", "date of birth", "dateofbirth", "date_of_birth", "birthdate",
+    "birth date", "birth_date", "birthday", "born", "bdate", "b_date",
 ]
 
 # Patterns for service date
@@ -69,12 +86,54 @@ SERVICE_DATE_PATTERNS = [
     "date of service", "exam date", "visit date", "svc date",
 ]
 
+# Patterns for phone number
+PHONE_PATTERNS = [
+    "phone", "phone number", "phonenumber", "phone_number", "phone#",
+    "telephone", "tel", "cell", "cell phone", "mobile", "contact number",
+    "home phone", "work phone",
+]
+
+# Patterns for insurance ID
+INSURANCE_ID_PATTERNS = [
+    "insurance id", "insurance_id", "insuranceid", "insurance#",
+    "insurance number", "insurance_number", "insurancenumber",
+    "member id", "member_id", "memberid", "member#", "member number",
+    "subscriber id", "subscriber_id", "subscriberid",
+    "policy number", "policy_number", "policynumber", "policy#",
+    "plan id", "plan_id", "planid", "group number", "group#",
+    "payer id", "payer_id",
+]
+
+# Patterns for city
+CITY_PATTERNS = [
+    "city", "city name", "municipality", "town",
+]
+
+# Patterns for state
+STATE_PATTERNS = [
+    "state", "st", "state code", "state_code", "province",
+]
+
+# Patterns for zip code
+ZIP_CODE_PATTERNS = [
+    "zip", "zip code", "zipcode", "zip_code", "postal", "postal code",
+    "postal_code",
+]
+
 # All known field pattern sets
 FIELD_PATTERNS = {
     "chart_number": CHART_NUMBER_PATTERNS,
     "topaz_id": TOPAZ_ID_PATTERNS,
     "patient_name": PATIENT_NAME_PATTERNS,
+    "last_name": LAST_NAME_PATTERNS,
+    "first_name": FIRST_NAME_PATTERNS,
+    "date_of_birth": DATE_OF_BIRTH_PATTERNS,
     "service_date": SERVICE_DATE_PATTERNS,
+    "phone": PHONE_PATTERNS,
+    "insurance_number": INSURANCE_ID_PATTERNS,
+    "city": CITY_PATTERNS,
+    "state": STATE_PATTERNS,
+    "zip_code": ZIP_CODE_PATTERNS,
 }
 
 

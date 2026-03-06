@@ -12,7 +12,9 @@ from sqlalchemy import select, func, case, update, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
-from backend.app.models.era import ERAClaimLine
+from backend.app.models.era import ERAClaimLine, ERAPayment
+from backend.app.analytics.public_code_tables import CARC_CODES
+from backend.app.revenue.denial_actions import get_denial_detail, CAS_GROUP_CONTEXT
 
 
 def _recoverability_score(billed: float | None, service_date: date | None) -> float:
@@ -29,12 +31,29 @@ def _recoverability_score(billed: float | None, service_date: date | None) -> fl
 def _serialize_denial(row: BillingRecord, era_info: dict | None = None) -> dict:
     billed = float(era_info.get("billed_amount") or 0) if era_info else 0
     if billed == 0:
-        # Estimate from total_payment + extra_charges or use a default
         billed = float(row.total_payment or 0) + float(row.extra_charges or 0)
+
+    days_old = (date.today() - row.service_date).days if row.service_date else None
+    carc = era_info.get("cas_reason_code") if era_info else row.denial_reason_code
+    cas_group = era_info.get("cas_group_code") if era_info else None
+    adjustment = era_info.get("cas_adjustment_amount") if era_info else None
+
+    # Get action suggestion
+    action = get_denial_detail(
+        carc_code=carc,
+        cas_group=cas_group,
+        billed_amount=billed,
+        paid_amount=float(row.total_payment or 0),
+        adjustment_amount=float(adjustment or 0),
+        days_old=days_old or 0,
+        carrier=row.insurance_carrier,
+    )
 
     return {
         "id": row.id,
         "patient_name": row.patient_name,
+        "patient_id": row.patient_id,
+        "topaz_id": row.topaz_id,
         "service_date": str(row.service_date) if row.service_date else None,
         "insurance_carrier": row.insurance_carrier,
         "modality": row.modality,
@@ -44,13 +63,21 @@ def _serialize_denial(row: BillingRecord, era_info: dict | None = None) -> dict:
         "billed_amount": billed,
         "denial_status": row.denial_status or "DENIED",
         "denial_reason_code": row.denial_reason_code,
+        "denial_reason_description": CARC_CODES.get(str(carc), None) if carc else None,
         "era_claim_id": row.era_claim_id,
         "appeal_deadline": str(row.appeal_deadline) if row.appeal_deadline else None,
         "recoverability_score": _recoverability_score(billed, row.service_date),
-        "days_old": (date.today() - row.service_date).days if row.service_date else None,
-        "cas_group_code": era_info.get("cas_group_code") if era_info else None,
-        "cas_reason_code": era_info.get("cas_reason_code") if era_info else row.denial_reason_code,
-        "cas_adjustment_amount": era_info.get("cas_adjustment_amount") if era_info else None,
+        "days_old": days_old,
+        "cas_group_code": cas_group,
+        "cas_group_label": CAS_GROUP_CONTEXT.get(cas_group, {}).get("label") if cas_group else None,
+        "cas_reason_code": carc,
+        "cas_adjustment_amount": adjustment,
+        # Action-oriented fields
+        "recommended_action": action["recommended_action"],
+        "fix_instructions": action["fix_instructions"],
+        "severity": action["severity"],
+        "recoverable": action["recoverable"],
+        "priority_score": action["priority_score"],
     }
 
 
@@ -292,3 +319,158 @@ async def bulk_appeal(
     result = await db.execute(stmt)
     await db.commit()
     return {"status": "APPEALED", "updated": result.rowcount, "ids": billing_ids}
+
+
+async def get_denial_full_detail(
+    db: AsyncSession,
+    billing_id: int,
+) -> dict:
+    """
+    Get complete denial detail for a single claim — all ERA context,
+    CARC code explanation, CAS group meaning, suggested fix, and
+    related claims from the same patient.
+    """
+    stmt = select(BillingRecord).where(BillingRecord.id == billing_id)
+    result = await db.execute(stmt)
+    record = result.scalar_one_or_none()
+    if not record:
+        return {"error": "Claim not found", "id": billing_id}
+
+    # Get ERA claim line detail
+    era_info = None
+    era_detail = None
+    if record.era_claim_id:
+        era_q = select(ERAClaimLine).where(
+            ERAClaimLine.claim_id == record.era_claim_id
+        )
+        era_result = await db.execute(era_q)
+        ecl = era_result.scalar_one_or_none()
+        if ecl:
+            era_info = {
+                "billed_amount": float(ecl.billed_amount or 0),
+                "cas_group_code": ecl.cas_group_code,
+                "cas_reason_code": ecl.cas_reason_code,
+                "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
+            }
+            # Get parent payment for payer context
+            payment = None
+            if ecl.era_payment_id:
+                pay_q = select(ERAPayment).where(ERAPayment.id == ecl.era_payment_id)
+                pay_result = await db.execute(pay_q)
+                payment = pay_result.scalar_one_or_none()
+
+            era_detail = {
+                "claim_id": ecl.claim_id,
+                "claim_status": ecl.claim_status,
+                "billed_amount": float(ecl.billed_amount or 0),
+                "paid_amount": float(ecl.paid_amount or 0),
+                "patient_name_835": ecl.patient_name_835,
+                "service_date_835": str(ecl.service_date_835) if ecl.service_date_835 else None,
+                "cpt_code": ecl.cpt_code,
+                "cas_group_code": ecl.cas_group_code,
+                "cas_reason_code": ecl.cas_reason_code,
+                "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
+                "match_confidence": ecl.match_confidence,
+                "payer_name": payment.payer_name if payment else None,
+                "payment_date": str(payment.payment_date) if payment and payment.payment_date else None,
+                "check_number": payment.check_eft_number if payment else None,
+            }
+
+    # Build the main denial serialization
+    denial = _serialize_denial(record, era_info)
+
+    # Get full action detail
+    carc = era_info.get("cas_reason_code") if era_info else record.denial_reason_code
+    cas_group = era_info.get("cas_group_code") if era_info else None
+    action_detail = get_denial_detail(
+        carc_code=carc,
+        cas_group=cas_group,
+        billed_amount=denial["billed_amount"],
+        paid_amount=denial["total_payment"],
+        adjustment_amount=float(era_info.get("cas_adjustment_amount") or 0) if era_info else 0,
+        days_old=denial["days_old"] or 0,
+        carrier=record.insurance_carrier,
+    )
+
+    # Find related claims for same patient
+    related = []
+    if record.patient_id:
+        rel_q = (
+            select(BillingRecord)
+            .where(
+                BillingRecord.patient_id == record.patient_id,
+                BillingRecord.id != billing_id,
+            )
+            .order_by(BillingRecord.service_date.desc())
+            .limit(10)
+        )
+        rel_result = await db.execute(rel_q)
+        for r in rel_result.scalars().all():
+            related.append({
+                "id": r.id,
+                "service_date": str(r.service_date) if r.service_date else None,
+                "modality": r.modality,
+                "total_payment": float(r.total_payment or 0),
+                "denial_status": r.denial_status,
+            })
+
+    # Appeal history from extra_data
+    appeal_history = []
+    extra = record.extra_data or {}
+    if extra.get("appeal_date"):
+        appeal_history.append({
+            "action": "APPEALED",
+            "date": extra["appeal_date"],
+            "notes": extra.get("appeal_notes"),
+        })
+    if extra.get("resolved_at"):
+        appeal_history.append({
+            "action": extra.get("resolution_type", "RESOLVED"),
+            "date": extra["resolved_at"],
+            "amount": extra.get("resolution_amount"),
+        })
+
+    return {
+        "denial": denial,
+        "era_detail": era_detail,
+        "action_detail": action_detail,
+        "related_claims": related,
+        "appeal_history": appeal_history,
+    }
+
+
+async def export_denials(
+    db: AsyncSession,
+    status: str | None = None,
+    carrier: str | None = None,
+) -> list[dict]:
+    """Export all denials as flat rows for CSV/XLSX export."""
+    conditions = [
+        BillingRecord.total_payment == 0,
+        BillingRecord.denial_status.isnot(None),
+    ]
+    query = select(BillingRecord).where(or_(*conditions))
+    if status:
+        query = query.where(BillingRecord.denial_status == status.upper())
+    if carrier:
+        query = query.where(BillingRecord.insurance_carrier.ilike(f"%{carrier}%"))
+    query = query.order_by(BillingRecord.service_date.desc())
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    # Batch fetch ERA info
+    era_claim_ids = [r.era_claim_id for r in rows if r.era_claim_id]
+    era_map = {}
+    if era_claim_ids:
+        era_q = select(ERAClaimLine).where(ERAClaimLine.claim_id.in_(era_claim_ids))
+        era_result = await db.execute(era_q)
+        for ecl in era_result.scalars().all():
+            era_map[ecl.claim_id] = {
+                "billed_amount": float(ecl.billed_amount or 0),
+                "cas_group_code": ecl.cas_group_code,
+                "cas_reason_code": ecl.cas_reason_code,
+                "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
+            }
+
+    return [_serialize_denial(r, era_map.get(r.era_claim_id)) for r in rows]

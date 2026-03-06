@@ -10,7 +10,7 @@ returns the complete patient record.
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Integer, String, Index
+from sqlalchemy import Date, DateTime, Integer, JSON, String, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.session import Base
@@ -34,6 +34,9 @@ class Patient(Base):
     state: Mapped[str | None] = mapped_column(String(10), nullable=True)
     zip_code: Mapped[str | None] = mapped_column(String(15), nullable=True)
     insurance_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # --- Custom / TBD fields (raw data stored for future re-parsing) ---
+    custom_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # --- Import tracking ---
     crosswalk_import_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
