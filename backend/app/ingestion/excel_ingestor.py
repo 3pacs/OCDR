@@ -45,7 +45,7 @@ HEADER_MAP = {
     "jacket id": "patient_id",           # alternate name
     "chart id": "patient_id",            # new layout: renamed column
     "chart number": "patient_id",
-    "patient id": "patient_id_new",      # new layout: new column (Topaz patient number)
+    "patient id": "topaz_patient_id",    # new layout: Topaz patient ID (col V)
 
     # Other source columns
     "birth date": "birth_date",
@@ -260,18 +260,18 @@ def _parse_row(row: tuple, col_map: dict[int, str]) -> dict | None:
 
     # Handle topaz_id — from Topaz ID column or the new Patient ID column
     topaz_id = _safe_int_str(raw.get("topaz_id"))
-    # If we have a "patient_id_new" column (new layout's "Patient ID"),
+    # If we have a "topaz_patient_id" column (new layout's "Patient ID" col V),
     # use it as topaz_id when the dedicated topaz column is empty
-    patient_id_new = _safe_int_str(raw.get("patient_id_new"))
-    if patient_id_new and not topaz_id:
-        topaz_id = patient_id_new
+    topaz_patient_id = _safe_int_str(raw.get("topaz_patient_id"))
+    if topaz_patient_id and not topaz_id:
+        topaz_id = topaz_patient_id
     # Store payer_group in extra_data
     payer_group = _clean_text(raw.get("payer_group"))
     if payer_group:
         extra["payer_group"] = payer_group
     # Also preserve the new Patient ID column value in extra_data
-    if patient_id_new:
-        extra["patient_id_new"] = patient_id_new
+    if topaz_patient_id:
+        extra["topaz_patient_id"] = topaz_patient_id
 
     return {
         "patient_name": patient_name,
