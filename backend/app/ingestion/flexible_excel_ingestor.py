@@ -149,27 +149,6 @@ def _excel_serial_to_date(serial) -> date | None:
         return None
 
 
-def _date_is_reasonable(d: date | None) -> bool:
-    """Check if a parsed date is within a reasonable range for billing data."""
-    if d is None:
-        return False
-    return date(2010, 1, 1) <= d <= date(2035, 12, 31)
-
-
-def _derive_service_date(month_val, year_val) -> date | None:
-    """Derive service_date from separate month and year columns."""
-    if month_val is None or year_val is None:
-        return None
-    try:
-        month = int(float(month_val))
-        year = int(float(year_val))
-        if 1 <= month <= 12 and 2010 <= year <= 2035:
-            return date(year, month, 1)
-    except (ValueError, TypeError):
-        pass
-    return None
-
-
 def _parse_date_value(val) -> date | None:
     if val is None:
         return None
@@ -532,22 +511,6 @@ async def import_excel_flexible(
                     elif not isinstance(val, (str, int, float, bool)):
                         val = str(val)
                     extra_data[header_name] = val
-
-            # Validate date fields — catch misinterpreted non-date data
-            # (e.g. columns labeled "Date" but containing patient names/IDs)
-            for date_field in DATE_FIELDS:
-                if date_field in record_data and not _date_is_reasonable(record_data[date_field]):
-                    raw_val = record_data[date_field]
-                    if raw_val is not None:
-                        extra_data[f"raw_{date_field}"] = str(raw_val)
-                    record_data[date_field] = None
-
-            # Derive service_date from month/year when direct date is missing
-            if not record_data.get("service_date"):
-                record_data["service_date"] = _derive_service_date(
-                    record_data.get("service_month"),
-                    record_data.get("service_year"),
-                )
 
             # Validate minimum fields — must have at least patient name
             patient_name = record_data.get("patient_name")

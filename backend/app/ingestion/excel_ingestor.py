@@ -169,27 +169,6 @@ def _safe_int_str(val) -> str | None:
         return s if s else None
 
 
-def _date_is_reasonable(d: date | None) -> bool:
-    """Check if a parsed date is within a reasonable range for billing data."""
-    if d is None:
-        return False
-    return date(2010, 1, 1) <= d <= date(2035, 12, 31)
-
-
-def _derive_service_date(month_val, year_val) -> date | None:
-    """Derive service_date from separate month and year columns."""
-    if month_val is None or year_val is None:
-        return None
-    try:
-        month = int(float(month_val))
-        year = int(float(year_val))
-        if 1 <= month <= 12 and 2010 <= year <= 2035:
-            return date(year, month, 1)
-    except (ValueError, TypeError):
-        pass
-    return None
-
-
 def _detect_headers(ws) -> tuple[dict[int, str], int]:
     """
     Detect column headers from the first row of the worksheet.
@@ -261,31 +240,7 @@ def _parse_row(row: tuple, col_map: dict[int, str]) -> dict | None:
     scan_type = _clean_text(raw.get("scan_type"))
     insurance_carrier = _clean_text(raw.get("insurance_carrier"))
     modality = _clean_text(raw.get("modality"))
-
-    # Parse service_date — validate it's reasonable, otherwise the "Date"
-    # column may contain non-date data (e.g. patient names or IDs from
-    # Candelis/Purview raw exports where columns shifted).
     service_date = _excel_serial_to_date(raw.get("service_date"))
-    if not _date_is_reasonable(service_date):
-        # Store the original value in extra if it was non-null
-        raw_date_val = raw.get("service_date")
-        if raw_date_val is not None:
-            extra[f"raw_date_col"] = str(raw_date_val).strip()
-        service_date = None
-
-    # Derive service_date from month/year when direct date column is missing
-    if service_date is None:
-        service_date = _derive_service_date(
-            raw.get("service_month"), raw.get("service_year")
-        )
-
-    # Validate schedule_date similarly — may contain non-date data
-    raw_sched = raw.get("schedule_date")
-    schedule_date = _excel_serial_to_date(raw_sched)
-    if not _date_is_reasonable(schedule_date):
-        if raw_sched is not None:
-            extra[f"raw_sdate_col"] = str(raw_sched).strip()
-        schedule_date = None
 
     # Required fields check
     if not all([referring_doctor, scan_type, insurance_carrier, modality, service_date]):
@@ -334,7 +289,7 @@ def _parse_row(row: tuple, col_map: dict[int, str]) -> dict | None:
         "patient_id": patient_id,
         "birth_date": _excel_serial_to_date(raw.get("birth_date")),
         "patient_name_display": _clean_text(raw.get("patient_name_display")),
-        "schedule_date": schedule_date,
+        "schedule_date": _excel_serial_to_date(raw.get("schedule_date")),
         "modality_code": _clean_text(raw.get("modality_code")),
         "description": description,
         "service_month": _clean_text(raw.get("service_month")),
