@@ -146,6 +146,22 @@ def parse_835_content(raw_content: str, filename: str) -> dict:
             if len(elements) > 2 and elements[1] in ("232", "233", "472"):
                 current_claim["service_date_835"] = _parse_date(elements[2])
 
+        elif seg_id == "DTP" and current_claim is not None:
+            # DTP*472 = service date (some payers use DTP instead of DTM)
+            # DTP*150 = service period start, DTP*151 = service period end
+            if len(elements) > 2 and elements[1] in ("472", "150", "151", "232", "233"):
+                # DTP03 format: D8=single date (CCYYMMDD), RD8=range (CCYYMMDD-CCYYMMDD)
+                date_val = elements[2] if len(elements) > 2 else None
+                if not date_val and len(elements) > 3:
+                    date_val = elements[3]
+                if date_val:
+                    # Handle RD8 range format — use start date
+                    if "-" in date_val:
+                        date_val = date_val.split("-")[0]
+                    parsed_date = _parse_date(date_val)
+                    if parsed_date and not current_claim["service_date_835"]:
+                        current_claim["service_date_835"] = parsed_date
+
     if current_claim is not None:
         claims.append(current_claim)
 

@@ -1,5 +1,5 @@
 """
-6-Pass Auto-Matching Engine.
+8-Pass Auto-Matching Engine.
 
 Matches ERA claim lines (from 835 files) to billing records using
 progressively looser matching criteria:
@@ -10,10 +10,18 @@ progressively looser matching criteria:
   Pass 3: Medium fuzzy   (name>=90 + service_date + modality)   → 85%
   Pass 4: Weak fuzzy     (name>=85 + service_date ±3 days)      → 70%
   Pass 5: Amount-anchor  (carrier + service_date + amount)      → 75%
+  Pass 6: Name + amount  (no date required, name>=90 + amount)  → 65%
+  Pass 7: Name only      (no date required, name>=95)           → 55%
+
+Many-to-one: Multiple ERA claims can link to the same billing record
+(original payment, adjustments, secondary payers, appeals). Billing
+records are NOT removed from indexes after first match. The first
+matched claim_id is stored in BillingRecord.era_claim_id; all claims
+point back via ERAClaimLine.matched_billing_id.
 
 Key insight: ERA claim_id is the Topaz billing system ID. This is NOT
 the same as BillingRecord.patient_id, which is the chart number from
-OCMRI.xlsx. Matches found by passes 1-5 teach us the chart↔topaz
+OCMRI.xlsx. Matches found by passes 1-7 teach us the chart↔topaz
 crosswalk, which Pass 0 can then exploit for faster future matching.
 
 After matching, updates:
@@ -23,6 +31,7 @@ After matching, updates:
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import timedelta
 
 from rapidfuzz import fuzz
@@ -86,40 +95,6 @@ CLAIM_STATUS_MAP = {
 }
 
 
-def _remove_from_indexes(br, billing_by_name_date, billing_by_date, billing_by_topaz_id, billing_norm_names):
-    """Remove a matched billing record from all indexes to prevent re-scanning."""
-    norm = billing_norm_names.get(br.id, "")
-    key = (norm, br.service_date)
-    if key in billing_by_name_date:
-        lst = billing_by_name_date[key]
-        try:
-            lst.remove(br)
-        except ValueError:
-            pass
-        if not lst:
-            del billing_by_name_date[key]
-
-    if br.service_date in billing_by_date:
-        lst = billing_by_date[br.service_date]
-        try:
-            lst.remove(br)
-        except ValueError:
-            pass
-        if not lst:
-            del billing_by_date[br.service_date]
-
-    if br.topaz_id:
-        tk = br.topaz_id.strip()
-        if tk in billing_by_topaz_id:
-            lst = billing_by_topaz_id[tk]
-            try:
-                lst.remove(br)
-            except ValueError:
-                pass
-            if not lst:
-                del billing_by_topaz_id[tk]
-
-
 def _match_single_claim(
     claim,
     claim_name,
@@ -132,47 +107,51 @@ def _match_single_claim(
     billing_by_date,
     billing_by_topaz_id,
     billing_norm_names,
+    billing_by_name,
 ):
-    """Run 6-pass matching for a single claim. Returns (billing_record, confidence, pass_name) or (None, 0, None)."""
+    """Run 8-pass matching for a single claim. Returns (billing_record, confidence, pass_name) or (None, 0, None)."""
 
     # Pass 0: Topaz ID crosswalk match (with name corroboration)
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
         candidates = billing_by_topaz_id.get(topaz_key, [])
         if candidates and claim_name:
-            # Require name corroboration — a matching topaz_id PLUS
-            # patient name similarity prevents wrong-ID assignments
             best_br = None
             best_score = 0
             for c in candidates:
                 norm = billing_norm_names.get(c.id, "")
                 name_score = fuzz.token_sort_ratio(claim_name, norm) if norm else 0
-                # Also boost if date matches
                 date_match = (c.service_date == claim_date) if claim_date else False
                 combined = name_score + (10 if date_match else 0)
                 if combined > best_score:
                     best_score = combined
                     best_br = c
-            # Accept if name is at least loosely similar (>=70) or date+name combined
-            if best_br and best_score >= 70:
+            # Accept if name is at least loosely similar (>=60) or date+name combined
+            if best_br and best_score >= 60:
                 return best_br, 0.99, "pass_0_topaz_id"
-        elif len(candidates) == 1 and not claim_name:
-            # No name on the claim to cross-check — accept sole ID match
-            # but at lower confidence
-            return candidates[0], 0.90, "pass_0_topaz_id"
+        elif candidates and not claim_name:
+            # No name on the claim — accept best date match or first candidate
+            if claim_date:
+                for c in candidates:
+                    if c.service_date == claim_date:
+                        return c, 0.92, "pass_0_topaz_id"
+            # Fall back to first candidate at lower confidence
+            return candidates[0], 0.85, "pass_0_topaz_id"
 
     # Pass 1: Exact composite (name + date + amount)
     if claim_name and claim_date:
         key = (claim_name, claim_date)
         candidates = billing_by_name_date.get(key, [])
         if len(candidates) == 1:
-            # Single candidate with exact name+date — high confidence match
             return candidates[0], 0.99, "pass_1_exact"
         # Multiple candidates — use amount to disambiguate
         for br in candidates:
             if claim_paid and br.total_payment:
                 if abs(float(br.total_payment) - claim_paid) < 0.01:
                     return br, 0.99, "pass_1_exact"
+        # Multiple candidates, no amount match — take first (same name+date)
+        if candidates:
+            return candidates[0], 0.95, "pass_1_exact"
 
     # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
     if claim_name and claim_date:
@@ -214,12 +193,38 @@ def _match_single_claim(
                 if carrier_score >= 60:
                     return br, 0.75, "pass_5_amount"
 
+    # Pass 6: Name + amount (NO date required) — for claims missing service_date
+    if claim_name and claim_paid and claim_paid > 0:
+        candidates = billing_by_name.get(claim_name, [])
+        # Try exact name match + amount
+        for br in candidates:
+            if br.total_payment and abs(float(br.total_payment) - claim_paid) < 0.01:
+                return br, 0.65, "pass_6_name_amount"
+        # Also try fuzzy name (>=90) across all billing records by checking
+        # name keys that are similar
+        if not candidates:
+            for name_key, brs in billing_by_name.items():
+                score = fuzz.token_sort_ratio(claim_name, name_key)
+                if score >= 90:
+                    for br in brs:
+                        if br.total_payment and claim_paid and abs(float(br.total_payment) - claim_paid) < 0.01:
+                            return br, 0.60, "pass_6_name_amount"
+
+    # Pass 7: Name only (NO date required) — strong name match, single billing record
+    if claim_name:
+        candidates = billing_by_name.get(claim_name, [])
+        if len(candidates) == 1:
+            return candidates[0], 0.55, "pass_7_name_only"
+
     return None, 0, None
 
 
 async def run_auto_match(session: AsyncSession) -> dict:
     """
-    Run all 6 matching passes on unmatched ERA claim lines.
+    Run all 8 matching passes on unmatched ERA claim lines.
+
+    Allows many-to-one matching: multiple ERA claims can point to the
+    same billing record (original + adjustments + secondary payers).
 
     Processes in batches of BATCH_SIZE with periodic commits and
     event-loop yields to prevent timeout on large datasets.
@@ -238,19 +243,20 @@ async def run_auto_match(session: AsyncSession) -> dict:
     if not billing_records:
         return {"status": "no_billing_records", "total": len(unmatched_claims), "matched_total": 0, "match_rate": 0}
 
-    # Build mutable indexes (records are removed after matching)
-    billing_by_name_date = {}
-    billing_by_topaz_id = {}
-    billing_by_date = {}
+    # Build indexes — NOT mutable (many-to-one: billing records stay in indexes)
+    billing_by_name_date = defaultdict(list)
+    billing_by_topaz_id = defaultdict(list)
+    billing_by_date = defaultdict(list)
+    billing_by_name = defaultdict(list)  # name-only index for dateless passes
     billing_norm_names = {}
     for br in billing_records:
         norm = _normalize_name(br.patient_name)
         billing_norm_names[br.id] = norm
-        key = (norm, br.service_date)
-        billing_by_name_date.setdefault(key, []).append(br)
-        billing_by_date.setdefault(br.service_date, []).append(br)
+        billing_by_name_date[(norm, br.service_date)].append(br)
+        billing_by_date[br.service_date].append(br)
+        billing_by_name[norm].append(br)
         if br.topaz_id:
-            billing_by_topaz_id.setdefault(br.topaz_id.strip(), []).append(br)
+            billing_by_topaz_id[br.topaz_id.strip()].append(br)
 
     # Load ERA payments for payer name lookup
     payment_ids = {c.era_payment_id for c in unmatched_claims}
@@ -259,6 +265,17 @@ async def run_auto_match(session: AsyncSession) -> dict:
     )
     payments_by_id = {p.id: p for p in payment_result.scalars().all()}
 
+    # Diagnostic: count claims with missing data
+    claims_no_name = sum(1 for c in unmatched_claims if not c.patient_name_835)
+    claims_no_date = sum(1 for c in unmatched_claims if not c.service_date_835)
+    claims_no_both = sum(1 for c in unmatched_claims if not c.patient_name_835 and not c.service_date_835)
+    logger.info(
+        f"Auto-match diagnostics: {len(unmatched_claims)} unmatched claims, "
+        f"{len(billing_records)} billing records, "
+        f"{len(billing_by_topaz_id)} unique topaz_ids in billing. "
+        f"Claims missing: name={claims_no_name}, date={claims_no_date}, both={claims_no_both}"
+    )
+
     stats = {
         "pass_0_topaz_id": 0,
         "pass_1_exact": 0,
@@ -266,6 +283,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
         "pass_3_medium": 0,
         "pass_4_weak": 0,
         "pass_5_amount": 0,
+        "pass_6_name_amount": 0,
+        "pass_7_name_only": 0,
         "unmatched": 0,
         "total": len(unmatched_claims),
     }
@@ -283,22 +302,20 @@ async def run_auto_match(session: AsyncSession) -> dict:
         matched_br, confidence, pass_name = _match_single_claim(
             claim, claim_name, claim_date, claim_paid, claim_cpt, claim_modality,
             era_payment,
-            billing_by_name_date, billing_by_date, billing_by_topaz_id, billing_norm_names,
+            billing_by_name_date, billing_by_date, billing_by_topaz_id,
+            billing_norm_names, billing_by_name,
         )
 
         if matched_br:
             stats[pass_name] += 1
 
-            # Remove from indexes so no other claim can match this record
-            _remove_from_indexes(
-                matched_br, billing_by_name_date, billing_by_date,
-                billing_by_topaz_id, billing_norm_names,
-            )
-
-            # Apply match
+            # Apply match — many-to-one: don't remove billing record from indexes
             claim.matched_billing_id = matched_br.id
             claim.match_confidence = confidence
-            matched_br.era_claim_id = claim.claim_id
+
+            # Store first claim_id as back-reference (don't overwrite if already set)
+            if not matched_br.era_claim_id:
+                matched_br.era_claim_id = claim.claim_id
 
             # NOTE: We do NOT auto-assign topaz_id from ERA claim matches.
             # topaz_id should only come from user-approved crosswalk imports.
@@ -338,7 +355,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
     logger.info(
         f"Auto-match: {stats['matched_total']}/{stats['total']} ({stats['match_rate']}%) "
         f"P0:{stats['pass_0_topaz_id']} P1:{stats['pass_1_exact']} P2:{stats['pass_2_strong']} "
-        f"P3:{stats['pass_3_medium']} P4:{stats['pass_4_weak']} P5:{stats['pass_5_amount']}"
+        f"P3:{stats['pass_3_medium']} P4:{stats['pass_4_weak']} P5:{stats['pass_5_amount']} "
+        f"P6:{stats['pass_6_name_amount']} P7:{stats['pass_7_name_only']}"
     )
     return stats
 
@@ -359,7 +377,7 @@ async def get_match_summary(session: AsyncSession) -> dict:
         ("strong_95", 0.94, 0.98),
         ("medium_85", 0.84, 0.94),
         ("amount_75", 0.74, 0.84),
-        ("weak_70", 0.0, 0.74),
+        ("weak_70", 0.54, 0.74),
     ]:
         tier_result = await session.execute(
             select(func.count(ERAClaimLine.id)).where(
