@@ -83,7 +83,7 @@ function PatientLookup() {
           <InputGroup>
             <Form.Control
               type="text"
-              placeholder="Search by patient name (e.g., SMITH, JOHN or just SMITH)..."
+              placeholder="Search by name, chart ID, patient ID, or DOB (e.g., SMITH or 9125 or 03/15/1960)..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -106,7 +106,7 @@ function PatientLookup() {
               {searchResults.length} patient{searchResults.length !== 1 ? "s" : ""} found
             </Card.Title>
             {searchResults.length === 0 ? (
-              <Alert variant="info">No patients match that name. Try a partial name like "SMITH".</Alert>
+              <Alert variant="info">No patients found. Try a partial name, chart ID, patient ID, or date of birth (MM/DD/YYYY).</Alert>
             ) : (
               <Table striped hover responsive>
                 <thead>

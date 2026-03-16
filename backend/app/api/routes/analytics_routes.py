@@ -7,7 +7,7 @@ Duplicate Detection, and Denial Reason Analytics.
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, extract, text, and_
+from sqlalchemy import select, func, case, extract, text, and_, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
@@ -608,12 +608,68 @@ async def denial_analytics(
 
 @router.get("/patients/search")
 async def patient_search(
-    q: str = Query(..., min_length=2, description="Patient name search"),
+    q: str = Query(..., min_length=2, description="Search by name, chart ID, patient ID, or DOB"),
     limit: int = Query(25, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Search patients by name. Returns distinct patients with summary stats."""
-    search = f"%{q.upper()}%"
+    """Search patients by name, patient_id, chart number, topaz_id, or date of birth.
+
+    Smart detection:
+      - Digits only → search patient_id (chart number) and topaz_id
+      - Date-like (MM/DD/YYYY, YYYY-MM-DD, MM-DD-YYYY) → search birth_date
+      - Otherwise → name search (case-insensitive partial match)
+    All searches are forgiving: partial matches, no exact spelling required.
+    """
+    raw = q.strip()
+
+    # --- Detect search type ---
+    filters = []
+
+    # Check if it looks like a date (contains / or - with digits)
+    parsed_date = None
+    if any(c in raw for c in ("/")):
+        # Try MM/DD/YYYY, M/D/YYYY
+        for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d"):
+            try:
+                from datetime import datetime as _dt
+                parsed_date = _dt.strptime(raw, fmt).date()
+                break
+            except ValueError:
+                continue
+    if parsed_date is None and len(raw) == 10 and raw[4] == "-":
+        # YYYY-MM-DD
+        try:
+            from datetime import datetime as _dt
+            parsed_date = _dt.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    if parsed_date is None and len(raw) >= 8 and "-" in raw:
+        # MM-DD-YYYY
+        for fmt in ("%m-%d-%Y", "%m-%d-%y"):
+            try:
+                from datetime import datetime as _dt
+                parsed_date = _dt.strptime(raw, fmt).date()
+                break
+            except ValueError:
+                continue
+
+    if parsed_date:
+        # Search by birth date
+        filters.append(BillingRecord.birth_date == parsed_date)
+    elif raw.isdigit():
+        # Numeric — search patient_id (chart number) and topaz_id
+        filters.append(or_(
+            cast(BillingRecord.patient_id, String).ilike(f"%{raw}%"),
+            BillingRecord.topaz_id.ilike(f"%{raw}%"),
+        ))
+    else:
+        # Name search — case-insensitive partial match
+        search = f"%{raw.upper()}%"
+        filters.append(or_(
+            BillingRecord.patient_name.ilike(search),
+            BillingRecord.patient_name_display.ilike(search),
+        ))
+
     result = await db.execute(
         select(
             BillingRecord.patient_name,
@@ -625,8 +681,9 @@ async def patient_search(
             func.max(BillingRecord.service_date).label("last_visit"),
             func.max(BillingRecord.insurance_carrier).label("insurance"),
             func.max(BillingRecord.birth_date).label("birth_date"),
+            func.max(BillingRecord.topaz_id).label("topaz_id"),
         )
-        .where(BillingRecord.patient_name.ilike(search))
+        .where(*filters)
         .group_by(BillingRecord.patient_name, BillingRecord.patient_id)
         .order_by(BillingRecord.patient_name)
         .limit(limit)
@@ -643,6 +700,7 @@ async def patient_search(
             "last_visit": r.last_visit.isoformat() if r.last_visit else None,
             "insurance": r.insurance,
             "birth_date": r.birth_date.isoformat() if r.birth_date else None,
+            "topaz_id": r.topaz_id,
         })
     return {"patients": patients, "total": len(patients)}
 
