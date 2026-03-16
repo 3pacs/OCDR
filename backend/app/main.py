@@ -59,11 +59,17 @@ async def lifespan(app: FastAPI):
                 ))
             except Exception as e:
                 logger.debug(f"Column {table}.{column} widen skipped: {e}")
+        # Drop old non-negative payment constraints (refunds/adjustments are legitimate)
+        for old_ck in ["ck_billing_primary_nonneg", "ck_billing_secondary_nonneg", "ck_billing_total_nonneg"]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE billing_records DROP CONSTRAINT IF EXISTS {old_ck}"
+                ))
+            except Exception:
+                pass
+
         # Add check constraints (idempotent — skip if already exists)
         constraints = [
-            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_primary_nonneg CHECK (primary_payment >= 0)",
-            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_secondary_nonneg CHECK (secondary_payment >= 0)",
-            "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_total_nonneg CHECK (total_payment >= 0)",
             "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_patient_name_len CHECK (length(patient_name) >= 2)",
             "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_carrier_len CHECK (length(insurance_carrier) >= 1)",
             "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_modality_len CHECK (length(modality) >= 1)",

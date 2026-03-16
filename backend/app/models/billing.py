@@ -96,11 +96,9 @@ class BillingRecord(Base):
         Index("ix_billing_doctor_carrier", "referring_doctor", "insurance_carrier"),
         Index("ix_billing_service_year", "service_year", "insurance_carrier"),
         # Constraints: prevent garbage data at the DB level
+        # Note: payment fields allow negatives (refunds, adjustments, takebacks)
         CheckConstraint("length(patient_name) >= 2", name="ck_billing_patient_name_len"),
         CheckConstraint("length(insurance_carrier) >= 1", name="ck_billing_carrier_len"),
         CheckConstraint("length(modality) >= 1", name="ck_billing_modality_len"),
-        CheckConstraint("primary_payment >= 0", name="ck_billing_primary_nonneg"),
-        CheckConstraint("secondary_payment >= 0", name="ck_billing_secondary_nonneg"),
-        CheckConstraint("total_payment >= 0", name="ck_billing_total_nonneg"),
         CheckConstraint("service_date >= '2010-01-01'", name="ck_billing_date_min"),
     )
