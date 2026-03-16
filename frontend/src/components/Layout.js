@@ -1,6 +1,6 @@
 import React from "react";
 import { Outlet, NavLink } from "react-router-dom";
-import { Container, Nav, Navbar } from "react-bootstrap";
+import { Container, Nav, Navbar, NavDropdown } from "react-bootstrap";
 
 function Layout() {
   return (
@@ -12,12 +12,22 @@ function Layout() {
           <Navbar.Collapse id="main-nav">
             <Nav className="me-auto">
               <Nav.Link as={NavLink} to="/">Dashboard</Nav.Link>
-              <Nav.Link as={NavLink} to="/import">Import Data</Nav.Link>
+              <Nav.Link as={NavLink} to="/import">Import</Nav.Link>
               <Nav.Link as={NavLink} to="/matching">Matching</Nav.Link>
-              <Nav.Link as={NavLink} to="/denials">Denials</Nav.Link>
-              <Nav.Link as={NavLink} to="/underpayments">Underpayments</Nav.Link>
-              <Nav.Link as={NavLink} to="/filing-deadlines">Filing Deadlines</Nav.Link>
-              <Nav.Link as={NavLink} to="/secondary-followup">Secondary F/U</Nav.Link>
+              <NavDropdown title="Revenue" id="revenue-dropdown">
+                <NavDropdown.Item as={NavLink} to="/denials">Denial Queue</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/denial-analytics">Denial Analytics</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/underpayments">Underpayments</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/filing-deadlines">Filing Deadlines</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/secondary-followup">Secondary F/U</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/duplicates">Duplicates</NavDropdown.Item>
+              </NavDropdown>
+              <NavDropdown title="Analytics" id="analytics-dropdown">
+                <NavDropdown.Item as={NavLink} to="/payer-monitor">Payer Monitor</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/physicians">Physicians</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/psma">PSMA PET</NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/gado">Gado Contrast</NavDropdown.Item>
+              </NavDropdown>
               <Nav.Link as={NavLink} to="/era-payments">ERA Payments</Nav.Link>
               <Nav.Link as={NavLink} to="/insights">Insights</Nav.Link>
             </Nav>

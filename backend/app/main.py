@@ -180,6 +180,7 @@ from backend.app.api.routes.revenue_routes import router as revenue_router
 from backend.app.api.routes.admin_routes import router as admin_router
 from backend.app.api.routes.matching_routes import router as matching_router
 from backend.app.api.routes.insights_routes import router as insights_router
+from backend.app.api.routes.analytics_routes import router as analytics_router
 
 app.include_router(import_router, prefix="/api/import", tags=["import"])
 app.include_router(era_router, prefix="/api/era", tags=["era"])
@@ -187,3 +188,4 @@ app.include_router(revenue_router, prefix="/api", tags=["revenue"])
 app.include_router(admin_router, prefix="/api", tags=["admin"])
 app.include_router(matching_router, prefix="/api/matching", tags=["matching"])
 app.include_router(insights_router, prefix="/api/insights", tags=["insights"])
+app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
