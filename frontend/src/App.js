@@ -17,6 +17,7 @@ import PSMADashboard from "./pages/PSMADashboard";
 import GadoDashboard from "./pages/GadoDashboard";
 import Duplicates from "./pages/Duplicates";
 import DenialAnalytics from "./pages/DenialAnalytics";
+import PatientLookup from "./pages/PatientLookup";
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
+          <Route path="patients" element={<PatientLookup />} />
           <Route path="import" element={<Import />} />
           <Route path="matching" element={<Matching />} />
           <Route path="denials" element={<Denials />} />

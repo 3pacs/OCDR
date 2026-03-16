@@ -600,3 +600,177 @@ async def denial_analytics(
         "by_modality": by_modality,
         "total_denied": total_denied,
     }
+
+
+# ---------------------------------------------------------------------------
+# Patient Lookup — search by name, view all visits + payment status
+# ---------------------------------------------------------------------------
+
+@router.get("/patients/search")
+async def patient_search(
+    q: str = Query(..., min_length=2, description="Patient name search"),
+    limit: int = Query(25, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search patients by name. Returns distinct patients with summary stats."""
+    search = f"%{q.upper()}%"
+    result = await db.execute(
+        select(
+            BillingRecord.patient_name,
+            BillingRecord.patient_id,
+            func.count(BillingRecord.id).label("visit_count"),
+            func.sum(BillingRecord.total_payment).label("total_paid"),
+            func.sum(case((BillingRecord.total_payment == 0, 1), else_=0)).label("unpaid_count"),
+            func.min(BillingRecord.service_date).label("first_visit"),
+            func.max(BillingRecord.service_date).label("last_visit"),
+            func.max(BillingRecord.insurance_carrier).label("insurance"),
+            func.max(BillingRecord.birth_date).label("birth_date"),
+        )
+        .where(BillingRecord.patient_name.ilike(search))
+        .group_by(BillingRecord.patient_name, BillingRecord.patient_id)
+        .order_by(BillingRecord.patient_name)
+        .limit(limit)
+    )
+    patients = []
+    for r in result.all():
+        patients.append({
+            "patient_name": r.patient_name,
+            "patient_id": r.patient_id,
+            "visit_count": r.visit_count,
+            "total_paid": float(r.total_paid or 0),
+            "unpaid_count": r.unpaid_count,
+            "first_visit": r.first_visit.isoformat() if r.first_visit else None,
+            "last_visit": r.last_visit.isoformat() if r.last_visit else None,
+            "insurance": r.insurance,
+            "birth_date": r.birth_date.isoformat() if r.birth_date else None,
+        })
+    return {"patients": patients, "total": len(patients)}
+
+
+@router.get("/patients/{patient_name}/detail")
+async def patient_detail(patient_name: str, db: AsyncSession = Depends(get_db)):
+    """Full billing history for a patient — every visit with payment status and why."""
+    from backend.app.revenue.denial_actions import get_denial_detail
+    from backend.app.models.payer import FeeSchedule
+
+    # All billing records for this patient
+    result = await db.execute(
+        select(BillingRecord)
+        .where(BillingRecord.patient_name == patient_name)
+        .order_by(BillingRecord.service_date.desc())
+    )
+    records = result.scalars().all()
+
+    if not records:
+        return {"patient_name": patient_name, "visits": [], "summary": {}}
+
+    # Fee schedule for underpayment detection
+    fee_result = await db.execute(select(FeeSchedule))
+    fee_map = {}
+    for f in fee_result.scalars().all():
+        key = (f.payer_code, f.modality)
+        fee_map[key] = float(f.expected_rate)
+        fee_map[("DEFAULT", f.modality)] = fee_map.get(("DEFAULT", f.modality), float(f.expected_rate))
+
+    visits = []
+    total_billed = 0
+    total_paid = 0
+    total_unpaid = 0
+    total_underpaid = 0
+
+    for r in records:
+        payment = float(r.total_payment or 0)
+        primary = float(r.primary_payment or 0)
+        secondary = float(r.secondary_payment or 0)
+        total_paid += payment
+
+        # Determine payment status and reason
+        expected = fee_map.get((r.insurance_carrier, r.modality)) or fee_map.get(("DEFAULT", r.modality)) or 0
+        total_billed += expected
+
+        if r.denial_status and r.denial_status not in ("RESOLVED", "PAID_ON_APPEAL"):
+            status = "DENIED"
+            denial_info = get_denial_detail(
+                r.denial_reason_code,
+                billed_amount=expected,
+                paid_amount=payment,
+            )
+            reason = denial_info.get("carc_description", r.denial_reason_code or "Unknown denial")
+            action = denial_info.get("recommended_action", "REVIEW")
+            fix = denial_info.get("fix_instructions", "")
+        elif payment == 0 and expected > 0:
+            status = "UNPAID"
+            total_unpaid += 1
+            # Figure out why
+            if r.appeal_deadline and r.appeal_deadline < date.today():
+                reason = "Filing deadline passed"
+                action = "WRITE_OFF"
+                fix = "Deadline expired — may not be recoverable"
+            else:
+                reason = "No payment received"
+                action = "FOLLOW_UP"
+                fix = "Contact payer to check claim status"
+        elif expected > 0 and payment < expected * 0.80:
+            status = "UNDERPAID"
+            total_underpaid += 1
+            reason = f"Paid ${payment:,.2f} vs expected ${expected:,.2f} ({payment/expected*100:.0f}%)"
+            action = "REVIEW"
+            fix = "Compare EOB to fee schedule — may need appeal"
+        elif payment > 0:
+            status = "PAID"
+            reason = None
+            action = None
+            fix = None
+        else:
+            status = "NO_CHARGE"
+            reason = None
+            action = None
+            fix = None
+
+        # Check missing secondary
+        missing_secondary = False
+        if primary > 0 and secondary == 0 and r.insurance_carrier in ("M/M", "CALOPTIMA"):
+            missing_secondary = True
+
+        visits.append({
+            "id": r.id,
+            "service_date": r.service_date.isoformat() if r.service_date else None,
+            "modality": r.modality,
+            "scan_type": r.scan_type,
+            "description": r.description,
+            "referring_doctor": r.referring_doctor,
+            "insurance_carrier": r.insurance_carrier,
+            "primary_payment": primary,
+            "secondary_payment": secondary,
+            "total_payment": payment,
+            "expected_payment": expected,
+            "gado_used": r.gado_used,
+            "status": status,
+            "reason": reason,
+            "action": action,
+            "fix": fix,
+            "denial_status": r.denial_status,
+            "denial_reason_code": r.denial_reason_code,
+            "appeal_deadline": r.appeal_deadline.isoformat() if r.appeal_deadline else None,
+            "missing_secondary": missing_secondary,
+        })
+
+    # Summary
+    first_record = records[-1]
+    summary = {
+        "patient_name": patient_name,
+        "patient_id": first_record.patient_id,
+        "birth_date": first_record.birth_date.isoformat() if first_record.birth_date else None,
+        "topaz_id": first_record.topaz_id,
+        "total_visits": len(records),
+        "total_paid": round(total_paid, 2),
+        "total_expected": round(total_billed, 2),
+        "total_unpaid": total_unpaid,
+        "total_underpaid": total_underpaid,
+        "collection_rate": round(total_paid / total_billed * 100, 1) if total_billed > 0 else 0,
+        "carriers": list(set(r.insurance_carrier for r in records)),
+        "first_visit": records[-1].service_date.isoformat() if records[-1].service_date else None,
+        "last_visit": records[0].service_date.isoformat() if records[0].service_date else None,
+    }
+
+    return {"summary": summary, "visits": visits}
