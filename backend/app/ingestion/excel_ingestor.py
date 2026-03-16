@@ -188,7 +188,13 @@ def _detect_headers(ws) -> tuple[dict[int, str], int]:
     for col_idx, cell in enumerate(first_row):
         if cell is None:
             continue
+        # Normalize whitespace: replace non-breaking spaces, collapse runs
         header = str(cell).strip().lower()
+        header = header.replace("\xa0", " ").replace("\u200b", "")
+        # Collapse multiple spaces into one
+        while "  " in header:
+            header = header.replace("  ", " ")
+        header = header.strip()
         if not header:
             continue
 
@@ -214,6 +220,12 @@ def _detect_headers(ws) -> tuple[dict[int, str], int]:
     # If we matched at least 5 headers, use header-based mapping
     if header_count >= 5:
         logger.info(f"Header-based detection: matched {header_count} columns")
+        # Log topaz-related mappings for debugging
+        topaz_fields = {k: v for k, v in col_map.items() if "topaz" in v or v == "patient_id"}
+        if topaz_fields:
+            for ci, fn in topaz_fields.items():
+                col_letter = chr(ord('A') + ci) if ci < 26 else f"col_{ci}"
+                logger.info(f"  ID mapping: col {col_letter} (idx {ci}) -> {fn}")
         return col_map, 1
 
     # Fall back to legacy positional mapping

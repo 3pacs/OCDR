@@ -39,12 +39,15 @@ BATCH_SIZE = 200
 
 
 def _normalize_name(name: str | None) -> str:
-    """Normalize patient name for matching: uppercase, strip, remove middle initials."""
+    """Normalize patient name for matching: uppercase, strip commas, remove middle initials."""
     if not name:
         return ""
-    parts = name.upper().strip().replace(",", ", ").split()
-    parts = [p for p in parts if len(p) > 1 or p in (",",)]
-    return " ".join(parts).strip().rstrip(",").lstrip(",").strip()
+    # Strip all commas so "SMITH, JOHN" and "SMITH JOHN" normalize identically
+    cleaned = name.upper().strip().replace(",", " ")
+    parts = cleaned.split()
+    # Remove single-character tokens (middle initials)
+    parts = [p for p in parts if len(p) > 1]
+    return " ".join(parts).strip()
 
 
 def _names_match(name1: str, name2: str, threshold: int = 85) -> tuple[bool, float]:
@@ -162,13 +165,14 @@ def _match_single_claim(
     if claim_name and claim_date:
         key = (claim_name, claim_date)
         candidates = billing_by_name_date.get(key, [])
+        if len(candidates) == 1:
+            # Single candidate with exact name+date — high confidence match
+            return candidates[0], 0.99, "pass_1_exact"
+        # Multiple candidates — use amount to disambiguate
         for br in candidates:
             if claim_paid and br.total_payment:
                 if abs(float(br.total_payment) - claim_paid) < 0.01:
                     return br, 0.99, "pass_1_exact"
-            if len(candidates) == 1:
-                return br, 0.99, "pass_1_exact"
-            break  # Only check first candidate for single-match
 
     # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
     if claim_name and claim_date:
