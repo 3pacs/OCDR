@@ -83,6 +83,56 @@ auto-detects which layout is in use. Both are supported.
 
 ---
 
+## What Was Done (Session 2026-03-16)
+
+### Commit 5: `6ff9021` — Add CLAUDE.md session log
+- Created this file with column mapping, change history, and file reference.
+
+### Commit 6: `f1e81f4` — Add 6 analytics pages (F-08, F-09, F-13, F-14, F-15, F-16)
+- **Problem**: The app had 9 working frontend pages but was missing all analytics
+  dashboards — Payer Monitor, Physician Analytics, PSMA PET, Gado Contrast,
+  Duplicate Detection, and Denial Reason Analytics.
+- **Backend**: Created `backend/app/api/routes/analytics_routes.py` with all 6
+  feature endpoint groups, registered on `/api/analytics/` prefix.
+- **Frontend**: Created 6 new React pages with full chart + table UIs:
+  - `PayerMonitor.js` — carrier alerts, revenue trends, drill-down
+  - `Physicians.js` — ranked table, top-15 chart, per-doc detail
+  - `PSMADashboard.js` — PSMA vs standard PET, yearly trend
+  - `GadoDashboard.js` — margin KPIs, by-year/modality, top docs
+  - `Duplicates.js` — duplicate groups with C.A.P toggle (BR-01)
+  - `DenialAnalytics.js` — Pareto chart, reason codes, by-carrier/modality
+- **Navigation**: Reorganized Layout.js nav bar into "Revenue" and "Analytics"
+  dropdown menus to keep it clean with 15 total pages.
+- **Routing**: Updated App.js with all 6 new routes.
+
+---
+
+## Architecture Notes (IMPORTANT — BUILD_SPEC is outdated)
+
+The BUILD_SPEC.md says **Flask + SQLite**. The actual codebase is:
+
+| Component | Spec Says | Actually Is |
+|-----------|-----------|-------------|
+| Backend   | Flask 3.x | **FastAPI** (uvicorn, async) |
+| Database  | SQLite 3  | **PostgreSQL 16** (asyncpg) |
+| Frontend  | Jinja2 + Bootstrap | **React 18** + React Bootstrap + Recharts |
+| Charting  | Chart.js  | **Recharts** |
+| Deployment| Windows Service | **Docker Compose** (postgres + backend + frontend) |
+
+### How to run:
+```bash
+docker-compose up
+# Backend: http://localhost:8000 (API docs: /docs)
+# Frontend: http://localhost:3000
+# Postgres: localhost:5432, db=ocmri, user=ocmri, pass=ocmri_secret
+```
+
+### Database access (for user):
+- **DBeaver** or **pgAdmin** — connect to PostgreSQL at localhost:5432
+- **Excel Power Query** — needs PostgreSQL ODBC driver, then Data > From Database > PostgreSQL
+
+---
+
 ## Files of Interest
 
 | File | Purpose |
@@ -90,12 +140,47 @@ auto-detects which layout is in use. Both are supported.
 | `backend/app/ingestion/excel_ingestor.py` | Main OCMRI import engine. Header-based mapping with legacy positional fallback. |
 | `backend/app/ingestion/flexible_excel_ingestor.py` | Generic Excel ingestor for non-OCMRI files. Uses dynamic header detection. |
 | `backend/app/models/billing.py` | BillingRecord SQLAlchemy model. |
+| `backend/app/api/routes/analytics_routes.py` | All 6 analytics endpoints (F-08/09/13/14/15/16). |
+| `backend/app/api/routes/revenue_routes.py` | Denial, underpayment, filing, secondary routes. |
+| `backend/app/api/routes/insights_routes.py` | Knowledge graph + recommendations. |
+| `backend/app/main.py` | FastAPI app factory, router registration, startup migrations. |
+| `frontend/src/App.js` | React routing — all 15 pages. |
+| `frontend/src/components/Layout.js` | Nav bar with Revenue + Analytics dropdowns. |
+| `docker-compose.yml` | 3-service stack: postgres, backend, frontend. |
 
 ---
 
+## Feature Completion Status
+
+| Feature | Status | Sprint |
+|---------|--------|--------|
+| F-00 Scaffolding | DONE | 1 |
+| F-01 Excel Import | DONE | 1 |
+| F-02 835 ERA Parser | DONE | 1 |
+| F-03 Auto-Match Engine | DONE | 2 |
+| F-04 Denial Tracking | DONE | 2 |
+| F-05 Underpayment Detector | DONE | 1 |
+| F-06 Filing Deadlines | DONE | 1 |
+| F-07 Secondary Follow-Up | DONE | 2 |
+| F-08 Duplicate Detector | **DONE** (session 2026-03-16) | 2 |
+| F-09 Payer Monitor | **DONE** (session 2026-03-16) | 3 |
+| F-10 Physician Statements | NOT STARTED | 4 |
+| F-11 Folder Monitor | PARTIAL (EOB scanner) | 3 |
+| F-12 CSV/PDF Import | PARTIAL (stubs) | 3 |
+| F-13 PSMA Tracking | **DONE** (session 2026-03-16) | 4 |
+| F-14 Gado Analytics | **DONE** (session 2026-03-16) | 5 |
+| F-15 Physician Analytics | **DONE** (session 2026-03-16) | 5 |
+| F-16 Denial Analytics | **DONE** (session 2026-03-16) | 4 |
+| F-17 Payment Reconciliation | NOT STARTED | 4 |
+| F-18 CSV Export Bridge | NOT STARTED | 5 |
+| F-19 Dashboard UI | DONE | 6 |
+| F-20 Backup | DONE | 1 |
+
 ## Still TODO / Open Items
-- None explicitly requested. The import should now work correctly with both old
-  and new OCMRI layouts.
-- If import issues arise, check whether the header row is being detected properly
-  (needs >= 5 header matches to use header-based mapping, otherwise falls back to
-  legacy positional mapping).
+- F-10: Physician Statements (PDF generation, monthly invoices)
+- F-11: Full folder monitor daemon (watchdog-based)
+- F-12: CSV + PDF + OCR import parsers
+- F-17: Bank statement reconciliation (check/EFT matching)
+- F-18: Scheduled CSV export bridge for Excel Power Query
+- User needs to set up DBeaver/pgAdmin for direct database access
+- User needs PostgreSQL ODBC driver for Excel Power Query connection
