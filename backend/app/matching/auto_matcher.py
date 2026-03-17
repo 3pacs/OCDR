@@ -22,10 +22,18 @@ records are NOT removed from indexes after first match. The first
 matched claim_id is stored in BillingRecord.era_claim_id; all claims
 point back via ERAClaimLine.matched_billing_id.
 
-Key insight: ERA claim_id is the Topaz billing system ID. This is NOT
-the same as BillingRecord.patient_id, which is the chart number from
-OCMRI.xlsx. Matches found by passes 1-8 teach us the chart↔topaz
-crosswalk, which Pass 0 can then exploit for faster future matching.
+TOPAZ PREFIX ENCODING (critical for ID matching):
+  Topaz encodes billing context as a numeric prefix on PatientID:
+    No prefix:  Direct patient reference (raw PatientID)
+    10000000+:  Primary insurance billing
+    20000000+:  Secondary insurance billing
+    30000000+:  Tertiary insurance billing
+    70000000+:  Patient copay/responsibility
+    80000000+:  Additional tiers
+    90000000+:  Additional tiers
+  To extract the real PatientID: claim_id % 10000000 (MOD 10M)
+  This prefix system is used in tbl_Charges and tbl_Payments in the
+  Topaz Access database, and flows into ERA 835 claim_id fields.
 
 After matching, updates:
   - ERAClaimLine.matched_billing_id and match_confidence
@@ -104,6 +112,71 @@ def _strip_leading_zeros(s: str) -> str:
     return stripped or "0"
 
 
+# Topaz billing context prefixes (multiples of 10,000,000)
+TOPAZ_PREFIX_MOD = 10_000_000
+TOPAZ_PREFIX_LABELS = {
+    0: "direct",
+    1: "primary",
+    2: "secondary",
+    3: "tertiary",
+    7: "copay",
+    8: "tier_8",
+    9: "tier_9",
+}
+
+
+def _decode_topaz_id(raw_id: str) -> tuple[str, str]:
+    """Decode a Topaz prefixed PatientID.
+
+    Topaz encodes billing context as numeric prefix:
+      10061723 → patient 61723, primary insurance
+      20061723 → patient 61723, secondary insurance
+      70061723 → patient 61723, patient copay
+      61723    → patient 61723, direct reference
+
+    Returns (base_patient_id_str, billing_context).
+    """
+    cleaned = raw_id.strip().lstrip("0") or "0"
+    try:
+        num = int(cleaned)
+    except (ValueError, OverflowError):
+        return cleaned, "unknown"
+
+    if num >= TOPAZ_PREFIX_MOD:
+        prefix_digit = num // TOPAZ_PREFIX_MOD
+        base_id = num % TOPAZ_PREFIX_MOD
+        context = TOPAZ_PREFIX_LABELS.get(prefix_digit, f"prefix_{prefix_digit}")
+        return str(base_id), context
+    else:
+        return str(num), "direct"
+
+
+def _all_topaz_variants(raw_id: str) -> list[str]:
+    """Generate all possible lookup keys for a Topaz ID.
+
+    Given "10061723", returns ["10061723", "61723"] (raw + decoded).
+    Given "00061501", returns ["00061501", "61501"] (raw + zero-stripped).
+    Given "61723", returns ["61723"] (already base).
+    """
+    keys = set()
+    cleaned = raw_id.strip()
+    keys.add(cleaned)
+
+    # Strip leading zeros
+    stripped = _strip_leading_zeros(cleaned)
+    keys.add(stripped)
+
+    # Decode Topaz prefix (MOD 10M)
+    base_id, _ = _decode_topaz_id(cleaned)
+    keys.add(base_id)
+
+    # Also strip leading zeros from decoded base
+    keys.add(_strip_leading_zeros(base_id))
+
+    keys.discard("")
+    return list(keys)
+
+
 def _best_name_score(claim_name, br, billing_norm_names, billing_display_names):
     """Get the best fuzzy name score across patient_name and patient_name_display."""
     norm = billing_norm_names.get(br.id, "")
@@ -137,14 +210,15 @@ def _match_single_claim(
     """
 
     # Pass 0: Topaz ID crosswalk match (with name corroboration)
+    # Handles Topaz prefix encoding: 10061723 (primary) → base 61723
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
-        candidates = billing_by_topaz_id.get(topaz_key, [])
-        # Also try without leading zeros (00061501 → 61501)
-        if not candidates:
-            topaz_key_stripped = _strip_leading_zeros(topaz_key)
-            if topaz_key_stripped != topaz_key:
-                candidates = billing_by_topaz_id.get(topaz_key_stripped, [])
+        candidates = []
+        # Try all variants: raw, zero-stripped, prefix-decoded
+        for variant in _all_topaz_variants(topaz_key):
+            candidates = billing_by_topaz_id.get(variant, [])
+            if candidates:
+                break
         if candidates and claim_name:
             best_br = None
             best_score = 0
@@ -168,31 +242,35 @@ def _match_single_claim(
             return candidates[0], 0.85, "pass_0_topaz_id"
 
     # Pass 0b: Claim ID → patient_id (chart number) cross-reference
-    # ERA claim_id might be or contain the chart number
+    # ERA claim_id might be or contain the chart number, with or without prefix
     if claim.claim_id:
         claim_id_stripped = claim.claim_id.strip()
-        # Try exact match as integer
-        try:
-            claim_id_int = int(claim_id_stripped)
-            candidates = billing_by_patient_id.get(claim_id_int, [])
-            if candidates and claim_name:
-                best_br = None
-                best_score = 0
-                for c in candidates:
-                    name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names)
-                    date_match = (c.service_date == claim_date) if claim_date else False
-                    combined = name_score + (10 if date_match else 0)
-                    if combined > best_score:
-                        best_score = combined
-                        best_br = c
-                if best_br and best_score >= 70:
-                    return best_br, 0.92, "pass_0b_patient_id"
-            elif candidates and claim_date:
-                for c in candidates:
-                    if c.service_date == claim_date:
-                        return c, 0.88, "pass_0b_patient_id"
-        except (ValueError, OverflowError):
-            pass
+        # Try all variants: raw, zero-stripped, prefix-decoded
+        p0b_candidates = []
+        for variant in _all_topaz_variants(claim_id_stripped):
+            try:
+                variant_int = int(variant)
+                p0b_candidates = billing_by_patient_id.get(variant_int, [])
+                if p0b_candidates:
+                    break
+            except (ValueError, OverflowError):
+                continue
+        if p0b_candidates and claim_name:
+            best_br = None
+            best_score = 0
+            for c in p0b_candidates:
+                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names)
+                date_match = (c.service_date == claim_date) if claim_date else False
+                combined = name_score + (10 if date_match else 0)
+                if combined > best_score:
+                    best_score = combined
+                    best_br = c
+            if best_br and best_score >= 70:
+                return best_br, 0.92, "pass_0b_patient_id"
+        elif p0b_candidates and claim_date:
+            for c in p0b_candidates:
+                if c.service_date == claim_date:
+                    return c, 0.88, "pass_0b_patient_id"
 
     # Pass 1: Exact composite (name + date + amount)
     if claim_name and claim_date:
@@ -391,12 +469,10 @@ async def run_auto_match(session: AsyncSession) -> dict:
         if norm_display and norm_display != norm:
             billing_by_name[norm_display].append(br)
         if br.topaz_id:
-            tid = br.topaz_id.strip()
-            billing_by_topaz_id[tid].append(br)
-            # Also index without leading zeros for ERA files that zero-pad
-            tid_stripped = _strip_leading_zeros(tid)
-            if tid_stripped != tid:
-                billing_by_topaz_id[tid_stripped].append(br)
+            # Index all variants: raw, zero-stripped, prefix-decoded
+            for variant in _all_topaz_variants(br.topaz_id):
+                if br not in billing_by_topaz_id[variant]:
+                    billing_by_topaz_id[variant].append(br)
         if br.patient_id is not None:
             billing_by_patient_id[br.patient_id].append(br)
         if br.modality:
@@ -701,14 +777,16 @@ async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int
         diag["pass_results"].append("NO BILLING RECORDS IN DATABASE")
         return diag
 
-    # --- Pass 0 diagnosis: Topaz ID ---
+    # --- Pass 0 diagnosis: Topaz ID (with prefix decoding) ---
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
-        topaz_key_stripped = _strip_leading_zeros(topaz_key)
+        base_id, billing_context = _decode_topaz_id(topaz_key)
+        claim_variants = set(_all_topaz_variants(topaz_key))
         topaz_matches = [br for br in billing_records
-                         if br.topaz_id and (br.topaz_id.strip() == topaz_key
-                                             or _strip_leading_zeros(br.topaz_id.strip()) == topaz_key_stripped)]
+                         if br.topaz_id and set(_all_topaz_variants(br.topaz_id)) & claim_variants]
         topaz_populated = sum(1 for br in billing_records if br.topaz_id)
+        diag["claim"]["decoded_base_id"] = base_id
+        diag["claim"]["billing_context"] = billing_context
         if topaz_matches:
             norm_cache = {br.id: _normalize_name(br.patient_name) for br in topaz_matches}
             disp_cache = {br.id: (_normalize_name(br.patient_name_display) if br.patient_name_display else "") for br in topaz_matches}
@@ -728,28 +806,30 @@ async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int
                 "topaz_id_coverage": f"{topaz_populated}/{len(billing_records)} billing records have topaz_id",
             })
 
-    # --- Pass 0b diagnosis: claim_id as patient_id ---
+    # --- Pass 0b diagnosis: claim_id as patient_id (with prefix decoding) ---
     if claim.claim_id:
-        try:
-            cid_int = int(claim.claim_id.strip())
-            pid_matches = [br for br in billing_records if br.patient_id == cid_int]
-            if pid_matches:
-                diag["pass_results"].append({
-                    "pass": "P0b_patient_id",
-                    "result": f"Found {len(pid_matches)} billing records with patient_id={cid_int}",
-                    "records": [{"id": br.id, "name": br.patient_name,
-                                 "date": br.service_date.isoformat() if br.service_date else None}
-                                for br in pid_matches[:5]],
-                })
-            else:
-                diag["pass_results"].append({
-                    "pass": "P0b_patient_id",
-                    "result": f"No billing record has patient_id={cid_int}",
-                })
-        except (ValueError, OverflowError):
+        pid_matches = []
+        tried_variants = []
+        for variant in _all_topaz_variants(claim.claim_id.strip()):
+            try:
+                v_int = int(variant)
+                tried_variants.append(v_int)
+                matches = [br for br in billing_records if br.patient_id == v_int]
+                pid_matches.extend(matches)
+            except (ValueError, OverflowError):
+                continue
+        if pid_matches:
             diag["pass_results"].append({
                 "pass": "P0b_patient_id",
-                "result": f"claim_id '{claim.claim_id}' is not numeric — pass skipped",
+                "result": f"Found {len(pid_matches)} billing records matching patient_id variants {tried_variants}",
+                "records": [{"id": br.id, "name": br.patient_name,
+                             "date": br.service_date.isoformat() if br.service_date else None}
+                            for br in pid_matches[:5]],
+            })
+        else:
+            diag["pass_results"].append({
+                "pass": "P0b_patient_id",
+                "result": f"No billing record has patient_id in {tried_variants}",
             })
 
     # --- Name search: find closest name matches ---

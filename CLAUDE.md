@@ -184,3 +184,75 @@ docker-compose up
 - F-18: Scheduled CSV export bridge for Excel Power Query
 - User needs to set up DBeaver/pgAdmin for direct database access
 - User needs PostgreSQL ODBC driver for Excel Power Query connection
+
+---
+
+## What Was Done (Session 2026-03-17)
+
+### Commit 7: `95de3c4` — Patient search: multi-field support
+- **Problem**: Patient lookup only searched by name. User had to spell names perfectly.
+- **Fix**: Search now auto-detects what you typed:
+  - Digits → searches patient_id (chart number) + topaz_id with partial match
+  - Date format (MM/DD/YYYY, YYYY-MM-DD) → searches birth_date
+  - Text → name search (case-insensitive, partial, checks both patient_name and
+    patient_name_display)
+- **Files**: `analytics_routes.py`, `PatientLookup.js`
+
+### Commit 8: `f5208eb` — Overhaul auto-matcher (8 → 11 passes)
+- **Problems found**: Passes 5 & 6 compared ERA `paid_amount` against billing
+  `total_payment` which is $0 before matching (dead code). patient_name_display
+  ignored. No claim_id→patient_id cross-reference. Date window only ±3 days.
+  Name-only pass required exactly 1 record per patient.
+- **New passes**: P0b (claim_id→patient_id), P4b (±7 days), P6 (name+modality)
+- **Fixes**: Amount passes use billed_amount, display name indexed, P8 multi-record
+- **Files**: `auto_matcher.py`, `matching_routes.py`
+
+### Commit 9: `6a1ef03` — Leading zeros fix + diagnostic endpoint
+- **Problem**: ERA files zero-pad claim_ids ("00061501" vs "61501").
+- **Fix**: _strip_leading_zeros() on both sides of comparison.
+- **New**: `GET /api/matching/diagnose/{id}` — explains WHY a claim didn't match:
+  closest candidates, name scores, date gaps, topaz coverage.
+- **Files**: `auto_matcher.py`, `matching_routes.py`
+
+### Commit 10: — Topaz prefix encoding system (THE ROOT CAUSE)
+- **Problem**: Topaz encodes billing context as numeric prefix on PatientID:
+  - `10061723` = primary insurance billing for patient 61723
+  - `20061723` = secondary insurance billing
+  - `30061723` = tertiary
+  - `70061723` = patient copay
+  - To get real PatientID: `MOD(claim_id, 10000000)`
+  This affects every cross-reference in tbl_Charges and tbl_Payments, and flows
+  into ERA 835 claim_ids. Our matcher was comparing "10061723" to "61723" and
+  failing on every prefixed claim.
+- **Fix**: Added `_decode_topaz_id()` and `_all_topaz_variants()` — Pass 0 and
+  Pass 0b now try all variants: raw, zero-stripped, and prefix-decoded.
+  Billing index also stores prefix-decoded variants.
+- **Also documented**: Access DB audit findings (ID jumps, mislabeled columns,
+  chart numbers sheet = tbl_PatientNotes with swapped columns).
+
+---
+
+## Topaz Access Database Structure (from user audit)
+
+### Prefix Encoding (CRITICAL)
+- `MOD(PatientID, 10000000)` extracts real patient ID
+- Prefix digit: 1=primary, 2=secondary, 3=tertiary, 7=copay, 8/9=other tiers
+- Affects tbl_Charges.PatientID, tbl_Charges.TreatRef, tbl_Payments.PatientID
+
+### Key Tables
+| Table | Rows | Notes |
+|-------|------|-------|
+| tbl_Patients | 61,847 | Clean. Address prefix on newer patients (cosmetic). |
+| tbl_Charges | ~500K+ | TreatID sequential with small gaps. PatientID is PREFIXED. |
+| tbl_Payments | ~135K+ | DailyID starts at 222444. PatientID is PREFIXED. |
+| tbl_Insurance | ~65K+ | ID jump at row 31234 (31236→65622). |
+| tbl_PatientNotes | ~985+ | NoteText=chart number for newer patients. THIS is how OCMRI gets chart numbers. |
+| tbl_PatientTrack | 48,736 | Stops at PID 48736 — missing newest 13K patients. |
+| tbl_FinancialSummary | — | 3 mislabeled columns: E="SecInsDate" is actually Ins ID, F="TreatCount" is unknown pointer. |
+| tbl_ReferringPhysicians | 3,513 | Clean, sequential. |
+| tbl_DiagnosisCodes | 8,674 | Clean. |
+
+### Known Issues
+- tbl_FinancialSummary columns E/F/B/G are mislabeled in Access
+- "Chart Numbers" sheet = tbl_PatientNotes with columns A/B swapped
+- ID jumps in tbl_Insurance and tbl_Notes are database migration artifacts
