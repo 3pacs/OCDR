@@ -185,12 +185,27 @@ def _all_topaz_variants(raw_id: str) -> list[str]:
     return list(keys)
 
 
+def _name_score_pair(name_a: str, name_b: str) -> float:
+    """Score two normalized names using multiple strategies.
+
+    Uses the best of:
+    - token_sort_ratio: good for reordered names (SMITH JOHN vs JOHN SMITH)
+    - token_set_ratio: good for names with extra/missing tokens
+      (CENICEROS CAMERINA vs CAMERINA CEN DE FAVELA) — focuses on shared tokens
+    """
+    if not name_a or not name_b:
+        return 0
+    sort_score = fuzz.token_sort_ratio(name_a, name_b)
+    set_score = fuzz.token_set_ratio(name_a, name_b)
+    return max(sort_score, set_score)
+
+
 def _best_name_score(claim_name, br, billing_norm_names, billing_display_names):
     """Get the best fuzzy name score across patient_name and patient_name_display."""
     norm = billing_norm_names.get(br.id, "")
-    score1 = fuzz.token_sort_ratio(claim_name, norm) if norm else 0
+    score1 = _name_score_pair(claim_name, norm)
     display = billing_display_names.get(br.id, "")
-    score2 = fuzz.token_sort_ratio(claim_name, display) if display else 0
+    score2 = _name_score_pair(claim_name, display)
     return max(score1, score2)
 
 
@@ -217,43 +232,42 @@ def _match_single_claim(
     Returns (billing_record, confidence, pass_name) or (None, 0, None).
     """
 
-    # Pass 0: Topaz ID crosswalk match (with name corroboration)
+    # Pass 0: Topaz ID crosswalk match
     # Handles Topaz prefix encoding: 10061723 (primary) → base 61723
+    # ID is the authoritative link — name is used only to pick the best
+    # candidate among multiple, NOT as a gate. Hispanic/Asian names often
+    # differ significantly (maiden vs married, truncation, transliteration)
+    # so requiring name similarity would reject valid ID matches.
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
         candidates = []
-        # Try all variants: raw, zero-stripped, prefix-decoded
         for variant in _all_topaz_variants(topaz_key):
             candidates = billing_by_topaz_id.get(variant, [])
             if candidates:
                 break
-        if candidates and claim_name:
+        if candidates:
+            if len(candidates) == 1:
+                # Single candidate for this ID — accept outright
+                return candidates[0], 0.99, "pass_0_topaz_id"
+            # Multiple candidates — pick best by date match, then name score
             best_br = None
-            best_score = 0
+            best_score = -1
             for c in candidates:
-                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names)
                 date_match = (c.service_date == claim_date) if claim_date else False
-                combined = name_score + (10 if date_match else 0)
+                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names) if claim_name else 0
+                # Date match is worth more than name similarity for disambiguation
+                combined = (100 if date_match else 0) + name_score
                 if combined > best_score:
                     best_score = combined
                     best_br = c
-            # Accept if name is at least loosely similar (>=60) or date+name combined
-            if best_br and best_score >= 60:
-                return best_br, 0.99, "pass_0_topaz_id"
-        elif candidates and not claim_name:
-            # No name on the claim — accept best date match or first candidate
-            if claim_date:
-                for c in candidates:
-                    if c.service_date == claim_date:
-                        return c, 0.92, "pass_0_topaz_id"
-            # Fall back to first candidate at lower confidence
-            return candidates[0], 0.85, "pass_0_topaz_id"
+            if best_br:
+                return best_br, 0.97, "pass_0_topaz_id"
 
     # Pass 0b: Claim ID → patient_id (chart number) cross-reference
-    # ERA claim_id might be or contain the chart number, with or without prefix
+    # ERA claim_id might be or contain the chart number, with or without prefix.
+    # Same principle: ID match is authoritative, name disambiguates only.
     if claim.claim_id:
         claim_id_stripped = claim.claim_id.strip()
-        # Try all variants: raw, zero-stripped, prefix-decoded
         p0b_candidates = []
         for variant in _all_topaz_variants(claim_id_stripped):
             try:
@@ -263,22 +277,23 @@ def _match_single_claim(
                     break
             except (ValueError, OverflowError):
                 continue
-        if p0b_candidates and claim_name:
+        if p0b_candidates:
+            if len(p0b_candidates) == 1:
+                # Single billing record for this patient_id — accept
+                return p0b_candidates[0], 0.92, "pass_0b_patient_id"
+            # Multiple — disambiguate by date then name
             best_br = None
-            best_score = 0
+            best_score = -1
             for c in p0b_candidates:
-                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names)
                 date_match = (c.service_date == claim_date) if claim_date else False
-                combined = name_score + (10 if date_match else 0)
+                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names) if claim_name else 0
+                combined = (100 if date_match else 0) + name_score
                 if combined > best_score:
                     best_score = combined
                     best_br = c
-            if best_br and best_score >= 70:
-                return best_br, 0.92, "pass_0b_patient_id"
-        elif p0b_candidates and claim_date:
-            for c in p0b_candidates:
-                if c.service_date == claim_date:
-                    return c, 0.88, "pass_0b_patient_id"
+            if best_br:
+                conf = 0.90 if best_score >= 100 else 0.85  # higher confidence if date matched
+                return best_br, conf, "pass_0b_patient_id"
 
     # Pass 1: Exact composite (name + date + amount)
     if claim_name and claim_date:
@@ -398,7 +413,7 @@ def _match_single_claim(
             for name_key, brs in billing_by_modality_name.items():
                 if name_key[1] != claim_modality.upper():
                     continue
-                score = fuzz.token_sort_ratio(claim_name, name_key[0])
+                score = _name_score_pair(claim_name, name_key[0])
                 if score >= 90 and len(brs) == 1:
                     return brs[0], 0.58, "pass_6_name_modality"
 
@@ -417,7 +432,7 @@ def _match_single_claim(
         # Also try fuzzy name (>=90) across all billing records
         if not candidates:
             for name_key, brs in billing_by_name.items():
-                score = fuzz.token_sort_ratio(claim_name, name_key)
+                score = _name_score_pair(claim_name, name_key)
                 if score >= 90:
                     for br in brs:
                         if br.total_payment and claim_paid and abs(float(br.total_payment) - claim_paid) < 0.01:
@@ -445,7 +460,7 @@ def _match_single_claim(
         # Also try fuzzy name across all normalized names
         if not candidates:
             for name_key, brs in billing_by_name.items():
-                score = fuzz.token_sort_ratio(claim_name, name_key)
+                score = _name_score_pair(claim_name, name_key)
                 if score >= 95 and len(brs) == 1:
                     return brs[0], 0.50, "pass_8_name_only"
 
@@ -890,11 +905,11 @@ async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int
         for br in billing_records:
             norm = _normalize_name(br.patient_name)
             norm_cache[br.id] = norm
-            score = fuzz.token_sort_ratio(claim_name, norm)
+            score = _name_score_pair(claim_name, norm)
             # Also check display name
             if br.patient_name_display:
                 norm_d = _normalize_name(br.patient_name_display)
-                score = max(score, fuzz.token_sort_ratio(claim_name, norm_d))
+                score = max(score, _name_score_pair(claim_name, norm_d))
             if score >= 60:
                 name_scores.append((br, score))
 

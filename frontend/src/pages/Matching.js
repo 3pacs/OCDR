@@ -1339,13 +1339,21 @@ function Matching() {
 
   useEffect(() => { loadSummary(); }, []);
 
-  const runMatcher = async () => {
+  const runMatcher = async (force = false) => {
+    if (force && !window.confirm(
+      "This will clear ALL existing matches and re-run from scratch. Continue?"
+    )) return;
     setRunning(true);
     setError(null);
     setLastResult(null);
     try {
-      const res = await api.post("/matching/run", {}, { timeout: 900000 });
-      setLastResult(res.data);
+      const endpoint = force ? "/matching/re-match?force=true" : "/matching/run";
+      const res = await api.post(endpoint, {}, { timeout: 900000 });
+      const data = force ? res.data.match_result : res.data;
+      if (force && res.data.cleared_previous > 0) {
+        data._cleared = res.data.cleared_previous;
+      }
+      setLastResult(data);
       loadSummary();
     } catch (err) {
       setError(err.response?.data?.detail || err.message);
@@ -1362,9 +1370,12 @@ function Matching() {
 
       <Card className="border-0 shadow-sm mb-4">
         <Card.Body>
-          <div className="d-flex align-items-center gap-3">
-            <Button variant="primary" size="lg" onClick={runMatcher} disabled={running}>
+          <div className="d-flex align-items-center gap-3 flex-wrap">
+            <Button variant="primary" size="lg" onClick={() => runMatcher(false)} disabled={running}>
               {running ? <><Spinner size="sm" className="me-2" /> Matching...</> : "Run Auto-Match Engine"}
+            </Button>
+            <Button variant="outline-warning" onClick={() => runMatcher(true)} disabled={running}>
+              Force Re-Match All
             </Button>
             <span className="text-muted small">
               13-pass matching: Topaz ID crosswalk + name/date/amount fuzzy
@@ -1375,6 +1386,7 @@ function Matching() {
 
           {lastResult && (
             <Alert variant={lastResult.matched_total > 0 ? "success" : "info"} className="mt-3">
+              {lastResult._cleared > 0 && <div className="small text-muted mb-1">Cleared {lastResult._cleared.toLocaleString()} previous matches before re-running.</div>}
               <strong>Matching complete!</strong>{" "}
               {lastResult.matched_total}/{lastResult.total} claims matched ({lastResult.match_rate}%)
               {lastResult.pass_0_topaz_id > 0 && <span> &mdash; Topaz ID: {lastResult.pass_0_topaz_id}</span>}

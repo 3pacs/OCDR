@@ -245,18 +245,40 @@ async def manual_match_by_claim_id(
 
 @router.post("/re-match")
 async def trigger_rematch(
+    force: bool = Query(False, description="Clear ALL existing matches and re-run from scratch"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Re-run the auto-matcher on all unmatched ERA claims.
+    Re-run the auto-matcher.
 
-    Does NOT clear existing matches — only attempts to match
-    currently unmatched claims. Use after fixing crosswalk data
-    or correcting patient identifiers.
+    Default: only processes currently unmatched claims.
+    With force=true: clears ALL existing matches first and re-runs
+    everything from scratch (useful after algorithm improvements).
     """
+    from backend.app.models.era import ERAClaimLine
+
+    cleared = 0
+    if force:
+        # Clear match linkages on ERA claim lines
+        r1 = await db.execute(
+            update(ERAClaimLine)
+            .where(ERAClaimLine.matched_billing_id.is_not(None))
+            .values(matched_billing_id=None, match_confidence=None)
+        )
+        cleared = r1.rowcount
+        # Clear back-references on billing records (but preserve topaz_id)
+        await db.execute(
+            update(BillingRecord)
+            .where(BillingRecord.era_claim_id.is_not(None))
+            .values(era_claim_id=None)
+        )
+        await db.flush()
+        logger.info(f"Force re-match: cleared {cleared} existing matches")
+
     result = await run_auto_match(db)
     return {
         "status": "completed",
+        "cleared_previous": cleared,
         "match_result": result,
     }
 
