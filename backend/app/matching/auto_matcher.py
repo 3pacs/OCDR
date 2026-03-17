@@ -569,6 +569,10 @@ async def run_auto_match(session: AsyncSession) -> dict:
         "total": len(unmatched_claims),
     }
 
+    # Diagnostic sampling: collect details on unmatched claims to help user debug
+    unmatched_samples = []
+    MAX_UNMATCHED_SAMPLES = 20
+
     pending_commits = 0
 
     for i, claim in enumerate(unmatched_claims):
@@ -627,6 +631,53 @@ async def run_auto_match(session: AsyncSession) -> dict:
             pending_commits += 1
         else:
             stats["unmatched"] += 1
+            # Collect diagnostic info for first N unmatched claims
+            if len(unmatched_samples) < MAX_UNMATCHED_SAMPLES:
+                sample = {
+                    "id": claim.id,
+                    "claim_id": claim.claim_id,
+                    "patient_name": claim.patient_name_835,
+                    "service_date": str(claim.service_date_835) if claim.service_date_835 else None,
+                    "paid_amount": float(claim.paid_amount) if claim.paid_amount else None,
+                    "cpt_code": claim_cpt,
+                    "has_name": bool(claim_name),
+                    "has_date": bool(claim_date),
+                    "has_claim_id": bool(claim.claim_id),
+                    "topaz_id_lookup": None,
+                    "patient_id_lookup": None,
+                    "best_name_match": None,
+                }
+                # Check why ID passes failed
+                if claim.claim_id:
+                    variants = _all_topaz_variants(claim.claim_id.strip())
+                    topaz_hits = sum(1 for v in variants if v in billing_by_topaz_id)
+                    sample["topaz_id_lookup"] = f"{topaz_hits} hits from variants {variants[:3]}"
+                    pid_hits = 0
+                    for v in variants:
+                        try:
+                            pid_hits += len(billing_by_patient_id.get(int(v), []))
+                        except (ValueError, OverflowError):
+                            pass
+                    sample["patient_id_lookup"] = f"{pid_hits} hits"
+                # Find closest name match
+                if claim_name:
+                    best_score = 0
+                    best_name = None
+                    best_date = None
+                    for br in billing_records[:2000]:  # Cap scan for perf
+                        sc = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
+                        if sc > best_score:
+                            best_score = sc
+                            best_name = br.patient_name
+                            best_date = str(br.service_date) if br.service_date else None
+                    if best_name:
+                        sample["best_name_match"] = {
+                            "billing_name": best_name,
+                            "score": best_score,
+                            "billing_date": best_date,
+                            "era_date": str(claim_date) if claim_date else None,
+                        }
+                unmatched_samples.append(sample)
 
         # Periodic flush + yield to prevent event-loop starvation and timeout
         if (i + 1) % BATCH_SIZE == 0:
@@ -656,6 +707,19 @@ async def run_auto_match(session: AsyncSession) -> dict:
         f"P5:{stats['pass_5_amount']} P6:{stats['pass_6_name_modality']} "
         f"P7:{stats['pass_7_name_amount']} P8:{stats['pass_8_name_only']}"
     )
+    # Add diagnostics to help debug remaining unmatched claims
+    stats["diagnostics"] = {
+        "billing_records": len(billing_records),
+        "billing_with_topaz_id": sum(1 for br in billing_records if br.topaz_id),
+        "billing_with_patient_id": sum(1 for br in billing_records if br.patient_id is not None),
+        "unique_topaz_ids_indexed": len(billing_by_topaz_id),
+        "unique_patient_ids_indexed": len(billing_by_patient_id),
+        "unique_dates_indexed": len(billing_by_date),
+        "claims_no_name": claims_no_name,
+        "claims_no_date": claims_no_date,
+        "claims_no_claim_id": sum(1 for c in unmatched_claims if not c.claim_id),
+        "unmatched_samples": unmatched_samples,
+    }
     return stats
 
 

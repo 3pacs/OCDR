@@ -1404,6 +1404,54 @@ function Matching() {
               {lastResult.pass_8_name_only > 0 && <span> &mdash; Name only: {lastResult.pass_8_name_only}</span>}
             </Alert>
           )}
+
+          {lastResult?.diagnostics && lastResult.unmatched > 0 && (
+            <div className="mt-3">
+              <h6>Why {lastResult.unmatched.toLocaleString()} claims didn't match:</h6>
+              <Row className="g-2 mb-3">
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{lastResult.diagnostics.billing_records?.toLocaleString()}</div><small>Billing Records</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{lastResult.diagnostics.billing_with_topaz_id?.toLocaleString()}</div><small>w/ Topaz ID</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold">{lastResult.diagnostics.billing_with_patient_id?.toLocaleString()}</div><small>w/ Patient ID</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{lastResult.diagnostics.claims_no_name}</div><small>Claims No Name</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{lastResult.diagnostics.claims_no_date}</div><small>Claims No Date</small></div></Col>
+                <Col md={2}><div className="text-center bg-light p-2 rounded"><div className="fw-bold text-danger">{lastResult.diagnostics.claims_no_claim_id}</div><small>Claims No ID</small></div></Col>
+              </Row>
+
+              {lastResult.diagnostics.unmatched_samples?.length > 0 && (
+                <details open>
+                  <summary className="small fw-bold">Sample Unmatched Claims (first {lastResult.diagnostics.unmatched_samples.length})</summary>
+                  <Table size="sm" className="small mt-1">
+                    <thead>
+                      <tr>
+                        <th>ERA Patient</th>
+                        <th>ERA Date</th>
+                        <th>Claim ID</th>
+                        <th>Topaz Lookup</th>
+                        <th>Patient ID Lookup</th>
+                        <th>Closest Billing Name</th>
+                        <th>Name Score</th>
+                        <th>Billing Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lastResult.diagnostics.unmatched_samples.map((s, i) => (
+                        <tr key={i}>
+                          <td>{s.patient_name || <span className="text-danger">--none--</span>}</td>
+                          <td>{s.service_date || <span className="text-danger">--none--</span>}</td>
+                          <td><code>{s.claim_id || "--"}</code></td>
+                          <td className="small">{s.topaz_id_lookup || "--"}</td>
+                          <td className="small">{s.patient_id_lookup || "--"}</td>
+                          <td>{s.best_name_match?.billing_name || "--"}</td>
+                          <td>{s.best_name_match ? <Badge bg={s.best_name_match.score >= 85 ? "success" : s.best_name_match.score >= 70 ? "warning" : "danger"}>{s.best_name_match.score}%</Badge> : "--"}</td>
+                          <td>{s.best_name_match?.billing_date || "--"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </details>
+              )}
+            </div>
+          )}
         </Card.Body>
       </Card>
 
