@@ -1367,7 +1367,7 @@ function Matching() {
               {running ? <><Spinner size="sm" className="me-2" /> Matching...</> : "Run Auto-Match Engine"}
             </Button>
             <span className="text-muted small">
-              6-pass matching: Topaz ID crosswalk + name/date/amount fuzzy
+              13-pass matching: Topaz ID crosswalk + name/date/amount fuzzy
             </span>
           </div>
 
@@ -1378,11 +1378,18 @@ function Matching() {
               <strong>Matching complete!</strong>{" "}
               {lastResult.matched_total}/{lastResult.total} claims matched ({lastResult.match_rate}%)
               {lastResult.pass_0_topaz_id > 0 && <span> &mdash; Topaz ID: {lastResult.pass_0_topaz_id}</span>}
+              {lastResult.pass_0b_patient_id > 0 && <span> &mdash; Patient ID: {lastResult.pass_0b_patient_id}</span>}
               {lastResult.pass_1_exact > 0 && <span> &mdash; Exact: {lastResult.pass_1_exact}</span>}
               {lastResult.pass_2_strong > 0 && <span> &mdash; Strong: {lastResult.pass_2_strong}</span>}
               {lastResult.pass_3_medium > 0 && <span> &mdash; Medium: {lastResult.pass_3_medium}</span>}
-              {lastResult.pass_4_weak > 0 && <span> &mdash; Weak: {lastResult.pass_4_weak}</span>}
+              {lastResult.pass_4_weak > 0 && <span> &mdash; ±3d: {lastResult.pass_4_weak}</span>}
+              {lastResult.pass_4b_wider_date > 0 && <span> &mdash; ±7d: {lastResult.pass_4b_wider_date}</span>}
+              {lastResult.pass_4c_wide_date > 0 && <span> &mdash; ±14d: {lastResult.pass_4c_wide_date}</span>}
+              {lastResult.pass_4d_very_wide_date > 0 && <span> &mdash; ±30d: {lastResult.pass_4d_very_wide_date}</span>}
               {lastResult.pass_5_amount > 0 && <span> &mdash; Amount: {lastResult.pass_5_amount}</span>}
+              {lastResult.pass_6_name_modality > 0 && <span> &mdash; Name+Mod: {lastResult.pass_6_name_modality}</span>}
+              {lastResult.pass_7_name_amount > 0 && <span> &mdash; Name+Amt: {lastResult.pass_7_name_amount}</span>}
+              {lastResult.pass_8_name_only > 0 && <span> &mdash; Name only: {lastResult.pass_8_name_only}</span>}
             </Alert>
           )}
         </Card.Body>

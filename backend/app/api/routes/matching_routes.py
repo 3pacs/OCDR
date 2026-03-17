@@ -30,7 +30,7 @@ router = APIRouter()
 
 @router.post("/run")
 async def trigger_auto_match(db: AsyncSession = Depends(get_db)):
-    """Run the 11-pass auto-matching engine on all unmatched ERA claims."""
+    """Run the 13-pass auto-matching engine on all unmatched ERA claims."""
     try:
         result = await run_auto_match(db)
         return result

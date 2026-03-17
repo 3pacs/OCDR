@@ -1,5 +1,5 @@
 """
-Auto-Matching Engine — 11 passes.
+Auto-Matching Engine — 13 passes.
 
 Matches ERA claim lines (from 835 files) to billing records using
 progressively looser matching criteria:
@@ -11,6 +11,8 @@ progressively looser matching criteria:
   Pass 3:  Medium fuzzy   (name>=90 + service_date)                   → 85%
   Pass 4:  Weak fuzzy     (name>=85 + service_date ±3 days)           → 70%
   Pass 4b: Wider date     (name>=85 + service_date ±7 days)           → 60%
+  Pass 4c: Wide date      (name>=90 + service_date ±14 days)          → 55%
+  Pass 4d: Very wide date (name>=95 + service_date ±30 days)          → 50%
   Pass 5:  Amount-anchor  (carrier + service_date + billed amount)    → 75%
   Pass 6:  Name + modality (no date required, name>=90 + modality)    → 62%
   Pass 7:  Name + amount  (no date required, name>=90 + billed amt)   → 65%
@@ -59,7 +61,11 @@ BATCH_SIZE = 200
 
 
 def _normalize_name(name: str | None) -> str:
-    """Normalize patient name for matching: uppercase, strip commas, remove middle initials."""
+    """Normalize patient name for matching: uppercase, strip commas, remove middle initials, sort tokens.
+
+    Sorting tokens ensures order-independent matching so "KINLEY SHARON" and
+    "SHARON KINLEY" produce the same normalized key for dictionary lookups.
+    """
     if not name:
         return ""
     # Strip all commas so "SMITH, JOHN" and "SMITH JOHN" normalize identically
@@ -67,6 +73,8 @@ def _normalize_name(name: str | None) -> str:
     parts = cleaned.split()
     # Remove single-character tokens (middle initials)
     parts = [p for p in parts if len(p) > 1]
+    # Sort tokens for order-independent comparison (LAST FIRST == FIRST LAST)
+    parts.sort()
     return " ".join(parts).strip()
 
 
@@ -328,6 +336,28 @@ def _match_single_claim(
                 if score >= 85:
                     return br, 0.60, "pass_4b_wider_date"
 
+    # Pass 4c: Wide date window (name>=90 + date ±14 days)
+    if claim_name and claim_date:
+        for offset in range(-14, 15):
+            if -7 <= offset <= 7:
+                continue  # Already checked
+            check_date = claim_date + timedelta(days=offset)
+            for br in billing_by_date.get(check_date, []):
+                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
+                if score >= 90:
+                    return br, 0.55, "pass_4c_wide_date"
+
+    # Pass 4d: Very wide date window (name>=95 + date ±30 days)
+    if claim_name and claim_date:
+        for offset in range(-30, 31):
+            if -14 <= offset <= 14:
+                continue  # Already checked
+            check_date = claim_date + timedelta(days=offset)
+            for br in billing_by_date.get(check_date, []):
+                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
+                if score >= 95:
+                    return br, 0.50, "pass_4d_very_wide_date"
+
     # Pass 5: Amount-anchored (carrier + date + billed amount)
     # Uses billed_amount from ERA (not paid), because billing total_payment
     # is often $0 before matching. Also tries paid_amount as fallback.
@@ -473,6 +503,13 @@ async def run_auto_match(session: AsyncSession) -> dict:
             for variant in _all_topaz_variants(br.topaz_id):
                 if br not in billing_by_topaz_id[variant]:
                     billing_by_topaz_id[variant].append(br)
+        # Also index by era_claim_id if set from previous match runs —
+        # this lets Pass 0 find billing records that were matched by name/date
+        # in earlier runs but never had topaz_id set via crosswalk import.
+        if br.era_claim_id and not br.topaz_id:
+            for variant in _all_topaz_variants(br.era_claim_id):
+                if br not in billing_by_topaz_id[variant]:
+                    billing_by_topaz_id[variant].append(br)
         if br.patient_id is not None:
             billing_by_patient_id[br.patient_id].append(br)
         if br.modality:
@@ -507,6 +544,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
         "pass_3_medium": 0,
         "pass_4_weak": 0,
         "pass_4b_wider_date": 0,
+        "pass_4c_wide_date": 0,
+        "pass_4d_very_wide_date": 0,
         "pass_5_amount": 0,
         "pass_6_name_modality": 0,
         "pass_7_name_amount": 0,
@@ -547,9 +586,20 @@ async def run_auto_match(session: AsyncSession) -> dict:
             if not matched_br.era_claim_id:
                 matched_br.era_claim_id = claim.claim_id
 
-            # NOTE: We do NOT auto-assign topaz_id from ERA claim matches.
-            # topaz_id should only come from user-approved crosswalk imports.
-            # The era_claim_id (set above) tracks the ERA linkage separately.
+            # Auto-populate topaz_id on high-confidence matches (>=0.85 = passes 0b,1,2,3)
+            # so subsequent claims for the same patient can use Pass 0 instantly.
+            # Only sets it if the claim_id looks like a valid numeric Topaz patient ID.
+            if not matched_br.topaz_id and claim.claim_id and confidence >= 0.85:
+                try:
+                    base_id, _ = _decode_topaz_id(claim.claim_id)
+                    if base_id and int(base_id) > 0:
+                        matched_br.topaz_id = claim.claim_id.strip()
+                        # Also add to live index so same-batch claims benefit
+                        for variant in _all_topaz_variants(matched_br.topaz_id):
+                            if matched_br not in billing_by_topaz_id[variant]:
+                                billing_by_topaz_id[variant].append(matched_br)
+                except (ValueError, TypeError):
+                    pass
 
             status = CLAIM_STATUS_MAP.get(claim.claim_status)
             if status:
@@ -587,6 +637,7 @@ async def run_auto_match(session: AsyncSession) -> dict:
         f"P0:{stats['pass_0_topaz_id']} P0b:{stats['pass_0b_patient_id']} "
         f"P1:{stats['pass_1_exact']} P2:{stats['pass_2_strong']} "
         f"P3:{stats['pass_3_medium']} P4:{stats['pass_4_weak']} P4b:{stats['pass_4b_wider_date']} "
+        f"P4c:{stats['pass_4c_wide_date']} P4d:{stats['pass_4d_very_wide_date']} "
         f"P5:{stats['pass_5_amount']} P6:{stats['pass_6_name_modality']} "
         f"P7:{stats['pass_7_name_amount']} P8:{stats['pass_8_name_only']}"
     )

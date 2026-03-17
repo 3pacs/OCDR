@@ -256,3 +256,23 @@ docker-compose up
 - tbl_FinancialSummary columns E/F/B/G are mislabeled in Access
 - "Chart Numbers" sheet = tbl_PatientNotes with columns A/B swapped
 - ID jumps in tbl_Insurance and tbl_Notes are database migration artifacts
+
+---
+
+## What Was Done (Session 2026-03-17, continued)
+
+### Commit 11: — Matcher improvements (11 → 13 passes, name normalization, topaz propagation)
+- **Problem**: ~3000+ claims still unmatched despite Topaz prefix decoding. Root causes:
+  1. `_normalize_name` was word-order-dependent ("KINLEY SHARON" ≠ "SHARON KINLEY")
+     so dictionary-based passes (1, 6, 7, 8) missed name-order mismatches
+  2. Billing records matched by name/date (passes 1-8) never got `topaz_id` populated,
+     so subsequent claims for the same patient couldn't use fast Pass 0
+  3. `era_claim_id` set by previous match runs was not indexed in topaz lookup
+  4. Date window capped at ±7 days — billing/ERA dates can differ by weeks
+- **Fixes**:
+  - `_normalize_name` now sorts tokens alphabetically → order-independent matching
+  - `topaz_id` auto-propagated on high-confidence matches (≥0.85) with live index update
+  - `era_claim_id` indexed in `billing_by_topaz_id` when topaz_id is not set
+  - Added Pass 4c (±14d, name≥90) and Pass 4d (±30d, name≥95)
+  - Frontend match results now show all 13 pass counts
+- **Files**: `auto_matcher.py`, `matching_routes.py`, `Matching.js`, `CLAUDE.md`
