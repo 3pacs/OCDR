@@ -12,6 +12,7 @@ from backend.app.matching.auto_matcher import (
     get_match_summary,
     get_unmatched_claims,
     get_matched_claims,
+    diagnose_unmatched_claim,
 )
 from backend.app.matching.pattern_clusterer import (
     analyze_crosswalk,
@@ -62,6 +63,19 @@ async def list_matched(
 ):
     """List matched ERA claims with billing record details."""
     return await get_matched_claims(db, page, per_page)
+
+
+@router.get("/diagnose/{era_claim_line_id}")
+async def diagnose_claim(
+    era_claim_line_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Diagnose WHY a specific ERA claim didn't match.
+
+    Returns the claim data, what passes were tried, closest billing
+    record candidates, and specific reasons each candidate was rejected.
+    """
+    return await diagnose_unmatched_claim(db, era_claim_line_id)
 
 
 # --- Interactive Match Correction ---

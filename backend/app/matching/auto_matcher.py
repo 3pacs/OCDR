@@ -98,6 +98,12 @@ CLAIM_STATUS_MAP = {
 }
 
 
+def _strip_leading_zeros(s: str) -> str:
+    """Strip leading zeros from numeric-looking strings for ID comparison."""
+    stripped = s.lstrip("0")
+    return stripped or "0"
+
+
 def _best_name_score(claim_name, br, billing_norm_names, billing_display_names):
     """Get the best fuzzy name score across patient_name and patient_name_display."""
     norm = billing_norm_names.get(br.id, "")
@@ -134,6 +140,11 @@ def _match_single_claim(
     if claim.claim_id:
         topaz_key = claim.claim_id.strip()
         candidates = billing_by_topaz_id.get(topaz_key, [])
+        # Also try without leading zeros (00061501 → 61501)
+        if not candidates:
+            topaz_key_stripped = _strip_leading_zeros(topaz_key)
+            if topaz_key_stripped != topaz_key:
+                candidates = billing_by_topaz_id.get(topaz_key_stripped, [])
         if candidates and claim_name:
             best_br = None
             best_score = 0
@@ -380,7 +391,12 @@ async def run_auto_match(session: AsyncSession) -> dict:
         if norm_display and norm_display != norm:
             billing_by_name[norm_display].append(br)
         if br.topaz_id:
-            billing_by_topaz_id[br.topaz_id.strip()].append(br)
+            tid = br.topaz_id.strip()
+            billing_by_topaz_id[tid].append(br)
+            # Also index without leading zeros for ERA files that zero-pad
+            tid_stripped = _strip_leading_zeros(tid)
+            if tid_stripped != tid:
+                billing_by_topaz_id[tid_stripped].append(br)
         if br.patient_id is not None:
             billing_by_patient_id[br.patient_id].append(br)
         if br.modality:
@@ -618,3 +634,200 @@ async def get_matched_claims(session: AsyncSession, page: int = 1, per_page: int
         })
 
     return {"total": total, "page": page, "items": items}
+
+
+async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int) -> dict:
+    """Explain WHY a specific ERA claim didn't match any billing record.
+
+    Returns detailed diagnostics: what data the claim has, what was tried,
+    the closest billing records found and why they weren't good enough.
+    """
+    # Load the claim
+    result = await session.execute(
+        select(ERAClaimLine).where(ERAClaimLine.id == era_claim_line_id)
+    )
+    claim = result.scalar_one_or_none()
+    if not claim:
+        return {"error": "ERA claim line not found"}
+
+    # Load ERA payment for payer info
+    payment = None
+    if claim.era_payment_id:
+        p_result = await session.execute(
+            select(ERAPayment).where(ERAPayment.id == claim.era_payment_id)
+        )
+        payment = p_result.scalar_one_or_none()
+
+    claim_name = _normalize_name(claim.patient_name_835)
+    claim_date = claim.service_date_835
+    claim_cpt = claim.cpt_code
+    claim_modality = CPT_TO_MODALITY.get(claim_cpt) if claim_cpt else None
+
+    diag = {
+        "claim": {
+            "id": claim.id,
+            "claim_id": claim.claim_id,
+            "patient_name_835": claim.patient_name_835,
+            "normalized_name": claim_name,
+            "service_date": claim_date.isoformat() if claim_date else None,
+            "cpt_code": claim_cpt,
+            "derived_modality": claim_modality,
+            "billed_amount": float(claim.billed_amount) if claim.billed_amount else None,
+            "paid_amount": float(claim.paid_amount) if claim.paid_amount else None,
+            "payer_name": payment.payer_name if payment else None,
+            "matched_billing_id": claim.matched_billing_id,
+        },
+        "missing_data": [],
+        "pass_results": [],
+        "closest_candidates": [],
+    }
+
+    if claim.matched_billing_id:
+        diag["status"] = "already_matched"
+        return diag
+
+    if not claim.patient_name_835:
+        diag["missing_data"].append("patient_name_835 is NULL — most passes require a name")
+    if not claim.service_date_835:
+        diag["missing_data"].append("service_date_835 is NULL — passes 0-5 need a date")
+    if not claim.claim_id:
+        diag["missing_data"].append("claim_id is NULL — Pass 0 (topaz crosswalk) disabled")
+
+    # Load all billing records for analysis
+    billing_result = await session.execute(select(BillingRecord))
+    billing_records = list(billing_result.scalars().all())
+
+    if not billing_records:
+        diag["pass_results"].append("NO BILLING RECORDS IN DATABASE")
+        return diag
+
+    # --- Pass 0 diagnosis: Topaz ID ---
+    if claim.claim_id:
+        topaz_key = claim.claim_id.strip()
+        topaz_key_stripped = _strip_leading_zeros(topaz_key)
+        topaz_matches = [br for br in billing_records
+                         if br.topaz_id and (br.topaz_id.strip() == topaz_key
+                                             or _strip_leading_zeros(br.topaz_id.strip()) == topaz_key_stripped)]
+        topaz_populated = sum(1 for br in billing_records if br.topaz_id)
+        if topaz_matches:
+            norm_cache = {br.id: _normalize_name(br.patient_name) for br in topaz_matches}
+            disp_cache = {br.id: (_normalize_name(br.patient_name_display) if br.patient_name_display else "") for br in topaz_matches}
+            names_for = [(br.id, br.patient_name, _best_name_score(claim_name, br, norm_cache, disp_cache))
+                         for br in topaz_matches]
+            diag["pass_results"].append({
+                "pass": "P0_topaz",
+                "result": "TOPAZ ID FOUND but name corroboration may have failed",
+                "topaz_key": topaz_key,
+                "billing_matches": [{"id": n[0], "name": n[1], "name_score": n[2]} for n in names_for],
+            })
+        else:
+            diag["pass_results"].append({
+                "pass": "P0_topaz",
+                "result": "NO billing record has topaz_id matching this claim_id",
+                "claim_id": topaz_key,
+                "topaz_id_coverage": f"{topaz_populated}/{len(billing_records)} billing records have topaz_id",
+            })
+
+    # --- Pass 0b diagnosis: claim_id as patient_id ---
+    if claim.claim_id:
+        try:
+            cid_int = int(claim.claim_id.strip())
+            pid_matches = [br for br in billing_records if br.patient_id == cid_int]
+            if pid_matches:
+                diag["pass_results"].append({
+                    "pass": "P0b_patient_id",
+                    "result": f"Found {len(pid_matches)} billing records with patient_id={cid_int}",
+                    "records": [{"id": br.id, "name": br.patient_name,
+                                 "date": br.service_date.isoformat() if br.service_date else None}
+                                for br in pid_matches[:5]],
+                })
+            else:
+                diag["pass_results"].append({
+                    "pass": "P0b_patient_id",
+                    "result": f"No billing record has patient_id={cid_int}",
+                })
+        except (ValueError, OverflowError):
+            diag["pass_results"].append({
+                "pass": "P0b_patient_id",
+                "result": f"claim_id '{claim.claim_id}' is not numeric — pass skipped",
+            })
+
+    # --- Name search: find closest name matches ---
+    if claim_name:
+        name_scores = []
+        norm_cache = {}
+        for br in billing_records:
+            norm = _normalize_name(br.patient_name)
+            norm_cache[br.id] = norm
+            score = fuzz.token_sort_ratio(claim_name, norm)
+            # Also check display name
+            if br.patient_name_display:
+                norm_d = _normalize_name(br.patient_name_display)
+                score = max(score, fuzz.token_sort_ratio(claim_name, norm_d))
+            if score >= 60:
+                name_scores.append((br, score))
+
+        name_scores.sort(key=lambda x: -x[1])
+        top_5 = name_scores[:5]
+
+        if top_5:
+            diag["closest_candidates"] = []
+            for br, score in top_5:
+                date_match = ("EXACT" if (claim_date and br.service_date == claim_date) else
+                              f"off by {abs((br.service_date - claim_date).days)} days" if (claim_date and br.service_date) else
+                              "no ERA date")
+                diag["closest_candidates"].append({
+                    "billing_id": br.id,
+                    "patient_name": br.patient_name,
+                    "normalized": norm_cache.get(br.id, ""),
+                    "name_score": score,
+                    "service_date": br.service_date.isoformat() if br.service_date else None,
+                    "date_match": date_match,
+                    "modality": br.modality,
+                    "topaz_id": br.topaz_id,
+                    "patient_id": br.patient_id,
+                    "insurance": br.insurance_carrier,
+                    "total_payment": float(br.total_payment or 0),
+                })
+
+            # Explain why best candidate wasn't matched
+            br, score = top_5[0]
+            reasons = []
+            if score < 85:
+                reasons.append(f"Name score {score} < 85 minimum for weakest name pass (P4)")
+            elif score < 90:
+                reasons.append(f"Name score {score} < 90 for medium fuzzy (P3)")
+            elif score < 95:
+                reasons.append(f"Name score {score} < 95 for strong fuzzy (P2)")
+            if claim_date and br.service_date and claim_date != br.service_date:
+                gap = abs((br.service_date - claim_date).days)
+                if gap > 7:
+                    reasons.append(f"Date off by {gap} days (max is ±7 for P4b)")
+                elif gap > 3:
+                    reasons.append(f"Date off by {gap} days — needs P4b (±7d) at 60% confidence")
+            if not claim_date:
+                reasons.append("No service_date on ERA claim — passes 1-5 all require date")
+            if not reasons:
+                reasons.append("Name and date look like they should match — possible indexing issue or duplicate key conflict")
+            diag["best_candidate_reasons"] = reasons
+        else:
+            diag["pass_results"].append({
+                "pass": "name_search",
+                "result": "NO billing record has name score >= 60 for this patient",
+                "claim_name_normalized": claim_name,
+                "suggestion": "This patient may not be in the OCMRI billing data",
+            })
+
+    # --- Date search: how many records on that day? ---
+    if claim_date:
+        same_day = [br for br in billing_records if br.service_date == claim_date]
+        diag["same_date_records"] = len(same_day)
+        if not same_day:
+            diag["pass_results"].append({
+                "pass": "date_search",
+                "result": f"NO billing records exist for date {claim_date.isoformat()}",
+                "suggestion": "OCMRI data may not cover this date range",
+            })
+
+    diag["status"] = "unmatched"
+    return diag
