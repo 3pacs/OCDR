@@ -6,11 +6,15 @@ from sqlalchemy.orm import DeclarativeBase
 from backend.app.core.config import settings
 
 # PostgreSQL async engine
+# Note: echo=True logs every SQL statement — extremely slow with large datasets.
+# Use LOG_LEVEL=debug + SQLAlchemy logger config if you need SQL tracing.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.ENVIRONMENT == "development",
+    echo=False,
     pool_size=20,
     max_overflow=10,
+    pool_timeout=30,
+    connect_args={"server_settings": {"statement_timeout": "30000"}},  # 30s max per query
 )
 
 AsyncSessionLocal = async_sessionmaker(

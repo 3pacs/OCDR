@@ -37,6 +37,7 @@ function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       try {
+        // Fire all requests in parallel — each resolves independently
         const results = await Promise.allSettled([
           api.get("/import/status"),
           api.get("/underpayments/summary"),
@@ -44,7 +45,7 @@ function Dashboard() {
           api.get("/matching/summary"),
           api.get("/denials/summary"),
           api.get("/secondary-followup/summary"),
-          api.get("/insights/recommendations"),
+          api.get("/insights/recommendations", { timeout: 15000 }),
         ]);
 
         if (results[0].status === "fulfilled") setHealth(results[0].value.data);
