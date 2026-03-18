@@ -219,26 +219,66 @@
 - **Impact**: Deleting a billing record leaves orphaned ERA references.
 - **Fix**: Add `ondelete="SET NULL"` to the FK, or implement soft delete.
 
-### M-02: Patient Model Underutilized
+### M-02: Missing Foreign Key on TaskInstance.task_id
+- **Severity**: HIGH
+- **Location**: `business_task.py:52` — `task_id` is plain `Integer`, no `ForeignKey("business_tasks.id")`
+- **Impact**: No referential integrity. Deleting a BusinessTask leaves orphaned TaskInstances.
+  No cascade delete. Database allows invalid task_id values.
+- **Fix**: Add `ForeignKey("business_tasks.id")` and cascade rule.
+
+### M-03: Missing Foreign Key on Patient.crosswalk_import_id
+- **Severity**: MEDIUM
+- **Location**: `patient.py:46` — `crosswalk_import_id` is plain `Integer`, no FK to `crosswalk_imports.id`
+- **Impact**: No referential integrity between patients and their import source.
+- **Fix**: Add `ForeignKey("crosswalk_imports.id")`.
+
+### M-04: 10 Enum Fields Without Check Constraints
+- **Severity**: MEDIUM
+- **Details**: These string fields accept any value at the database level:
+
+| Model | Field | Expected Values | File |
+|-------|-------|-----------------|------|
+| BusinessTask | frequency | DAILY, WEEKLY, BIWEEKLY, MONTHLY, ONE_TIME | business_task.py:28 |
+| TaskInstance | status | PENDING, COMPLETED, SKIPPED | business_task.py:56 |
+| CrosswalkImport | status | UPLOADED, MAPPED, APPLIED | crosswalk_import.py:48 |
+| CrosswalkImport | format_detected | fixed_width, pipe, tab, csv, xml | crosswalk_import.py:27 |
+| ImportFile | status | PROCESSING, COMPLETED, FAILED | import_file.py:19 |
+| ImportFile | import_type | EXCEL_STRUCTURED, EXCEL_FLEXIBLE, ERA_835 | import_file.py:18 |
+| InsightLog | severity | CRITICAL, HIGH, MEDIUM, LOW, INFO | insight_log.py:26 |
+| InsightLog | status | OPEN, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, DISMISSED | insight_log.py:47 |
+| ServerSource | status | PENDING_SETUP, ACTIVE, PAUSED, ERROR | server_source.py:56 |
+
+- **Fix**: Add `CheckConstraint` in `__table_args__` for each, or use PostgreSQL ENUM types.
+
+### M-05: Patient Model Underutilized
 - **Severity**: INFO
 - **Location**: `models/patient.py`
 - **Details**: Full Patient model with demographics, but `BillingRecord` stores
   `patient_name` as a flat string. No FK from BillingRecord to Patient.
-- **Impact**: Name normalization happens in matcher at runtime instead of at import.
-- **Recommendation**: Not urgent — the current approach works for matching. A
-  proper patient master would require import-time linking.
+- **Recommendation**: Not urgent — the current approach works for matching.
 
-### M-03: PhysicianStatement Model Exists but No Implementation
+### M-06: PhysicianStatement Model Exists but No Implementation
 - **Severity**: INFO
 - **Location**: `models/physician.py` — `PhysicianStatement` class defined
 - **Details**: F-10 (Physician Statements) is NOT STARTED. Model exists as placeholder.
-- **Action**: When implementing F-10, this model is ready.
 
-### M-04: match_confidence Precision Too Low
+### M-07: match_confidence Precision Too Low
 - **Severity**: LOW
 - **Location**: `era.py:64` — `Numeric(3, 2)` allows 0.00 to 9.99
-- **Issue**: Max is 9.99, but values are always 0.00-1.00. Works fine, just imprecise spec.
-- **Fix**: Change to `Numeric(4, 3)` for cleaner representation, or leave as-is.
+- **Issue**: Values are always 0.00-1.00. Works fine, just imprecise spec.
+
+### M-08: Missing Index on ServerSource.enabled
+- **Severity**: LOW
+- **Location**: `server_source.py:40` — `enabled` field has no index
+- **Impact**: Scheduler queries `WHERE enabled = True` every 15 minutes — full table scan.
+- **Fix**: Add `index=True`.
+
+### M-09: Seed Data Idempotency Issue
+- **Severity**: MEDIUM
+- **Location**: `seed_data.py` — `seed_business_tasks()` (lines 675-732)
+- **Details**: If backfill fails mid-transaction and rolls back, next startup may
+  duplicate tasks because the existence check ran before the rollback.
+- **Fix**: Wrap in explicit savepoint, or use `INSERT ... ON CONFLICT DO NOTHING`.
 
 ---
 
@@ -279,14 +319,17 @@ For the next developer/LLM session, tackle in this order:
 |----------|------|--------|--------|
 | 1 | C-01: Authentication | MAJOR | Blocks production |
 | 2 | C-02: File upload size limits | QUICK | Prevents DoS |
-| 3 | F-01: Error boundary | QUICK | Prevents blank screens |
-| 4 | F-02: Silent error catches | MODERATE | UX improvement |
-| 5 | D-01+D-02: Remove dev flags from compose | QUICK | Prod readiness |
-| 6 | B-01: Sanitize error messages | MODERATE | Security |
-| 7 | C-03: Rate limiting | MODERATE | Abuse prevention |
-| 8 | F-04: AbortController | MODERATE | Race condition fix |
-| 9 | B-05: Expand claim status map | QUICK | Analytics accuracy |
-| 10 | F-03: Extract formatMoney | QUICK | Code quality |
+| 3 | M-02: Missing FK on TaskInstance.task_id | QUICK | Data integrity |
+| 4 | F-01: Error boundary | QUICK | Prevents blank screens |
+| 5 | F-02: Silent error catches | MODERATE | UX improvement |
+| 6 | D-01+D-02: Remove dev flags from compose | QUICK | Prod readiness |
+| 7 | B-01: Sanitize error messages | MODERATE | Security |
+| 8 | C-03: Rate limiting | MODERATE | Abuse prevention |
+| 9 | M-04: Add check constraints to enum fields | MODERATE | Data quality |
+| 10 | F-04: AbortController | MODERATE | Race condition fix |
+| 11 | B-05: Expand claim status map | QUICK | Analytics accuracy |
+| 12 | M-09: Fix seed data idempotency | QUICK | Startup safety |
+| 13 | F-03: Extract formatMoney | QUICK | Code quality |
 
 ---
 
@@ -346,6 +389,11 @@ If >10 items are FIXED, consider archiving them to a "Resolved" section at the b
 | D-05 | NOT FIXED | — | — | — |
 | D-06 | NOT FIXED | — | — | — |
 | M-01 | NOT FIXED | — | — | — |
-| M-02 | INFO | — | — | — |
-| M-03 | INFO | — | — | — |
+| M-02 | NOT FIXED | — | — | — |
+| M-03 | NOT FIXED | — | — | — |
 | M-04 | NOT FIXED | — | — | — |
+| M-05 | INFO | — | — | — |
+| M-06 | INFO | — | — | — |
+| M-07 | NOT FIXED | — | — | — |
+| M-08 | NOT FIXED | — | — | — |
+| M-09 | NOT FIXED | — | — | — |
