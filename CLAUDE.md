@@ -276,3 +276,81 @@ docker-compose up
   - Added Pass 4c (±14d, name≥90) and Pass 4d (±30d, name≥95)
   - Frontend match results now show all 13 pass counts
 - **Files**: `auto_matcher.py`, `matching_routes.py`, `Matching.js`, `CLAUDE.md`
+
+---
+
+## What Was Done (Session 2026-03-18)
+
+### Commit 12: `e096f0b` — Fix stuck loading: disable SQL echo, add timeouts
+- SQLAlchemy `echo=True` was logging every SQL statement, killing performance.
+- Added 30s axios timeout, 30s PostgreSQL statement_timeout, 15s for recommendations.
+
+### Commit 13: `bf2002a` — Fix matcher: trust ID matches, handle name variants
+- Pass 0/0b no longer gate on name score — ID is authoritative.
+- Added `token_set_ratio` via `_name_score_pair` for Hispanic/Asian name variants.
+- Added Force Re-Match All button (clears + re-runs).
+
+### Commit 14: `dbc5e10` — Add unmatched claim diagnostics
+- Matcher returns diagnostic breakdown: index coverage, missing data, 20 sample
+  unmatched claims with closest candidate and failure reason.
+
+---
+
+## Data Gotchas Log
+
+Confirmed issues, naming quirks, and matching pitfalls discovered from real
+patient data. Each entry is verified against screenshots or source files.
+Use this to avoid repeating mistakes.
+
+### Naming / Identity
+
+| # | Gotcha | Example | Impact | Confirmed |
+|---|--------|---------|--------|-----------|
+| G-01 | **Hispanic married + maiden names** — Same patient has completely different last names across systems. ERA uses insurance-registered name, OCMRI uses clinic-registered name. | ERA: "CENICEROS, CAMERINA" / Billing: "FAVELA DE CEN, CAMERINA" | Pass 0/0b rejected valid ID matches due to name gate. Fixed: ID is now authoritative. | 2026-03-18 |
+| G-02 | **Name particles (DE, DEL, VAN, etc.)** — Spanish/Portuguese name particles treated as separate tokens, inflating token count and reducing fuzzy scores. | "FAVELA DE CEN" = 3 tokens vs "CENICEROS" = 1 token | `token_sort_ratio` penalizes extra tokens. Fixed: added `token_set_ratio`. | 2026-03-18 |
+| G-03 | **Truncated names** — Some systems truncate at field width limits. The same name appears shortened. | "FAVELA DE CEN" may be truncation of "FAVELA DE CENICEROS" | Partial match only. `token_set_ratio` helps. | 2026-03-18 |
+| G-04 | **Column A vs Column O** — Both are patient name, but A comes from Candelis and O from Purview. They can differ for same patient (research patients, data entry). | A: "DOE, JOHN" / O: "DOE, JONATHAN" | Matcher checks both `patient_name` and `patient_name_display`. | 2026-03-16 |
+
+### ID Mapping
+
+| # | Gotcha | Example | Impact | Confirmed |
+|---|--------|---------|--------|-----------|
+| G-05 | **Topaz prefix encoding** — Topaz prepends billing context digit × 10M to PatientID. | `10061723` = primary billing for patient 61723 | Must MOD 10M to get real patient ID. All passes decode this. | 2026-03-17 |
+| G-06 | **Leading zeros in ERA claim_id** — ERA 835 files zero-pad claim IDs. | ERA: "00061501" vs billing topaz_id: "61501" | `_strip_leading_zeros()` on both sides. | 2026-03-17 |
+| G-07 | **Chart number ≠ Topaz ID** — Column M (jacket/chart #) is the clinic's internal number. Column V (Topaz ID) is the billing system's number. They are independent. | Chart #: 4523, Topaz ID: 61723 | Must use crosswalk to map between them. No formula. | 2026-03-17 |
+
+### Date Matching
+
+| # | Gotcha | Example | Impact | Confirmed |
+|---|--------|---------|--------|-----------|
+| G-08 | **Service date vs payment date** — ERA 835 `service_date` can differ from billing `service_date` by days or weeks (date of service vs date billed). | ERA: 2025-01-15 / Billing: 2025-01-10 | Passes 4-4d widen to ±3, ±7, ±14, ±30 days. | 2026-03-17 |
+| G-09 | **Excel date serial numbers** — openpyxl sometimes returns dates as serial ints (e.g., 45678) instead of datetime objects. | Raw value: 45678 → 2025-01-15 | `_excel_serial_to_date()` handles conversion. | 2026-03-07 |
+
+### Data Quality
+
+| # | Gotcha | Example | Impact | Confirmed |
+|---|--------|---------|--------|-----------|
+| G-10 | **OCMRI is merged Candelis + Purview** — Some columns are duplicated across systems (C/R = scan, F/Q = modality). | Both have slightly different values for same patient | We use column C/F as primary, R/Q as fallback. | 2026-03-16 |
+| G-11 | **tbl_FinancialSummary mislabeled columns** — Access DB column headers don't match actual data. | Col E labeled "SecInsDate" is actually Insurance ID | Do not trust Access column names in this table. | 2026-03-17 |
+| G-12 | **tbl_PatientNotes = chart numbers** — This table maps Topaz patient IDs to chart/jacket numbers via NoteText field. Columns A/B are swapped vs the "Chart Numbers" sheet. | | Only reliable source for crosswalk. | 2026-03-17 |
+
+### Matcher Behavior
+
+| # | Gotcha | Example | Impact | Confirmed |
+|---|--------|---------|--------|-----------|
+| G-13 | **Re-running matcher gives 0 new** — Matcher only processes claims with `matched_billing_id IS NULL`. Once matched (even wrongly), re-running skips them. | All claims matched → "0 new matches" | Use "Force Re-Match All" to clear and re-run. | 2026-03-18 |
+| G-14 | **Many-to-one matching** — Multiple ERA claims can link to the same billing record (original payment, adjustment, secondary payer, appeal). | Primary + secondary + adjustment all point to same billing record | Billing records stay in indexes after first match. | 2026-03-17 |
+
+---
+
+### Adding New Gotchas
+
+When a new data issue is found:
+1. Add a row to the appropriate table above with a G-XX number
+2. Include a concrete example from real data
+3. Note the impact on matching/import
+4. Mark confirmed date (ideally with screenshot reference)
+5. If a code fix was made, note which commit
+
+Upload screenshots of specific patients and I'll cross-reference against
+the database to confirm data matches and add verified entries here.
