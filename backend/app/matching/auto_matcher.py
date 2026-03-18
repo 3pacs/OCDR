@@ -91,15 +91,70 @@ def _names_match(name1: str, name2: str, threshold: int = 85) -> tuple[bool, flo
 
 
 CPT_TO_MODALITY = {
-    "74177": "CT", "74178": "CT", "74176": "CT", "72193": "CT",
-    "72192": "CT", "72194": "CT", "74174": "CT",
-    "70553": "HMRI", "70551": "HMRI", "70552": "HMRI",
-    "72141": "HMRI", "72148": "HMRI", "72156": "HMRI",
-    "73721": "HMRI", "73718": "HMRI", "73220": "HMRI", "77084": "HMRI",
-    "78816": "PET", "78815": "PET", "78814": "PET",
-    "78811": "PET", "78812": "PET", "78813": "PET",
+    # CT — head/neck/spine/chest/abdomen/pelvis/extremities
+    "70450": "CT", "70460": "CT", "70470": "CT",  # Head
+    "70480": "CT", "70481": "CT", "70482": "CT",  # Orbit/ear/fossa
+    "70486": "CT", "70487": "CT", "70488": "CT",  # Sinuses
+    "70490": "CT", "70491": "CT", "70492": "CT",  # Neck soft tissue
+    "71250": "CT", "71260": "CT", "71270": "CT", "71275": "CT",  # Chest
+    "72125": "CT", "72126": "CT", "72127": "CT",  # Cervical spine
+    "72128": "CT", "72129": "CT", "72130": "CT",  # Thoracic spine
+    "72131": "CT", "72132": "CT", "72133": "CT",  # Lumbar spine
+    "72191": "CT",  # CT angiography pelvis
+    "72192": "CT", "72193": "CT", "72194": "CT",  # Pelvis
+    "73200": "CT", "73201": "CT", "73202": "CT",  # Upper extremity
+    "73700": "CT", "73701": "CT", "73702": "CT",  # Lower extremity
+    "74150": "CT", "74160": "CT", "74170": "CT",  # Abdomen
+    "74174": "CT", "74176": "CT", "74177": "CT", "74178": "CT",  # Abd+Pelvis
+    "76380": "CT",  # CT limited follow-up
+    # MRI (HMRI = high-field MRI, OPEN = open MRI — both are MRI modality)
+    "70336": "HMRI",  # TMJ
+    "70540": "HMRI", "70542": "HMRI", "70543": "HMRI",  # Orbit/face/neck
+    "70551": "HMRI", "70552": "HMRI", "70553": "HMRI",  # Brain
+    "70554": "HMRI", "70555": "HMRI",  # Brain functional
+    "71550": "HMRI", "71551": "HMRI", "71552": "HMRI",  # Chest
+    "72141": "HMRI", "72142": "HMRI", "72146": "HMRI",  # Cervical spine
+    "72147": "HMRI", "72148": "HMRI", "72149": "HMRI",  # Thoracic/Lumbar
+    "72156": "HMRI", "72157": "HMRI", "72158": "HMRI",  # Spine combo
+    "72195": "HMRI", "72196": "HMRI", "72197": "HMRI",  # Pelvis
+    "73218": "HMRI", "73219": "HMRI", "73220": "HMRI",  # Upper extremity
+    "73221": "HMRI", "73222": "HMRI", "73223": "HMRI",  # Upper joint
+    "73718": "HMRI", "73719": "HMRI", "73720": "HMRI",  # Lower extremity
+    "73721": "HMRI", "73722": "HMRI", "73723": "HMRI",  # Lower joint
+    "74181": "HMRI", "74182": "HMRI", "74183": "HMRI",  # Abdomen
+    "77084": "HMRI",  # MRI bone marrow
+    # PET and PET/CT
+    "78429": "PET", "78430": "PET", "78431": "PET", "78432": "PET",  # Cardiac PET
+    "78459": "PET",  # Myocardial PET
+    "78491": "PET", "78492": "PET",  # PET perfusion
+    "78608": "PET", "78609": "PET",  # PET brain
+    "78811": "PET", "78812": "PET", "78813": "PET",  # PET limited/skull-thigh/whole
+    "78814": "PET", "78815": "PET", "78816": "PET",  # PET/CT limited/skull-thigh/whole
+    # Bone scan (nuclear medicine)
     "78300": "BONE", "78305": "BONE", "78306": "BONE",
-    "71046": "DX", "71045": "DX", "73030": "DX",
+    "78315": "BONE", "78399": "BONE",
+    # X-ray / DX (diagnostic radiology)
+    "71045": "DX", "71046": "DX", "71047": "DX", "71048": "DX",  # Chest
+    "72020": "DX", "72040": "DX", "72050": "DX",  # Spine
+    "72070": "DX", "72072": "DX", "72074": "DX",  # Thoracic spine
+    "72080": "DX", "72100": "DX", "72110": "DX",  # Lumbar spine
+    "73000": "DX", "73010": "DX", "73020": "DX", "73030": "DX",  # Shoulder/elbow
+    "73060": "DX", "73070": "DX", "73080": "DX", "73090": "DX",  # Forearm/wrist/hand
+    "73500": "DX", "73510": "DX", "73520": "DX", "73521": "DX",  # Hip
+    "73550": "DX", "73560": "DX", "73562": "DX", "73564": "DX",  # Femur/knee
+    "73590": "DX", "73600": "DX", "73610": "DX", "73620": "DX",  # Tibia/ankle/foot
+    # Ultrasound
+    "76536": "US", "76604": "US", "76641": "US", "76642": "US",  # Thyroid/chest/breast
+    "76700": "US", "76705": "US", "76770": "US", "76775": "US",  # Abdomen/retroperitoneal
+    "76801": "US", "76805": "US", "76815": "US", "76817": "US",  # OB
+    "76856": "US", "76857": "US",  # Pelvic
+    "93880": "US", "93925": "US", "93926": "US", "93970": "US", "93971": "US",  # Vascular
+    # Mammography
+    "77065": "MAMMO", "77066": "MAMMO", "77067": "MAMMO",
+    # DEXA / bone density
+    "77080": "DEXA", "77081": "DEXA", "77085": "DEXA", "77086": "DEXA",
+    # Fluoroscopy
+    "76000": "FLUORO", "76001": "FLUORO",
 }
 
 CLAIM_STATUS_MAP = {
@@ -216,6 +271,41 @@ def _best_name_score(claim_name, br, billing_norm_names, billing_display_names):
     return max(score1, score2)
 
 
+def _modality_matches(claim_modality: str | None, billing_modality: str | None) -> bool:
+    """Check if ERA claim modality (from CPT) is compatible with billing modality."""
+    if not claim_modality or not billing_modality:
+        return True  # Unknown — don't penalize
+    return claim_modality.upper() == billing_modality.upper()
+
+
+def _pick_best_candidate(candidates, claim_date, claim_name, claim_modality,
+                          billing_norm_names, billing_display_names):
+    """Pick the best billing record from multiple candidates.
+
+    Prioritizes: modality match > date match > name score.
+    Returns (best_br, disambiguation_used).
+    """
+    if not candidates:
+        return None, False
+    if len(candidates) == 1:
+        return candidates[0], False
+
+    best_br = None
+    best_score = -1
+    for c in candidates:
+        date_match = (c.service_date == claim_date) if claim_date else False
+        name_score = (_best_name_score(claim_name, c, billing_norm_names,
+                                       billing_display_names)
+                      if claim_name else 0)
+        mod_match = _modality_matches(claim_modality, c.modality)
+        # Modality match is the strongest signal (200), then date (100), then name
+        combined = (200 if mod_match else 0) + (100 if date_match else 0) + name_score
+        if combined > best_score:
+            best_score = combined
+            best_br = c
+    return best_br, True
+
+
 def _match_single_claim(
     claim,
     claim_name,
@@ -257,17 +347,10 @@ def _match_single_claim(
             if len(candidates) == 1:
                 # Single candidate for this ID — accept outright
                 return candidates[0], 0.99, "pass_0_topaz_id"
-            # Multiple candidates — pick best by date match, then name score
-            best_br = None
-            best_score = -1
-            for c in candidates:
-                date_match = (c.service_date == claim_date) if claim_date else False
-                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names) if claim_name else 0
-                # Date match is worth more than name similarity for disambiguation
-                combined = (100 if date_match else 0) + name_score
-                if combined > best_score:
-                    best_score = combined
-                    best_br = c
+            # Multiple candidates — pick best by modality, date, name
+            best_br, _ = _pick_best_candidate(
+                candidates, claim_date, claim_name, claim_modality,
+                billing_norm_names, billing_display_names)
             if best_br:
                 return best_br, 0.97, "pass_0_topaz_id"
 
@@ -289,18 +372,13 @@ def _match_single_claim(
             if len(p0b_candidates) == 1:
                 # Single billing record for this patient_id — accept
                 return p0b_candidates[0], 0.92, "pass_0b_patient_id"
-            # Multiple — disambiguate by date then name
-            best_br = None
-            best_score = -1
-            for c in p0b_candidates:
-                date_match = (c.service_date == claim_date) if claim_date else False
-                name_score = _best_name_score(claim_name, c, billing_norm_names, billing_display_names) if claim_name else 0
-                combined = (100 if date_match else 0) + name_score
-                if combined > best_score:
-                    best_score = combined
-                    best_br = c
+            # Multiple — disambiguate by modality, date, name
+            best_br, _ = _pick_best_candidate(
+                p0b_candidates, claim_date, claim_name, claim_modality,
+                billing_norm_names, billing_display_names)
             if best_br:
-                conf = 0.90 if best_score >= 100 else 0.85  # higher confidence if date matched
+                date_match = (best_br.service_date == claim_date) if claim_date else False
+                conf = 0.90 if date_match else 0.85
                 return best_br, conf, "pass_0b_patient_id"
 
     # Pass 1: Exact composite (name + date + amount)
@@ -309,13 +387,21 @@ def _match_single_claim(
         candidates = billing_by_name_date.get(key, [])
         if len(candidates) == 1:
             return candidates[0], 0.99, "pass_1_exact"
-        # Multiple candidates — use amount to disambiguate
-        for br in candidates:
-            if claim_paid and br.total_payment:
-                if abs(float(br.total_payment) - claim_paid) < 0.01:
-                    return br, 0.99, "pass_1_exact"
-        # Multiple candidates, no amount match — take first (same name+date)
-        if candidates:
+        if len(candidates) > 1:
+            # Multiple candidates on same name+date — use modality then amount
+            if claim_modality:
+                mod_matches = [br for br in candidates
+                               if _modality_matches(claim_modality, br.modality)]
+                if len(mod_matches) == 1:
+                    return mod_matches[0], 0.99, "pass_1_exact"
+                if mod_matches:
+                    candidates = mod_matches  # Narrow to modality-matched
+            # Use amount to disambiguate
+            for br in candidates:
+                if claim_paid and br.total_payment:
+                    if abs(float(br.total_payment) - claim_paid) < 0.01:
+                        return br, 0.99, "pass_1_exact"
+            # No amount match — take first
             return candidates[0], 0.95, "pass_1_exact"
 
     # Pass 2: Strong fuzzy (name>=95 + date + CPT/modality)
@@ -330,56 +416,46 @@ def _match_single_claim(
             if score >= 98:
                 return br, 0.95, "pass_2_strong"
 
-    # Pass 3: Medium fuzzy (name>=90 + date)
+    # Pass 3: Medium fuzzy (name>=90 + date) — prefer modality match
     if claim_name and claim_date:
-        for br in billing_by_date.get(claim_date, []):
+        date_cands = billing_by_date.get(claim_date, [])
+        best_br, best_score, best_mod = None, 0, False
+        for br in date_cands:
             score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-            if score >= 90:
-                return br, 0.85, "pass_3_medium"
+            if score < 90:
+                continue
+            mod = _modality_matches(claim_modality, br.modality)
+            # Prefer modality match; among equals prefer higher name score
+            if (mod and not best_mod) or (mod == best_mod and score > best_score):
+                best_br, best_score, best_mod = br, score, mod
+        if best_br:
+            return best_br, 0.85, "pass_3_medium"
 
-    # Pass 4: Weak fuzzy (name>=70 + date ±3 days)
+    # Passes 4-4d: Date window matching with modality preference
+    # Each pass widens the date window and lowers confidence.
+    # Within each window, prefer modality-matching candidates.
+    _date_passes = [
+        ("pass_4_weak",           range(-3, 4),     0,  0.70),
+        ("pass_4b_wider_date",    range(-7, 8),     3,  0.60),
+        ("pass_4c_wide_date",     range(-14, 15),   7,  0.55),
+        ("pass_4d_very_wide_date", range(-30, 31), 14,  0.50),
+    ]
     if claim_name and claim_date:
-        for offset in range(-3, 4):
-            if offset == 0:
-                continue  # Already checked in Pass 3
-            check_date = claim_date + timedelta(days=offset)
-            for br in billing_by_date.get(check_date, []):
-                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 70:
-                    return br, 0.70, "pass_4_weak"
-
-    # Pass 4b: Wider date window (name>=70 + date ±7 days)
-    if claim_name and claim_date:
-        for offset in range(-7, 8):
-            if -3 <= offset <= 3:
-                continue  # Already checked
-            check_date = claim_date + timedelta(days=offset)
-            for br in billing_by_date.get(check_date, []):
-                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 70:
-                    return br, 0.60, "pass_4b_wider_date"
-
-    # Pass 4c: Wide date window (name>=70 + date ±14 days)
-    if claim_name and claim_date:
-        for offset in range(-14, 15):
-            if -7 <= offset <= 7:
-                continue  # Already checked
-            check_date = claim_date + timedelta(days=offset)
-            for br in billing_by_date.get(check_date, []):
-                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 70:
-                    return br, 0.55, "pass_4c_wide_date"
-
-    # Pass 4d: Very wide date window (name>=70 + date ±30 days)
-    if claim_name and claim_date:
-        for offset in range(-30, 31):
-            if -14 <= offset <= 14:
-                continue  # Already checked
-            check_date = claim_date + timedelta(days=offset)
-            for br in billing_by_date.get(check_date, []):
-                score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 70:
-                    return br, 0.50, "pass_4d_very_wide_date"
+        for pass_name, offset_range, skip_within, base_conf in _date_passes:
+            best_br, best_score, best_mod = None, 0, False
+            for offset in offset_range:
+                if -skip_within <= offset <= skip_within:
+                    continue
+                check_date = claim_date + timedelta(days=offset)
+                for br in billing_by_date.get(check_date, []):
+                    score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
+                    if score < 70:
+                        continue
+                    mod = _modality_matches(claim_modality, br.modality)
+                    if (mod and not best_mod) or (mod == best_mod and score > best_score):
+                        best_br, best_score, best_mod = br, score, mod
+            if best_br:
+                return best_br, base_conf, pass_name
 
     # Pass 5: Amount-anchored (carrier + date + billed amount)
     # Uses billed_amount from ERA (not paid), because billing total_payment
