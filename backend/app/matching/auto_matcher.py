@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine, ERAPayment
+from backend.app.matching.icd10_modality_map import diagnosis_modality_score
 
 logger = logging.getLogger(__name__)
 
@@ -279,10 +280,11 @@ def _modality_matches(claim_modality: str | None, billing_modality: str | None) 
 
 
 def _pick_best_candidate(candidates, claim_date, claim_name, claim_modality,
-                          billing_norm_names, billing_display_names):
+                          billing_norm_names, billing_display_names,
+                          claim_diagnosis_codes=None):
     """Pick the best billing record from multiple candidates.
 
-    Prioritizes: modality match > date match > name score.
+    Prioritizes: modality match > ICD-10 diagnosis fit > date match > name score.
     Returns (best_br, disambiguation_used).
     """
     if not candidates:
@@ -298,8 +300,13 @@ def _pick_best_candidate(candidates, claim_date, claim_name, claim_modality,
                                        billing_display_names)
                       if claim_name else 0)
         mod_match = _modality_matches(claim_modality, c.modality)
-        # Modality match is the strongest signal (200), then date (100), then name
-        combined = (200 if mod_match else 0) + (100 if date_match else 0) + name_score
+        # ICD-10 diagnosis → modality compatibility (0.0 neutral, 1.0 confirm, -0.5 mismatch)
+        dx_score = diagnosis_modality_score(claim_diagnosis_codes, c.modality)
+        # Modality match is the strongest signal (200), then ICD-10 (150), date (100), name
+        combined = ((200 if mod_match else 0) +
+                    (150 * dx_score) +  # +150 confirm, 0 neutral, -75 mismatch
+                    (100 if date_match else 0) +
+                    name_score)
         if combined > best_score:
             best_score = combined
             best_br = c
@@ -324,6 +331,7 @@ def _match_single_claim(
     billing_by_name,
     billing_by_modality_name,
     billing_records_list=None,
+    claim_diagnosis_codes=None,
 ):
     """Run matching passes for a single claim.
 
@@ -350,7 +358,8 @@ def _match_single_claim(
             # Multiple candidates — pick best by modality, date, name
             best_br, _ = _pick_best_candidate(
                 candidates, claim_date, claim_name, claim_modality,
-                billing_norm_names, billing_display_names)
+                billing_norm_names, billing_display_names,
+                claim_diagnosis_codes)
             if best_br:
                 return best_br, 0.97, "pass_0_topaz_id"
 
@@ -375,7 +384,8 @@ def _match_single_claim(
             # Multiple — disambiguate by modality, date, name
             best_br, _ = _pick_best_candidate(
                 p0b_candidates, claim_date, claim_name, claim_modality,
-                billing_norm_names, billing_display_names)
+                billing_norm_names, billing_display_names,
+                claim_diagnosis_codes)
             if best_br:
                 date_match = (best_br.service_date == claim_date) if claim_date else False
                 conf = 0.90 if date_match else 0.85
@@ -416,24 +426,25 @@ def _match_single_claim(
             if score >= 98:
                 return br, 0.95, "pass_2_strong"
 
-    # Pass 3: Medium fuzzy (name>=90 + date) — prefer modality match
+    # Pass 3: Medium fuzzy (name>=90 + date) — prefer modality + diagnosis match
     if claim_name and claim_date:
         date_cands = billing_by_date.get(claim_date, [])
-        best_br, best_score, best_mod = None, 0, False
+        best_br, best_combined = None, -1
         for br in date_cands:
             score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
             if score < 90:
                 continue
-            mod = _modality_matches(claim_modality, br.modality)
-            # Prefer modality match; among equals prefer higher name score
-            if (mod and not best_mod) or (mod == best_mod and score > best_score):
-                best_br, best_score, best_mod = br, score, mod
+            mod = 200 if _modality_matches(claim_modality, br.modality) else 0
+            dx = 150 * diagnosis_modality_score(claim_diagnosis_codes, br.modality)
+            combined = mod + dx + score
+            if combined > best_combined:
+                best_br, best_combined = br, combined
         if best_br:
             return best_br, 0.85, "pass_3_medium"
 
-    # Passes 4-4d: Date window matching with modality preference
+    # Passes 4-4d: Date window matching with modality + diagnosis preference
     # Each pass widens the date window and lowers confidence.
-    # Within each window, prefer modality-matching candidates.
+    # Within each window, prefer modality/diagnosis-matching candidates.
     _date_passes = [
         ("pass_4_weak",           range(-3, 4),     0,  0.70),
         ("pass_4b_wider_date",    range(-7, 8),     3,  0.60),
@@ -442,7 +453,7 @@ def _match_single_claim(
     ]
     if claim_name and claim_date:
         for pass_name, offset_range, skip_within, base_conf in _date_passes:
-            best_br, best_score, best_mod = None, 0, False
+            best_br, best_combined = None, -1
             for offset in offset_range:
                 if -skip_within <= offset <= skip_within:
                     continue
@@ -451,9 +462,11 @@ def _match_single_claim(
                     score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
                     if score < 70:
                         continue
-                    mod = _modality_matches(claim_modality, br.modality)
-                    if (mod and not best_mod) or (mod == best_mod and score > best_score):
-                        best_br, best_score, best_mod = br, score, mod
+                    mod = 200 if _modality_matches(claim_modality, br.modality) else 0
+                    dx = 150 * diagnosis_modality_score(claim_diagnosis_codes, br.modality)
+                    combined = mod + dx + score
+                    if combined > best_combined:
+                        best_br, best_combined = br, combined
             if best_br:
                 return best_br, base_conf, pass_name
 
@@ -691,6 +704,7 @@ async def run_auto_match(session: AsyncSession) -> dict:
         claim_billed = round(float(claim.billed_amount), 2) if claim.billed_amount else None
         claim_cpt = claim.cpt_code
         claim_modality = CPT_TO_MODALITY.get(claim_cpt) if claim_cpt else None
+        claim_dx = getattr(claim, 'diagnosis_codes', None)
         era_payment = payments_by_id.get(claim.era_payment_id)
 
         matched_br, confidence, pass_name = _match_single_claim(
@@ -702,6 +716,7 @@ async def run_auto_match(session: AsyncSession) -> dict:
             billing_norm_names, billing_display_names,
             billing_by_name, billing_by_modality_name,
             billing_records_list=billing_records,
+            claim_diagnosis_codes=claim_dx,
         )
 
         if matched_br:
@@ -1065,6 +1080,7 @@ async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int
     claim_date = claim.service_date_835
     claim_cpt = claim.cpt_code
     claim_modality = CPT_TO_MODALITY.get(claim_cpt) if claim_cpt else None
+    claim_dx = getattr(claim, 'diagnosis_codes', None)
 
     diag = {
         "claim": {
@@ -1075,6 +1091,7 @@ async def diagnose_unmatched_claim(session: AsyncSession, era_claim_line_id: int
             "service_date": claim_date.isoformat() if claim_date else None,
             "cpt_code": claim_cpt,
             "derived_modality": claim_modality,
+            "diagnosis_codes": claim_dx,
             "billed_amount": float(claim.billed_amount) if claim.billed_amount else None,
             "paid_amount": float(claim.paid_amount) if claim.paid_amount else None,
             "payer_name": payment.payer_name if payment else None,

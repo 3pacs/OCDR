@@ -80,6 +80,10 @@ class BillingRecord(Base):
     era_claim_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     appeal_deadline: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
 
+    # --- STATIC: Diagnosis codes (from Topaz, 837, or manual entry) ---
+    # Comma-separated ICD-10 codes (e.g., "C61,Z85.46,M54.5")
+    diagnosis_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # --- META: Import tracking ---
     import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
     import_file_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)

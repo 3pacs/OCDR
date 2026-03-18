@@ -60,6 +60,10 @@ class ERAClaimLine(Base):
     cas_reason_code: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     cas_adjustment_amount: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
 
+    # STATIC: Diagnosis codes (from 837 claim or Topaz import — NOT in 835)
+    # Stored as comma-separated ICD-10 codes (e.g., "C61,Z85.46")
+    diagnosis_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # DYNAMIC: Updated by auto-matcher
     match_confidence: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
     matched_billing_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("billing_records.id"), nullable=True, index=True)
