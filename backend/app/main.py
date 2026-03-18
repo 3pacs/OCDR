@@ -69,14 +69,18 @@ async def lifespan(app: FastAPI):
             logger.debug(f"Column {table}.{column} widen skipped: {e}")
 
     # Drop old constraints that need to be replaced
-    for old_ck in [
-        "ck_billing_primary_nonneg", "ck_billing_secondary_nonneg", "ck_billing_total_nonneg",
-        "uq_fee_schedule_payer_modality",  # Replaced by uq_fee_schedule_payer_modality_cpt
-    ]:
+    # Each entry is (table_name, constraint_name)
+    old_constraints = [
+        ("billing_records", "ck_billing_primary_nonneg"),
+        ("billing_records", "ck_billing_secondary_nonneg"),
+        ("billing_records", "ck_billing_total_nonneg"),
+        ("fee_schedule", "uq_fee_schedule_payer_modality"),  # Replaced by uq_fee_schedule_payer_modality_cpt
+    ]
+    for table, old_ck in old_constraints:
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(
-                    f"ALTER TABLE billing_records DROP CONSTRAINT IF EXISTS {old_ck}"
+                    f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {old_ck}"
                 ))
         except Exception:
             pass
