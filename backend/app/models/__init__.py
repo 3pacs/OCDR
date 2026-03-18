@@ -7,6 +7,7 @@ from backend.app.models.insight_log import InsightLog
 from backend.app.models.crosswalk_import import CrosswalkImport
 from backend.app.models.patient import Patient
 from backend.app.models.server_source import ServerSource
+from backend.app.models.business_task import BusinessTask, TaskInstance
 
 __all__ = [
     "BillingRecord",
@@ -21,4 +22,6 @@ __all__ = [
     "CrosswalkImport",
     "Patient",
     "ServerSource",
+    "BusinessTask",
+    "TaskInstance",
 ]

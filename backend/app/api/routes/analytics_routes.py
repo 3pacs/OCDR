@@ -19,6 +19,44 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Pipeline Improvement Suggestions
+# ---------------------------------------------------------------------------
+
+@router.get("/pipeline-suggestions")
+async def pipeline_suggestions(db: AsyncSession = Depends(get_db)):
+    """Generate pipeline improvement suggestions from billing data analysis."""
+    from backend.app.analytics.pipeline_suggestions import (
+        generate_pipeline_suggestions,
+        persist_pipeline_suggestions,
+        BENCHMARKS,
+    )
+    suggestions = await generate_pipeline_suggestions(db)
+    saved = await persist_pipeline_suggestions(db, suggestions)
+
+    # Summary stats
+    by_severity = {}
+    by_category = {}
+    total_impact = 0
+    for s in suggestions:
+        sev = s.get("severity", "LOW")
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        cat = s.get("subcategory", "GENERAL")
+        by_category[cat] = by_category.get(cat, 0) + 1
+        total_impact += abs(s.get("estimated_impact") or 0)
+
+    return {
+        "suggestions": suggestions,
+        "total": len(suggestions),
+        "total_impact": round(total_impact, 2),
+        "new_persisted": saved,
+        "by_severity": by_severity,
+        "by_category": by_category,
+        "benchmarks": BENCHMARKS,
+        "generated_at": date.today().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # F-09: Payer Contract Monitor & Alerts
 # ---------------------------------------------------------------------------
 

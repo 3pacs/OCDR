@@ -130,10 +130,34 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Server sync scheduler error: {e}")
 
+    async def _refresh_pipeline_suggestions():
+        """Background job: refresh pipeline improvement suggestions daily."""
+        try:
+            async with AsyncSessionLocal() as session:
+                from backend.app.analytics.pipeline_suggestions import generate_pipeline_suggestions
+                result = await generate_pipeline_suggestions(session)
+                logger.info(f"Pipeline suggestions refreshed: {result.get('total', 0)} suggestions")
+        except Exception as e:
+            logger.error(f"Pipeline suggestions refresh error: {e}")
+
+    async def _check_recurring_tasks():
+        """Background job: generate today's task instances from recurring templates."""
+        try:
+            async with AsyncSessionLocal() as session:
+                from backend.app.tasks.task_scheduler import generate_due_tasks
+                count = await generate_due_tasks(session)
+                logger.info(f"Recurring tasks checked: {count} new instances created")
+        except Exception as e:
+            logger.error(f"Recurring task check error: {e}")
+
     # Run server sync every 15 minutes (individual sources have their own intervals)
     scheduler.add_job(_run_server_sync, "interval", minutes=15, id="server_sync")
+    # Refresh pipeline suggestions daily at 6 AM
+    scheduler.add_job(_refresh_pipeline_suggestions, "cron", hour=6, id="pipeline_suggestions")
+    # Check recurring tasks every morning at 7 AM
+    scheduler.add_job(_check_recurring_tasks, "cron", hour=7, id="recurring_tasks")
     scheduler.start()
-    logger.info("Background server sync scheduler started (every 15 min)")
+    logger.info("Background scheduler started (sync=15min, pipeline=daily@6AM, tasks=daily@7AM)")
 
     yield
 
@@ -187,6 +211,7 @@ from backend.app.api.routes.admin_routes import router as admin_router
 from backend.app.api.routes.matching_routes import router as matching_router
 from backend.app.api.routes.insights_routes import router as insights_router
 from backend.app.api.routes.analytics_routes import router as analytics_router
+from backend.app.api.routes.task_routes import router as task_router
 
 app.include_router(import_router, prefix="/api/import", tags=["import"])
 app.include_router(era_router, prefix="/api/era", tags=["era"])
@@ -195,3 +220,4 @@ app.include_router(admin_router, prefix="/api", tags=["admin"])
 app.include_router(matching_router, prefix="/api/matching", tags=["matching"])
 app.include_router(insights_router, prefix="/api/insights", tags=["insights"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(task_router, prefix="/api/tasks", tags=["tasks"])

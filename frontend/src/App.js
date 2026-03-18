@@ -18,6 +18,8 @@ import GadoDashboard from "./pages/GadoDashboard";
 import Duplicates from "./pages/Duplicates";
 import DenialAnalytics from "./pages/DenialAnalytics";
 import PatientLookup from "./pages/PatientLookup";
+import PipelineImprovements from "./pages/PipelineImprovements";
+import BusinessTasks from "./pages/BusinessTasks";
 
 function App() {
   return (
@@ -41,6 +43,8 @@ function App() {
           <Route path="psma" element={<PSMADashboard />} />
           <Route path="gado" element={<GadoDashboard />} />
           <Route path="insights" element={<Insights />} />
+          <Route path="pipeline" element={<PipelineImprovements />} />
+          <Route path="tasks" element={<BusinessTasks />} />
         </Route>
       </Routes>
     </>

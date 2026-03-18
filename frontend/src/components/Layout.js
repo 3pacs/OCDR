@@ -12,6 +12,8 @@ function Layout() {
           <Navbar.Collapse id="main-nav">
             <Nav className="me-auto">
               <Nav.Link as={NavLink} to="/">Dashboard</Nav.Link>
+              <Nav.Link as={NavLink} to="/pipeline" className="text-warning fw-bold">Pipeline</Nav.Link>
+              <Nav.Link as={NavLink} to="/tasks">Tasks</Nav.Link>
               <Nav.Link as={NavLink} to="/patients">Patients</Nav.Link>
               <Nav.Link as={NavLink} to="/import">Import</Nav.Link>
               <Nav.Link as={NavLink} to="/matching">Matching</Nav.Link>
