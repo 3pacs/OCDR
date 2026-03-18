@@ -32,7 +32,10 @@ def _recoverability_score(billed: float | None, service_date: date | None) -> fl
 def _serialize_denial(row: BillingRecord, era_info: dict | None = None) -> dict:
     billed = float(era_info.get("billed_amount") or 0) if era_info else 0
     if billed == 0:
-        billed = float(row.total_payment or 0) + float(row.extra_charges or 0)
+        # For denied claims, total_payment is typically $0. Use extra_charges
+        # (original charge amount) as the billed proxy. Do NOT add total_payment
+        # — that would double-count partial payments as billed amount.
+        billed = float(row.extra_charges or 0)
 
     days_old = (date.today() - row.service_date).days if row.service_date else None
     carc = era_info.get("cas_reason_code") if era_info else row.denial_reason_code

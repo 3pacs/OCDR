@@ -123,6 +123,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"Carrier X backfill skipped: {e}")
 
+    # Fix: clear denial_status on paid claims — only actual denials/pending should
+    # have denial_status set. PAID_PRIMARY/PAID_SECONDARY/PAID_TERTIARY were
+    # incorrectly stored in denial_status by the matcher, inflating denial counts.
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                "UPDATE billing_records SET denial_status = NULL, denial_reason_code = NULL "
+                "WHERE denial_status IN ('PAID_PRIMARY', 'PAID_SECONDARY', 'PAID_TERTIARY')"
+            ))
+            if result.rowcount:
+                logger.info(f"Cleanup: cleared paid-status denial_status from {result.rowcount} records")
+    except Exception as e:
+        logger.debug(f"Paid-status cleanup skipped: {e}")
+
     logger.info("Schema migrations + constraints applied")
 
     # Seed data on startup

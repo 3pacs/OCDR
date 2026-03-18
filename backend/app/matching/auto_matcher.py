@@ -115,6 +115,11 @@ CLAIM_STATUS_MAP = {
     "22": "REVERSAL",
 }
 
+# Statuses that represent actual denials/problems — only these should set
+# BillingRecord.denial_status. Paid statuses must NOT be stored in
+# denial_status or they inflate denial counts/recoverable amounts.
+DENIAL_STATUSES = {"DENIED", "PENDING", "REVERSAL"}
+
 
 def _strip_leading_zeros(s: str) -> str:
     """Strip leading zeros from numeric-looking strings for ID comparison."""
@@ -650,9 +655,16 @@ async def run_auto_match(session: AsyncSession) -> dict:
                     pass
 
             status = CLAIM_STATUS_MAP.get(claim.claim_status)
-            if status:
+            if status and status in DENIAL_STATUSES:
+                # Only set denial_status for actual denials/problems.
+                # Paid statuses (PAID_PRIMARY, PAID_SECONDARY, PAID_TERTIARY)
+                # must not go into denial_status — they inflate denial counts.
                 matched_br.denial_status = status
-            if claim.cas_reason_code:
+            elif status and matched_br.denial_status in DENIAL_STATUSES:
+                # ERA says this claim is now paid — clear the denial status
+                matched_br.denial_status = None
+                matched_br.denial_reason_code = None
+            if claim.cas_reason_code and (not status or status in DENIAL_STATUSES):
                 matched_br.denial_reason_code = claim.cas_reason_code
             if float(matched_br.total_payment or 0) == 0 and claim.paid_amount:
                 matched_br.total_payment = claim.paid_amount
@@ -783,8 +795,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
                 topaz_id=topaz_id_val,
                 era_claim_id=raw_claim_id,
                 import_source="ERA_AUTO",
-                denial_status=status_label if status_label == "DENIED" else None,
-                denial_reason_code=claim.cas_reason_code if status_label == "DENIED" else None,
+                denial_status=status_label if status_label in DENIAL_STATUSES else None,
+                denial_reason_code=claim.cas_reason_code if status_label in DENIAL_STATUSES else None,
             )
             session.add(stub_br)
             await session.flush()  # Get the ID

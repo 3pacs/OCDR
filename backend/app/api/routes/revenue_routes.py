@@ -271,27 +271,42 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
     from backend.app.models.era import ERAClaimLine
     from backend.app.revenue.denial_actions import get_denial_detail, CARC_ACTION_MAP
 
-    # BillingRecord has no billed_amount column — use total_payment + extra_charges
-    # as a proxy for billed amount (actual billed is on ERAClaimLine.billed_amount)
-    billed_expr = (BillingRecord.total_payment + BillingRecord.extra_charges)
-
-    # --- Denial action breakdown ---
-    denial_result = await db.execute(
-        select(
-            BillingRecord.denial_reason_code,
-            func.count(BillingRecord.id).label("count"),
-            func.sum(billed_expr).label("total_billed"),
-            func.sum(BillingRecord.total_payment).label("total_paid"),
-        )
+    # --- Load denied billing records with ERA billed amounts ---
+    # Join with ERA claim lines to get actual billed_amount (not total_payment
+    # which is $0 for most denials). Use outerjoin so denials without ERA still appear.
+    denied_q = (
+        select(BillingRecord)
         .where(BillingRecord.denial_status.is_not(None))
         .where(not_written_off())
-        .group_by(BillingRecord.denial_reason_code)
     )
-    denial_rows = denial_result.all()
+    denied_result = await db.execute(denied_q)
+    denied_records = denied_result.scalars().all()
 
+    # Batch-fetch ERA billed amounts for matched denied claims
+    era_claim_ids = [r.era_claim_id for r in denied_records if r.era_claim_id]
+    era_billed_map: dict[str, float] = {}
+    if era_claim_ids:
+        era_q = select(ERAClaimLine.claim_id, ERAClaimLine.billed_amount).where(
+            ERAClaimLine.claim_id.in_(era_claim_ids)
+        )
+        era_result = await db.execute(era_q)
+        for claim_id, billed_amt in era_result.all():
+            era_billed_map[claim_id] = float(billed_amt or 0)
+
+    def _get_billed(rec: BillingRecord) -> float:
+        """Get billed amount: prefer ERA billed_amount, fall back to extra_charges."""
+        if rec.era_claim_id and rec.era_claim_id in era_billed_map:
+            return era_billed_map[rec.era_claim_id]
+        # Fallback: extra_charges is the original charge amount (not payment)
+        return float(rec.extra_charges or 0)
+
+    # --- Denial action breakdown ---
     action_buckets: dict[str, dict] = {}
-    for carc, count, billed, paid in denial_rows:
-        detail = get_denial_detail(carc, billed_amount=float(billed or 0))
+    for rec in denied_records:
+        carc = rec.denial_reason_code
+        billed = _get_billed(rec)
+        paid = float(rec.total_payment or 0)
+        detail = get_denial_detail(carc, billed_amount=billed, paid_amount=paid)
         action = detail["recommended_action"]
         bucket = action_buckets.setdefault(action, {
             "action": action,
@@ -299,74 +314,61 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
             "total_billed": 0,
             "total_paid": 0,
             "potential_recovery": 0,
-            "top_codes": [],
+            "top_codes": {},
         })
-        bucket["count"] += count
-        bucket["total_billed"] += float(billed or 0)
-        bucket["total_paid"] += float(paid or 0)
+        bucket["count"] += 1
+        bucket["total_billed"] += billed
+        bucket["total_paid"] += paid
         bucket["potential_recovery"] += detail["financial_context"]["potential_recovery"]
-        bucket["top_codes"].append({
-            "carc_code": carc,
-            "description": detail["carc_description"],
-            "count": count,
-            "fix": detail["fix_instructions"],
-        })
+        # Track top CARC codes
+        code_key = carc or "UNKNOWN"
+        if code_key not in bucket["top_codes"]:
+            bucket["top_codes"][code_key] = {
+                "carc_code": carc,
+                "description": detail["carc_description"],
+                "count": 0,
+                "fix": detail["fix_instructions"],
+            }
+        bucket["top_codes"][code_key]["count"] += 1
 
-    # Sort top_codes within each bucket by count
+    # Convert top_codes from dict to sorted list
     for bucket in action_buckets.values():
-        bucket["top_codes"].sort(key=lambda x: x["count"], reverse=True)
-        bucket["top_codes"] = bucket["top_codes"][:5]
+        codes = list(bucket["top_codes"].values())
+        codes.sort(key=lambda x: x["count"], reverse=True)
+        bucket["top_codes"] = codes[:5]
 
     # --- Top recoverable claims ---
-    top_recoverable = await db.execute(
-        select(
-            BillingRecord.id,
-            BillingRecord.patient_name,
-            billed_expr.label("billed_amount"),
-            BillingRecord.total_payment,
-            BillingRecord.denial_reason_code,
-            BillingRecord.denial_status,
-            BillingRecord.service_date,
-            BillingRecord.insurance_carrier,
-        )
-        .where(BillingRecord.denial_status.is_not(None))
-        .where(not_written_off())
-        .order_by(billed_expr.desc())
-        .limit(20)
-    )
     top_claims = []
-    for row in top_recoverable.all():
+    for rec in denied_records:
+        billed = _get_billed(rec)
+        if billed <= 0:
+            continue
+        paid = float(rec.total_payment or 0)
         detail = get_denial_detail(
-            row.denial_reason_code,
-            billed_amount=float(row.billed_amount or 0),
-            paid_amount=float(row.total_payment or 0),
+            rec.denial_reason_code,
+            billed_amount=billed,
+            paid_amount=paid,
         )
+        if not detail.get("recoverable"):
+            continue
         top_claims.append({
-            "billing_id": row.id,
-            "patient_name": row.patient_name,
-            "billed_amount": float(row.billed_amount or 0),
-            "total_payment": float(row.total_payment or 0),
+            "billing_id": rec.id,
+            "patient_name": rec.patient_name,
+            "billed_amount": billed,
+            "total_payment": paid,
             "potential_recovery": detail["financial_context"]["potential_recovery"],
-            "denial_reason_code": row.denial_reason_code,
+            "denial_reason_code": rec.denial_reason_code,
             "recommended_action": detail["recommended_action"],
             "fix_instructions": detail["fix_instructions"],
-            "service_date": row.service_date.isoformat() if row.service_date else None,
-            "insurance_carrier": row.insurance_carrier,
+            "service_date": rec.service_date.isoformat() if rec.service_date else None,
+            "insurance_carrier": rec.insurance_carrier,
             "priority_score": detail["priority_score"],
         })
     top_claims.sort(key=lambda x: x["priority_score"], reverse=True)
 
     # --- Quick stats ---
-    total_denied = await db.execute(
-        select(func.count(BillingRecord.id))
-        .where(BillingRecord.denial_status.is_not(None))
-        .where(not_written_off())
-    )
-    total_billed_denied = await db.execute(
-        select(func.sum(billed_expr))
-        .where(BillingRecord.denial_status.is_not(None))
-        .where(not_written_off())
-    )
+    total_denied_count = len(denied_records)
+    total_billed_denied_amt = sum(_get_billed(r) for r in denied_records)
 
     # --- Unmatched ERA claims ---
     unmatched_count = await db.execute(
@@ -383,8 +385,8 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
 
     return {
         "overview": {
-            "total_open_denials": total_denied.scalar() or 0,
-            "total_denied_amount": float(total_billed_denied.scalar() or 0),
+            "total_open_denials": total_denied_count,
+            "total_denied_amount": round(total_billed_denied_amt, 2),
             "unmatched_era_claims": unmatched_count.scalar() or 0,
         },
         "action_buckets": sorted(
