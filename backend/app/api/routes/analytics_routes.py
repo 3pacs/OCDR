@@ -141,6 +141,27 @@ async def list_pipeline_notes(db: AsyncSession = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Daily Review (AI system health check)
+# ---------------------------------------------------------------------------
+
+@router.get("/daily-review")
+async def daily_review(db: AsyncSession = Depends(get_db)):
+    """Run AI daily system review. Returns structured findings and updates TASKS.md."""
+    from backend.app.analytics.daily_review import run_daily_review, format_review_markdown
+    from backend.app.tasks.task_log_writer import write_tasks_md
+
+    findings = await run_daily_review(db)
+
+    # Also regenerate TASKS.md
+    try:
+        await write_tasks_md(db)
+    except Exception:
+        pass
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # F-09: Payer Contract Monitor & Alerts
 # ---------------------------------------------------------------------------
 

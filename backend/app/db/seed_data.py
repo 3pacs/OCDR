@@ -69,6 +69,62 @@ async def seed_fee_schedule(session: AsyncSession) -> int:
 BUSINESS_TASKS = [
     # --- DAILY ---
     {
+        "title": "Review today's scan schedule",
+        "description": "Pull today's scan schedule, verify insurance eligibility, flag issues before patients arrive.",
+        "category": "DATA_IMPORT", "frequency": "DAILY", "priority": 1, "estimated_minutes": 15,
+        "action_steps": """## Review Today's Scan Schedule
+
+Do this first thing in the morning before patients start arriving.
+
+### 1. Pull Today's Schedule
+- Open Candelis/Purview scheduling system
+- Print or export today's scan schedule
+- Note total scan count by modality (MRI, CT, PET, BONE, DX, OPEN)
+
+### 2. Insurance Verification
+For each scheduled patient:
+- Verify insurance is active (call payer or check portal)
+- Confirm prior authorization is on file for:
+  - All MRI scans (most payers require prior auth)
+  - All PET/CT scans (always require prior auth)
+  - CT with contrast (some payers require)
+- If auth is missing or expired:
+  - Contact referring physician's office immediately
+  - Call payer for emergency/same-day auth if possible
+  - Flag patient — may need to reschedule if auth can't be obtained
+
+### 3. Patient Prep Checks
+- Verify patient prep instructions were given:
+  - MRI: metal screening form, contrast allergy history
+  - PET: fasting instructions (4-6 hours), blood glucose check
+  - CT with contrast: creatinine/GFR check, allergy history
+  - Gado contrast: GFR check for renal patients
+- Flag any patients with known contrast allergies for pre-medication protocol
+
+### 4. Billing Prep
+- Verify correct CPT codes are queued for each scan type
+- Check if any scans require modifier codes:
+  - -26 (professional component only)
+  - -TC (technical component only)
+  - -59 (distinct procedural service)
+  - -76/-77 (repeat procedure)
+- For research patients: verify protocol and billing route (sponsor vs insurance)
+
+### 5. Schedule Gaps / Add-Ons
+- Check for open slots that could accommodate add-on patients
+- Review any cancellations — attempt to fill with waitlist patients
+- Note any STAT/urgent orders that need to be squeezed in
+
+### 6. Record Schedule Summary
+- Log to daily tracking:
+  - Total scheduled scans
+  - By modality breakdown
+  - Flagged issues (missing auth, insurance problems)
+  - Expected revenue for the day
+
+**Why first:** Insurance issues caught in the morning can be resolved before the patient arrives. Caught after = lost revenue or delayed billing.""",
+    },
+    {
         "title": "Import patient data from OCMRI",
         "description": "Import latest patient records from OCMRI Excel file into the billing system.",
         "category": "DATA_IMPORT", "frequency": "DAILY", "priority": 1, "estimated_minutes": 10,
@@ -235,6 +291,59 @@ Run these checks after completing the "Post payments to Topaz" task.
    - Update crosswalk if ID mapping was missing
 
 **See CLAUDE.md Gotchas G-01 through G-14 for common matching pitfalls.**""",
+    },
+    {
+        "title": "AI daily system review (prompt Claude)",
+        "description": "End-of-day task: open Claude and say 'run daily review'. Claude checks data quality, match rates, denial trends, pipeline suggestions, and logs findings to TASKS.md.",
+        "category": "ANALYTICS", "frequency": "DAILY", "priority": 3, "estimated_minutes": 10,
+        "action_steps": """## AI Daily System Review
+
+**How to run:** Open Claude Code and type: `run daily review`
+
+Claude will automatically perform these checks and log results to TASKS.md:
+
+### What Claude Checks
+
+#### 1. Data Quality Scan
+- Count records imported today vs yesterday (import volume trend)
+- Check for validation warnings in recent imports
+- Flag any records with missing patient_name, service_date, or insurance_carrier
+- Check for duplicate records that slipped through
+
+#### 2. Match Rate Check
+- Current ERA match rate (target: >95%)
+- New unmatched claims since yesterday
+- Top reasons for match failure (missing Topaz ID, name mismatch, date gap)
+- Any claims stuck in unmatched state >7 days
+
+#### 3. Denial Trend Analysis
+- New denials today vs 7-day average
+- Any new CARC codes appearing (could signal payer policy change)
+- Claims approaching appeal deadline in next 7 days
+- Denial rate by payer — flag any payer >10%
+
+#### 4. Revenue Pulse
+- Total payments posted today
+- Underpayments detected today
+- Claims approaching filing deadline in next 30 days
+- Secondary insurance capture rate
+
+#### 5. Pipeline Suggestions Delta
+- Any new pipeline suggestions since last run
+- Progress on acknowledged/in-progress items
+- Impact of resolved items (recovered revenue)
+
+#### 6. System Health
+- Database record count and growth rate
+- Any error patterns in recent logs
+- Index coverage for matching (Topaz ID, patient ID, dates)
+
+### Output
+Claude logs a summary to this task instance's notes AND updates TASKS.md
+with findings. Critical issues are flagged for immediate attention.
+
+**This replaces manual dashboard checking. Claude reads the data directly and
+reports what matters, saving you 15-20 minutes of clicking through pages.**""",
     },
     # --- WEEKLY ---
     {
