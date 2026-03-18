@@ -13,9 +13,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine, ERAPayment
+from backend.app.models.payer import FeeSchedule
 from backend.app.analytics.public_code_tables import CARC_CODES
 from backend.app.revenue.denial_actions import get_denial_detail, CAS_GROUP_CONTEXT
 from backend.app.revenue.writeoff_filter import not_written_off, is_written_off, TERMINAL_STATUSES
+
+
+async def _load_fee_rates(db: AsyncSession) -> tuple[dict, dict]:
+    """Load modality-level fee schedule rates for billed amount estimation."""
+    fee_result = await db.execute(select(FeeSchedule))
+    fee_rates: dict[tuple[str, str], float] = {}
+    fee_defaults: dict[str, float] = {}
+    for f in fee_result.scalars().all():
+        if f.cpt_code:
+            continue  # Use modality-level for estimation
+        if f.payer_code == "DEFAULT":
+            fee_defaults[f.modality] = float(f.expected_rate)
+        else:
+            fee_rates[(f.payer_code, f.modality)] = float(f.expected_rate)
+    return fee_rates, fee_defaults
 
 
 def _recoverability_score(billed: float | None, service_date: date | None) -> float:
@@ -29,13 +45,17 @@ def _recoverability_score(billed: float | None, service_date: date | None) -> fl
     return round(score, 2)
 
 
-def _serialize_denial(row: BillingRecord, era_info: dict | None = None) -> dict:
+def _serialize_denial(row: BillingRecord, era_info: dict | None = None,
+                      fee_rates: dict | None = None, fee_defaults: dict | None = None) -> dict:
     billed = float(era_info.get("billed_amount") or 0) if era_info else 0
-    if billed == 0:
-        # For denied claims, total_payment is typically $0. Use extra_charges
-        # (original charge amount) as the billed proxy. Do NOT add total_payment
-        # — that would double-count partial payments as billed amount.
-        billed = float(row.extra_charges or 0)
+    if billed == 0 and fee_rates is not None:
+        # Estimate from fee schedule — do NOT use extra_charges (that's miscellaneous
+        # charges from OCMRI column K, not the billed amount)
+        key = (row.insurance_carrier, row.modality)
+        if key in fee_rates:
+            billed = fee_rates[key]
+        elif fee_defaults and row.modality in fee_defaults:
+            billed = fee_defaults[row.modality]
 
     days_old = (date.today() - row.service_date).days if row.service_date else None
     carc = era_info.get("cas_reason_code") if era_info else row.denial_reason_code
@@ -137,7 +157,8 @@ async def get_denials(
                 "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
             }
 
-    denials = [_serialize_denial(r, era_map.get(r.era_claim_id)) for r in rows]
+    fee_rates, fee_defaults = await _load_fee_rates(db)
+    denials = [_serialize_denial(r, era_map.get(r.era_claim_id), fee_rates, fee_defaults) for r in rows]
 
     return {"total": total, "page": page, "per_page": per_page, "denials": denials}
 
@@ -174,7 +195,8 @@ async def get_denial_queue(
                 "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
             }
 
-    denials = [_serialize_denial(r, era_map.get(r.era_claim_id)) for r in rows]
+    fee_rates, fee_defaults = await _load_fee_rates(db)
+    denials = [_serialize_denial(r, era_map.get(r.era_claim_id), fee_rates, fee_defaults) for r in rows]
     # Sort by recoverability score DESC
     denials.sort(key=lambda d: d["recoverability_score"], reverse=True)
 
@@ -389,7 +411,8 @@ async def get_denial_full_detail(
             }
 
     # Build the main denial serialization
-    denial = _serialize_denial(record, era_info)
+    fee_rates, fee_defaults = await _load_fee_rates(db)
+    denial = _serialize_denial(record, era_info, fee_rates, fee_defaults)
 
     # Get full action detail
     carc = era_info.get("cas_reason_code") if era_info else record.denial_reason_code
@@ -485,4 +508,5 @@ async def export_denials(
                 "cas_adjustment_amount": float(ecl.cas_adjustment_amount or 0) if ecl.cas_adjustment_amount else None,
             }
 
-    return [_serialize_denial(r, era_map.get(r.era_claim_id)) for r in rows]
+    fee_rates, fee_defaults = await _load_fee_rates(db)
+    return [_serialize_denial(r, era_map.get(r.era_claim_id), fee_rates, fee_defaults) for r in rows]

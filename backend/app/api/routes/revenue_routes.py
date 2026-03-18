@@ -293,12 +293,35 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
         for claim_id, billed_amt in era_result.all():
             era_billed_map[claim_id] = float(billed_amt or 0)
 
+    # Load fee schedule for fallback billed amount estimation
+    from backend.app.models.payer import FeeSchedule
+    fee_result = await db.execute(select(FeeSchedule))
+    fee_rates: dict[tuple[str, str], float] = {}  # (carrier, modality) → rate
+    fee_defaults: dict[str, float] = {}  # modality → DEFAULT rate
+    for f in fee_result.scalars().all():
+        if f.cpt_code:
+            continue  # Use modality-level rates for estimation
+        if f.payer_code == "DEFAULT":
+            fee_defaults[f.modality] = float(f.expected_rate)
+        else:
+            fee_rates[(f.payer_code, f.modality)] = float(f.expected_rate)
+
     def _get_billed(rec: BillingRecord) -> float:
-        """Get billed amount: prefer ERA billed_amount, fall back to extra_charges."""
+        """Get billed amount: ERA billed_amount → fee schedule estimate → 0.
+
+        IMPORTANT: Do NOT use extra_charges as fallback — that field is
+        miscellaneous charges from OCMRI column K, not the billed amount.
+        Using it inflated the collectable amount by millions.
+        """
         if rec.era_claim_id and rec.era_claim_id in era_billed_map:
             return era_billed_map[rec.era_claim_id]
-        # Fallback: extra_charges is the original charge amount (not payment)
-        return float(rec.extra_charges or 0)
+        # Fallback: estimate from fee schedule (carrier-specific, then DEFAULT)
+        key = (rec.insurance_carrier, rec.modality)
+        if key in fee_rates:
+            return fee_rates[key]
+        if rec.modality in fee_defaults:
+            return fee_defaults[rec.modality]
+        return 0
 
     # --- Denial action breakdown ---
     action_buckets: dict[str, dict] = {}

@@ -827,9 +827,17 @@ async def patient_search(
             BillingRecord.patient_name_display.ilike(search),
         ))
 
+    # Group by patient_id (Chart ID) when available — this merges name variants
+    # like "TRAN, HOANG YEN" and "TRAN, HOANGYEN" that share the same chart number.
+    # Fall back to patient_name grouping only when patient_id is NULL.
+    group_key = func.coalesce(
+        cast(BillingRecord.patient_id, String),
+        BillingRecord.patient_name,
+    ).label("group_key")
+
     result = await db.execute(
         select(
-            BillingRecord.patient_name,
+            func.max(BillingRecord.patient_name).label("patient_name"),
             BillingRecord.patient_id,
             func.count(BillingRecord.id).label("visit_count"),
             func.sum(BillingRecord.total_payment).label("total_paid"),
@@ -841,8 +849,8 @@ async def patient_search(
             func.max(BillingRecord.topaz_id).label("topaz_id"),
         )
         .where(*filters)
-        .group_by(BillingRecord.patient_name, BillingRecord.patient_id)
-        .order_by(BillingRecord.patient_name)
+        .group_by(group_key, BillingRecord.patient_id)
+        .order_by(func.max(BillingRecord.patient_name))
         .limit(limit)
     )
     patients = []
