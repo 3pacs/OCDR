@@ -161,6 +161,20 @@ async def daily_review(db: AsyncSession = Depends(get_db)):
     return findings
 
 
+@router.post("/auto-improve")
+async def auto_improve(db: AsyncSession = Depends(get_db)):
+    """Run auto-improvement routines that directly solve pipeline suggestions.
+
+    Currently solves:
+    - Crosswalk propagation (fills missing Topaz IDs from same patient's other records)
+    - Secondary billing flagging (identifies claims needing secondary)
+    - Filing deadline alerting (flags urgent/expired deadlines)
+    """
+    from backend.app.analytics.auto_improvements import run_auto_improvements
+    results = await run_auto_improvements(db)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # F-09: Payer Contract Monitor & Alerts
 # ---------------------------------------------------------------------------

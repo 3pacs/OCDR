@@ -151,14 +151,27 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Recurring task check error: {e}")
 
+    async def _run_auto_improvements():
+        """Background job: auto-solve pipeline improvements (crosswalk propagation, etc.)."""
+        try:
+            async with AsyncSessionLocal() as session:
+                from backend.app.analytics.auto_improvements import run_auto_improvements
+                results = await run_auto_improvements(session)
+                for key, val in results.items():
+                    logger.info(f"Auto-improve [{key}]: {val.get('description', val)}")
+        except Exception as e:
+            logger.error(f"Auto-improvement error: {e}")
+
     # Run server sync every 15 minutes (individual sources have their own intervals)
     scheduler.add_job(_run_server_sync, "interval", minutes=15, id="server_sync")
     # Refresh pipeline suggestions daily at 6 AM
     scheduler.add_job(_refresh_pipeline_suggestions, "cron", hour=6, id="pipeline_suggestions")
+    # Run auto-improvements daily at 6:30 AM (after pipeline refresh)
+    scheduler.add_job(_run_auto_improvements, "cron", hour=6, minute=30, id="auto_improvements")
     # Check recurring tasks every morning at 7 AM
     scheduler.add_job(_check_recurring_tasks, "cron", hour=7, id="recurring_tasks")
     scheduler.start()
-    logger.info("Background scheduler started (sync=15min, pipeline=daily@6AM, tasks=daily@7AM)")
+    logger.info("Background scheduler started (sync=15min, pipeline=6AM, auto-improve=6:30AM, tasks=7AM)")
 
     yield
 

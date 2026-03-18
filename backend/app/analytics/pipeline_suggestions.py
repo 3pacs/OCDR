@@ -658,6 +658,32 @@ async def _analyze_workflow_automation(db: AsyncSession) -> list[dict]:
     })
 
     results.append({
+        "subcategory": "EFFICIENCY",
+        "severity": "HIGH",
+        "title": "Implement check scanning for automated payment posting",
+        "description": (
+            "Scanning insurance checks and patient payments with OCR can auto-extract "
+            "check number, amount, payer name, and patient reference. This data can be "
+            "auto-matched to ERA payments and billing records, eliminating manual data entry "
+            "and improving the bank reconciliation process. Each manually posted check takes "
+            "3-5 minutes; scanning + OCR reduces this to seconds."
+        ),
+        "recommendation": (
+            "1. Set up a check scanner (most desktop scanners work, or use a mobile scan app)\n"
+            "2. OCR extracts: check number, amount, payer, date, memo/reference\n"
+            "3. Auto-match check amount to ERA 835 payment (trace number or amount+payer)\n"
+            "4. Auto-match to billing record via patient name/ID on check memo\n"
+            "5. Post matched payments to OCMRI current sheet automatically\n"
+            "6. Flag unmatched checks for manual review\n"
+            "7. Feed check data directly into bank reconciliation"
+        ),
+        "estimated_impact": total * 0.15 * 4,  # 15% of claims paid by check × $4 saved
+        "affected_count": int(total * 0.15),
+        "effort": "MAJOR_PROJECT",
+        "best_practice": "HFMA: automated payment posting reduces errors by 90% and posting time by 75%",
+    })
+
+    results.append({
         "subcategory": "BEST_PRACTICE",
         "severity": "MEDIUM",
         "title": "Set up ERA/EFT auto-enrollment for all payers",
