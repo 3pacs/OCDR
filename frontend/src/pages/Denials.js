@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  Card, Table, Spinner, Alert, Row, Col, Form, Badge, Button,
+  Card, Spinner, Alert, Row, Col, Form, Badge, Button,
   Modal, ButtonGroup,
 } from "react-bootstrap";
 import { toast } from "react-toastify";
 import api from "../services/api";
+import { formatMoney } from "../utils/format";
+import SortableTable from "../components/SortableTable";
+import { PatientLink } from "../components/PatientDrilldown";
 
 function Denials() {
   const [summary, setSummary] = useState(null);
@@ -56,12 +59,6 @@ function Denials() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadClaims(); }, [loadClaims]);
-
-  const formatMoney = (v) => {
-    if (v == null) return "--";
-    const prefix = v < 0 ? "-$" : "$";
-    return prefix + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2 });
-  };
 
   const statusBadge = (s) => {
     const map = {
@@ -118,6 +115,42 @@ function Denials() {
       setSelected(new Set(claims.map((c) => c.id)));
     }
   };
+
+  const columns = [
+    {
+      key: "patient_name", label: "Patient", filterable: true, filterPlaceholder: "Name...",
+      render: (v) => <PatientLink name={v}>{v}</PatientLink>,
+    },
+    { key: "service_date", label: "Date" },
+    { key: "insurance_carrier", label: "Carrier", filterable: true, filterPlaceholder: "Carrier..." },
+    { key: "modality", label: "Modality" },
+    { key: "billed_amount", label: "Billed", className: "text-end", render: (v) => formatMoney(v) },
+    { key: "total_payment", label: "Paid", className: "text-end", render: (v) => formatMoney(v) },
+    {
+      key: "cas_reason_code", label: "Reason", sortable: false,
+      render: (v, row) => (
+        <>
+          {v && <Badge bg="dark" className="me-1">{row.cas_group_code}-{v}</Badge>}
+          {row.denial_reason_code && !v && <Badge bg="dark">{row.denial_reason_code}</Badge>}
+        </>
+      ),
+    },
+    { key: "denial_status", label: "Status", render: (v) => statusBadge(v) },
+    ...(viewMode === "queue" ? [{ key: "recoverability_score", label: "Score", className: "text-end fw-bold" }] : []),
+    {
+      key: "id", label: "Actions", sortable: false,
+      render: (v, row) => (
+        <ButtonGroup size="sm">
+          {(row.denial_status === "DENIED" || !row.denial_status) && (
+            <Button variant="outline-warning" size="sm" onClick={(e) => { e.stopPropagation(); setShowAppeal(row.id); }}>Appeal</Button>
+          )}
+          {row.denial_status !== "RESOLVED" && row.denial_status !== "WRITTEN_OFF" && (
+            <Button variant="outline-success" size="sm" onClick={(e) => { e.stopPropagation(); setShowResolve(row.id); }}>Resolve</Button>
+          )}
+        </ButtonGroup>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -236,58 +269,15 @@ function Denials() {
           ) : claims.length === 0 ? (
             <Alert variant="info">No denied claims found.</Alert>
           ) : (
-            <Table striped hover responsive size="sm">
-              <thead>
-                <tr>
-                  <th><Form.Check type="checkbox" onChange={toggleAll} checked={selected.size === claims.length && claims.length > 0} /></th>
-                  <th>Patient</th>
-                  <th>Date</th>
-                  <th>Carrier</th>
-                  <th>Modality</th>
-                  <th className="text-end">Billed</th>
-                  <th className="text-end">Paid</th>
-                  <th>Reason</th>
-                  <th>Status</th>
-                  {viewMode === "queue" && <th className="text-end">Score</th>}
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {claims.map((c) => (
-                  <tr key={c.id}>
-                    <td><Form.Check type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} /></td>
-                    <td>{c.patient_name}</td>
-                    <td>{c.service_date}</td>
-                    <td>{c.insurance_carrier}</td>
-                    <td>{c.modality}</td>
-                    <td className="text-end">{formatMoney(c.billed_amount)}</td>
-                    <td className="text-end">{formatMoney(c.total_payment)}</td>
-                    <td>
-                      {c.cas_reason_code && (
-                        <Badge bg="dark" className="me-1">{c.cas_group_code}-{c.cas_reason_code}</Badge>
-                      )}
-                      {c.denial_reason_code && !c.cas_reason_code && (
-                        <Badge bg="dark">{c.denial_reason_code}</Badge>
-                      )}
-                    </td>
-                    <td>{statusBadge(c.denial_status)}</td>
-                    {viewMode === "queue" && (
-                      <td className="text-end fw-bold">{c.recoverability_score?.toLocaleString()}</td>
-                    )}
-                    <td>
-                      <ButtonGroup size="sm">
-                        {(c.denial_status === "DENIED" || !c.denial_status) && (
-                          <Button variant="outline-warning" size="sm" onClick={() => setShowAppeal(c.id)}>Appeal</Button>
-                        )}
-                        {c.denial_status !== "RESOLVED" && c.denial_status !== "WRITTEN_OFF" && (
-                          <Button variant="outline-success" size="sm" onClick={() => setShowResolve(c.id)}>Resolve</Button>
-                        )}
-                      </ButtonGroup>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SortableTable
+              columns={columns}
+              data={claims}
+              rowKey="id"
+              selectable
+              selected={selected}
+              onToggleSelect={toggleSelect}
+              onToggleAll={toggleAll}
+            />
           )}
 
           {viewMode === "all" && (

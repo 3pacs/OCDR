@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
-  Card, Table, Spinner, Alert, Row, Col, Form, Badge, Button,
-  ButtonGroup,
+  Card, Spinner, Alert, Row, Col, Form, Badge, Button,
+  ButtonGroup, Table,
 } from "react-bootstrap";
 import { toast } from "react-toastify";
 import api from "../services/api";
+import { formatMoney } from "../utils/format";
+import SortableTable from "../components/SortableTable";
+import { PatientLink } from "../components/PatientDrilldown";
 
 function SecondaryFollowup() {
   const [summary, setSummary] = useState(null);
@@ -34,12 +37,6 @@ function SecondaryFollowup() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadClaims(); }, [loadClaims]);
-
-  const formatMoney = (v) => {
-    if (v == null) return "--";
-    const prefix = v < 0 ? "-$" : "$";
-    return prefix + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2 });
-  };
 
   const statusBadge = (s) => {
     const map = {
@@ -89,6 +86,37 @@ function SecondaryFollowup() {
       setSelected(new Set(claims.map((c) => c.id)));
     }
   };
+
+  const columns = [
+    {
+      key: "patient_name", label: "Patient", filterable: true, filterPlaceholder: "Name...",
+      render: (v) => <PatientLink name={v}>{v}</PatientLink>,
+    },
+    { key: "service_date", label: "Date" },
+    { key: "insurance_carrier", label: "Carrier", filterable: true },
+    { key: "modality", label: "Modality" },
+    { key: "primary_payment", label: "Primary", className: "text-end", render: (v) => formatMoney(v) },
+    { key: "estimated_secondary", label: "Est. Secondary", className: "text-end text-warning", render: (v) => formatMoney(v) },
+    { key: "priority", label: "Priority", render: (v) => priorityBadge(v) },
+    { key: "followup_status", label: "Status", render: (v) => statusBadge(v) },
+    { key: "days_since_service", label: "Days" },
+    {
+      key: "id", label: "Actions", sortable: false,
+      render: (v, row) => (
+        <ButtonGroup size="sm">
+          {row.followup_status === "PENDING" && (
+            <Button variant="outline-info" size="sm" onClick={(e) => { e.stopPropagation(); handleMark(row.id, "BILLED"); }}>Billed</Button>
+          )}
+          {(row.followup_status === "PENDING" || row.followup_status === "BILLED") && (
+            <Button variant="outline-success" size="sm" onClick={(e) => { e.stopPropagation(); handleMark(row.id, "RECEIVED"); }}>Received</Button>
+          )}
+          {row.followup_status !== "WRITTEN_OFF" && row.followup_status !== "RECEIVED" && (
+            <Button variant="outline-secondary" size="sm" onClick={(e) => { e.stopPropagation(); handleMark(row.id, "WRITTEN_OFF"); }}>W/O</Button>
+          )}
+        </ButtonGroup>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -194,52 +222,15 @@ function SecondaryFollowup() {
           ) : claims.length === 0 ? (
             <Alert variant="info">No claims missing secondary payment found.</Alert>
           ) : (
-            <Table striped hover responsive size="sm">
-              <thead>
-                <tr>
-                  <th><Form.Check type="checkbox" onChange={toggleAll} checked={selected.size === claims.length && claims.length > 0} /></th>
-                  <th>Patient</th>
-                  <th>Date</th>
-                  <th>Carrier</th>
-                  <th>Modality</th>
-                  <th className="text-end">Primary</th>
-                  <th className="text-end">Est. Secondary</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Days</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {claims.map((c) => (
-                  <tr key={c.id}>
-                    <td><Form.Check type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} /></td>
-                    <td>{c.patient_name}</td>
-                    <td>{c.service_date}</td>
-                    <td>{c.insurance_carrier}</td>
-                    <td>{c.modality}</td>
-                    <td className="text-end">{formatMoney(c.primary_payment)}</td>
-                    <td className="text-end text-warning">{formatMoney(c.estimated_secondary)}</td>
-                    <td>{priorityBadge(c.priority)}</td>
-                    <td>{statusBadge(c.followup_status)}</td>
-                    <td>{c.days_since_service}</td>
-                    <td>
-                      <ButtonGroup size="sm">
-                        {c.followup_status === "PENDING" && (
-                          <Button variant="outline-info" size="sm" onClick={() => handleMark(c.id, "BILLED")}>Billed</Button>
-                        )}
-                        {(c.followup_status === "PENDING" || c.followup_status === "BILLED") && (
-                          <Button variant="outline-success" size="sm" onClick={() => handleMark(c.id, "RECEIVED")}>Received</Button>
-                        )}
-                        {c.followup_status !== "WRITTEN_OFF" && c.followup_status !== "RECEIVED" && (
-                          <Button variant="outline-secondary" size="sm" onClick={() => handleMark(c.id, "WRITTEN_OFF")}>W/O</Button>
-                        )}
-                      </ButtonGroup>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SortableTable
+              columns={columns}
+              data={claims}
+              rowKey="id"
+              selectable
+              selected={selected}
+              onToggleSelect={toggleSelect}
+              onToggleAll={toggleAll}
+            />
           )}
 
           <div className="d-flex justify-content-between mt-3">

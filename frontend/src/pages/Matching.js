@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Card, Row, Col, Button, Alert, Spinner, Table, Badge, Tab, Tabs, ProgressBar, Form as BsForm } from "react-bootstrap";
 import api from "../services/api";
+import { PatientLink } from "../components/PatientDrilldown";
+import ManualLinkModal from "../components/ManualLinkModal";
 
 function MatchSummary({ summary, onRefresh }) {
   if (!summary) return null;
@@ -102,7 +104,7 @@ function MatchedTable() {
             <tr key={i}>
               <td>{confidenceBadge(m.confidence)}</td>
               <td>{m.era_patient}</td>
-              <td>{m.billing_patient}</td>
+              <td><PatientLink name={m.billing_patient}>{m.billing_patient}</PatientLink></td>
               <td>{m.service_date}</td>
               <td className="text-truncate" style={{ maxWidth: 120 }}>{m.era_payer}</td>
               <td>{m.carrier}</td>
@@ -129,21 +131,24 @@ function UnmatchedTable() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [linkClaim, setLinkClaim] = useState(null);
 
-  useEffect(() => {
+  const loadItems = () => {
     setLoading(true);
     api.get("/matching/unmatched", { params: { page, per_page: 50 } })
       .then((r) => { setItems(r.data.items || []); setTotal(r.data.total || 0); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page]);
+  };
+
+  useEffect(() => { loadItems(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) return <div className="text-center py-3"><Spinner animation="border" size="sm" /></div>;
   if (items.length === 0) return <Alert variant="success">All ERA claims have been matched!</Alert>;
 
   return (
     <>
-      <p className="text-muted small">{total.toLocaleString()} unmatched claims</p>
+      <p className="text-muted small">{total.toLocaleString()} unmatched claims — click "Link" to manually match a claim to a billing record</p>
       <Table size="sm" striped hover responsive className="small">
         <thead>
           <tr>
@@ -157,6 +162,7 @@ function UnmatchedTable() {
             <th>Status</th>
             <th>Adj Code</th>
             <th>Source File</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -172,6 +178,11 @@ function UnmatchedTable() {
               <td><Badge bg={c.claim_status === "DENIED" ? "danger" : "secondary"}>{c.claim_status || "--"}</Badge></td>
               <td>{c.cas_reason_code || "--"}</td>
               <td className="text-truncate" style={{ maxWidth: 150 }}>{c.source_file}</td>
+              <td>
+                <Button size="sm" variant="outline-primary" onClick={() => setLinkClaim(c)}>
+                  Link
+                </Button>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -181,6 +192,13 @@ function UnmatchedTable() {
         <span className="text-muted small">Page {page}</span>
         <Button size="sm" variant="outline-secondary" disabled={items.length < 50} onClick={() => setPage(page + 1)}>Next</Button>
       </div>
+
+      <ManualLinkModal
+        show={linkClaim !== null}
+        onHide={() => setLinkClaim(null)}
+        claim={linkClaim}
+        onLinked={loadItems}
+      />
     </>
   );
 }

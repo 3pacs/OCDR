@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Card, Table, Spinner, Alert, Row, Col, Form, Badge } from "react-bootstrap";
+import { Card, Spinner, Alert, Row, Col, Form, Badge, Button } from "react-bootstrap";
 import api from "../services/api";
+import { formatMoney } from "../utils/format";
+import SortableTable from "../components/SortableTable";
+import { PatientLink } from "../components/PatientDrilldown";
 
 function Underpayments() {
   const [summary, setSummary] = useState(null);
@@ -26,11 +29,28 @@ function Underpayments() {
       .finally(() => setLoading(false));
   }, [carrier, modality, page]);
 
-  const formatMoney = (v) => {
-    if (v == null) return "--";
-    const prefix = v < 0 ? "-$" : "$";
-    return prefix + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2 });
-  };
+  const columns = [
+    {
+      key: "patient_name", label: "Patient", filterable: true, filterPlaceholder: "Name...",
+      render: (v) => <PatientLink name={v}>{v}</PatientLink>,
+    },
+    { key: "service_date", label: "Date" },
+    { key: "insurance_carrier", label: "Carrier", filterable: true },
+    { key: "modality", label: "Modality" },
+    { key: "total_payment", label: "Paid", className: "text-end", render: (v) => formatMoney(v) },
+    { key: "expected_rate", label: "Expected", className: "text-end", render: (v) => formatMoney(v) },
+    { key: "variance", label: "Variance", className: "text-end text-danger", render: (v) => formatMoney(v) },
+    { key: "variance_pct", label: "%", className: "text-end", render: (v) => `${v}%` },
+    {
+      key: "gado_used", label: "Flags", sortable: false,
+      render: (v, row) => (
+        <>
+          {v && <Badge bg="info" className="me-1">GADO</Badge>}
+          {row.is_psma && <Badge bg="purple">PSMA</Badge>}
+        </>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -108,45 +128,13 @@ function Underpayments() {
           ) : claims.length === 0 ? (
             <Alert variant="info">No underpaid claims found. Import data first.</Alert>
           ) : (
-            <Table striped hover responsive size="sm">
-              <thead>
-                <tr>
-                  <th>Patient</th>
-                  <th>Date</th>
-                  <th>Carrier</th>
-                  <th>Modality</th>
-                  <th className="text-end">Paid</th>
-                  <th className="text-end">Expected</th>
-                  <th className="text-end">Variance</th>
-                  <th className="text-end">%</th>
-                  <th>Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {claims.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.patient_name}</td>
-                    <td>{c.service_date}</td>
-                    <td>{c.insurance_carrier}</td>
-                    <td>{c.modality}</td>
-                    <td className="text-end">{formatMoney(c.total_payment)}</td>
-                    <td className="text-end">{formatMoney(c.expected_rate)}</td>
-                    <td className="text-end text-danger">{formatMoney(c.variance)}</td>
-                    <td className="text-end">{c.variance_pct}%</td>
-                    <td>
-                      {c.gado_used && <Badge bg="info" className="me-1">GADO</Badge>}
-                      {c.is_psma && <Badge bg="purple" className="me-1">PSMA</Badge>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SortableTable columns={columns} data={claims} rowKey="id" />
           )}
 
           <div className="d-flex justify-content-between mt-3">
-            <button className="btn btn-sm btn-outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
+            <Button size="sm" variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <span className="text-muted small">Page {page}</span>
-            <button className="btn btn-sm btn-outline-secondary" disabled={claims.length < 50} onClick={() => setPage(page + 1)}>Next</button>
+            <Button size="sm" variant="outline-secondary" disabled={claims.length < 50} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
         </Card.Body>
       </Card>

@@ -168,6 +168,67 @@ async def correct_match(
     }
 
 
+@router.get("/billing-search")
+async def billing_search(
+    q: str = Query(..., min_length=2, description="Search query — name, chart ID, date, or topaz ID"),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search billing records for manual claim linking.
+
+    Auto-detects query type: digits → ID search, date → date search, text → name search.
+    """
+    from sqlalchemy import or_, cast, String
+    import re
+
+    q = q.strip()
+    conditions = []
+
+    # Digit-only → search patient_id, topaz_id
+    if re.match(r"^\d+$", q):
+        conditions.append(BillingRecord.patient_id.ilike(f"%{q}%"))
+        conditions.append(BillingRecord.topaz_id.ilike(f"%{q}%"))
+        conditions.append(cast(BillingRecord.id, String) == q)
+    # Date-like → search service_date
+    elif re.match(r"\d{4}-\d{2}-\d{2}", q):
+        from datetime import date as date_cls
+        try:
+            dt = date_cls.fromisoformat(q)
+            conditions.append(BillingRecord.service_date == dt)
+        except ValueError:
+            pass
+    # Text → search patient_name
+    if not conditions or not re.match(r"^\d+$", q):
+        conditions.append(BillingRecord.patient_name.ilike(f"%{q}%"))
+        conditions.append(BillingRecord.patient_name_display.ilike(f"%{q}%"))
+
+    result = await db.execute(
+        select(BillingRecord)
+        .where(or_(*conditions))
+        .order_by(BillingRecord.service_date.desc())
+        .limit(limit)
+    )
+    records = result.scalars().all()
+
+    return {
+        "results": [
+            {
+                "id": r.id,
+                "patient_name": r.patient_name,
+                "service_date": r.service_date.isoformat() if r.service_date else None,
+                "insurance_carrier": r.insurance_carrier,
+                "modality": r.modality,
+                "total_payment": float(r.total_payment or 0),
+                "patient_id": r.patient_id,
+                "topaz_id": r.topaz_id,
+                "era_claim_id": r.era_claim_id,
+            }
+            for r in records
+        ],
+        "total": len(records),
+    }
+
+
 class ManualMatchRequest(BaseModel):
     claim_id: str = Field(..., description="ERA claim_id to search for")
     billing_record_id: int = Field(..., description="Billing record to match to")

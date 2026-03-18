@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Card, Table, Spinner, Alert, Row, Col, Form, Badge } from "react-bootstrap";
+import { Card, Spinner, Alert, Row, Col, Form, Badge, Button } from "react-bootstrap";
 import api from "../services/api";
+import SortableTable from "../components/SortableTable";
+import { PatientLink } from "../components/PatientDrilldown";
 
 function FilingDeadlines() {
   const [alerts, setAlerts] = useState(null);
@@ -32,6 +34,28 @@ function FilingDeadlines() {
     };
     return <Badge bg={map[status] || "secondary"}>{status}</Badge>;
   };
+
+  const columns = [
+    { key: "status", label: "Status", render: (v) => statusBadge(v) },
+    {
+      key: "patient_name", label: "Patient", filterable: true, filterPlaceholder: "Name...",
+      render: (v) => <PatientLink name={v}>{v}</PatientLink>,
+    },
+    { key: "service_date", label: "Service Date" },
+    { key: "insurance_carrier", label: "Carrier", filterable: true },
+    { key: "modality", label: "Modality" },
+    { key: "scan_type", label: "Scan" },
+    { key: "filing_deadline", label: "Filing Deadline" },
+    {
+      key: "days_remaining", label: "Days Left",
+      render: (v) => (
+        <span className={v < 0 ? "text-danger fw-bold" : v <= 30 ? "text-warning" : ""}>
+          {v}
+        </span>
+      ),
+    },
+    { key: "referring_doctor", label: "Doctor" },
+  ];
 
   return (
     <>
@@ -93,44 +117,13 @@ function FilingDeadlines() {
           ) : items.length === 0 ? (
             <Alert variant="info">No unpaid claims found. Import data first.</Alert>
           ) : (
-            <Table striped hover responsive size="sm">
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Patient</th>
-                  <th>Service Date</th>
-                  <th>Carrier</th>
-                  <th>Modality</th>
-                  <th>Scan</th>
-                  <th>Filing Deadline</th>
-                  <th>Days Left</th>
-                  <th>Doctor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td>{statusBadge(item.status)}</td>
-                    <td>{item.patient_name}</td>
-                    <td>{item.service_date}</td>
-                    <td>{item.insurance_carrier}</td>
-                    <td>{item.modality}</td>
-                    <td>{item.scan_type}</td>
-                    <td>{item.filing_deadline}</td>
-                    <td className={item.days_remaining < 0 ? "text-danger fw-bold" : item.days_remaining <= 30 ? "text-warning" : ""}>
-                      {item.days_remaining}
-                    </td>
-                    <td>{item.referring_doctor}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SortableTable columns={columns} data={items} rowKey="id" />
           )}
 
           <div className="d-flex justify-content-between mt-3">
-            <button className="btn btn-sm btn-outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
+            <Button size="sm" variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <span className="text-muted small">Page {page}</span>
-            <button className="btn btn-sm btn-outline-secondary" disabled={items.length < 50} onClick={() => setPage(page + 1)}>Next</button>
+            <Button size="sm" variant="outline-secondary" disabled={items.length < 50} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
         </Card.Body>
       </Card>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Card, Table, Spinner, Alert, Row, Col, Form } from "react-bootstrap";
+import { Card, Spinner, Alert, Row, Col, Form, Button } from "react-bootstrap";
 import api from "../services/api";
+import { formatMoney } from "../utils/format";
+import SortableTable from "../components/SortableTable";
 
 function ERAPayments() {
   const [payments, setPayments] = useState([]);
@@ -23,10 +25,18 @@ function ERAPayments() {
       .finally(() => setLoading(false));
   }, [payer, page]);
 
-  const formatMoney = (v) => {
-    if (v == null) return "--";
-    return "$" + v.toLocaleString(undefined, { minimumFractionDigits: 2 });
-  };
+  const columns = [
+    { key: "filename", label: "File", className: "text-truncate", filterable: true, filterPlaceholder: "Filename..." },
+    { key: "payer_name", label: "Payer", filterable: true, filterPlaceholder: "Payer..." },
+    { key: "check_eft_number", label: "Check/EFT #" },
+    { key: "payment_method", label: "Method" },
+    { key: "payment_date", label: "Date" },
+    { key: "payment_amount", label: "Amount", className: "text-end", render: (v) => formatMoney(v) },
+    {
+      key: "parsed_at", label: "Parsed At",
+      render: (v) => v ? new Date(v).toLocaleString() : "--",
+    },
+  ];
 
   return (
     <>
@@ -52,38 +62,13 @@ function ERAPayments() {
           ) : payments.length === 0 ? (
             <Alert variant="info">No ERA payments found. Import 835 files first.</Alert>
           ) : (
-            <Table striped hover responsive size="sm">
-              <thead>
-                <tr>
-                  <th>File</th>
-                  <th>Payer</th>
-                  <th>Check/EFT #</th>
-                  <th>Method</th>
-                  <th>Date</th>
-                  <th className="text-end">Amount</th>
-                  <th>Parsed At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id}>
-                    <td className="text-truncate" style={{ maxWidth: 200 }}>{p.filename}</td>
-                    <td>{p.payer_name ?? "--"}</td>
-                    <td>{p.check_eft_number ?? "--"}</td>
-                    <td>{p.payment_method ?? "--"}</td>
-                    <td>{p.payment_date ?? "--"}</td>
-                    <td className="text-end">{formatMoney(p.payment_amount)}</td>
-                    <td>{p.parsed_at ? new Date(p.parsed_at).toLocaleString() : "--"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+            <SortableTable columns={columns} data={payments} rowKey="id" />
           )}
 
           <div className="d-flex justify-content-between mt-3">
-            <button className="btn btn-sm btn-outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button>
+            <Button size="sm" variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
             <span className="text-muted small">Page {page} &mdash; {total} total</span>
-            <button className="btn btn-sm btn-outline-secondary" disabled={payments.length < 50} onClick={() => setPage(page + 1)}>Next</button>
+            <Button size="sm" variant="outline-secondary" disabled={payments.length < 50} onClick={() => setPage(page + 1)}>Next</Button>
           </div>
         </Card.Body>
       </Card>

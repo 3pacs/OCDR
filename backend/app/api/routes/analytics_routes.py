@@ -993,4 +993,37 @@ async def patient_detail(patient_name: str, db: AsyncSession = Depends(get_db)):
         "last_visit": records[0].service_date.isoformat() if records[0].service_date else None,
     }
 
-    return {"summary": summary, "visits": visits}
+    # ERA matches for this patient
+    era_matches = []
+    billing_ids = [r.id for r in records]
+    if billing_ids:
+        era_result = await db.execute(
+            select(ERAClaimLine)
+            .where(ERAClaimLine.matched_billing_id.in_(billing_ids))
+            .order_by(ERAClaimLine.service_date_835.desc())
+        )
+        for ecl in era_result.scalars().all():
+            era_matches.append({
+                "claim_id": ecl.claim_id,
+                "payer_name": None,
+                "service_date": ecl.service_date_835.isoformat() if ecl.service_date_835 else None,
+                "billed_amount": float(ecl.billed_amount) if ecl.billed_amount else None,
+                "paid_amount": float(ecl.paid_amount) if ecl.paid_amount else None,
+                "confidence": float(ecl.match_confidence) if ecl.match_confidence else None,
+                "claim_status": ecl.claim_status,
+            })
+
+    return {"summary": summary, "visits": visits, "era_matches": era_matches}
+
+
+@router.get("/patients/by-record/{billing_record_id}")
+async def patient_by_record(billing_record_id: int, db: AsyncSession = Depends(get_db)):
+    """Get patient name from a billing record ID — used by PatientDrilldown modal."""
+    result = await db.execute(
+        select(BillingRecord.patient_name)
+        .where(BillingRecord.id == billing_record_id)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Billing record not found")
+    return {"patient_name": row}
