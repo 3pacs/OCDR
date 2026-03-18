@@ -9,15 +9,15 @@ progressively looser matching criteria:
   Pass 1:  Exact composite (name + service_date + amount)             → 99%
   Pass 2:  Strong fuzzy   (name>=95 + service_date + CPT/modality)    → 95%
   Pass 3:  Medium fuzzy   (name>=90 + service_date)                   → 85%
-  Pass 4:  Weak fuzzy     (name>=80 + service_date ±3 days)           → 70%
-  Pass 4b: Wider date     (name>=80 + service_date ±7 days)           → 60%
-  Pass 4c: Wide date      (name>=80 + service_date ±14 days)          → 55%
-  Pass 4d: Very wide date (name>=80 + service_date ±30 days)          → 50%
+  Pass 4:  Weak fuzzy     (name>=70 + service_date ±3 days)           → 70%
+  Pass 4b: Wider date     (name>=70 + service_date ±7 days)           → 60%
+  Pass 4c: Wide date      (name>=70 + service_date ±14 days)          → 55%
+  Pass 4d: Very wide date (name>=70 + service_date ±30 days)          → 50%
   Pass 5:  Amount-anchor  (carrier + service_date + billed amount)    → 75%
-  Pass 6:  Name + modality (no date required, name>=80 + modality)    → 62%
-  Pass 7:  Name + amount  (no date required, name>=80 + billed amt)   → 65%
-  Pass 8:  Name only      (no date required, name>=80, multi-record)  → 55%
-  Pass 9:  Broad fuzzy    (name>=80, scan all billing records)        → 45%
+  Pass 6:  Name + modality (no date required, name>=70 + modality)    → 62%
+  Pass 7:  Name + amount  (no date required, name>=70 + billed amt)   → 65%
+  Pass 8:  Name only      (no date required, name>=70, multi-record)  → 55%
+  Pass 9:  Broad fuzzy    (name>=70, scan all billing records)        → 45%
 
 Many-to-one: Multiple ERA claims can link to the same billing record
 (original payment, adjustments, secondary payers, appeals). Billing
@@ -331,7 +331,7 @@ def _match_single_claim(
             if score >= 90:
                 return br, 0.85, "pass_3_medium"
 
-    # Pass 4: Weak fuzzy (name>=80 + date ±3 days)
+    # Pass 4: Weak fuzzy (name>=70 + date ±3 days)
     if claim_name and claim_date:
         for offset in range(-3, 4):
             if offset == 0:
@@ -339,10 +339,10 @@ def _match_single_claim(
             check_date = claim_date + timedelta(days=offset)
             for br in billing_by_date.get(check_date, []):
                 score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 80:
+                if score >= 70:
                     return br, 0.70, "pass_4_weak"
 
-    # Pass 4b: Wider date window (name>=80 + date ±7 days)
+    # Pass 4b: Wider date window (name>=70 + date ±7 days)
     if claim_name and claim_date:
         for offset in range(-7, 8):
             if -3 <= offset <= 3:
@@ -350,10 +350,10 @@ def _match_single_claim(
             check_date = claim_date + timedelta(days=offset)
             for br in billing_by_date.get(check_date, []):
                 score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 80:
+                if score >= 70:
                     return br, 0.60, "pass_4b_wider_date"
 
-    # Pass 4c: Wide date window (name>=80 + date ±14 days)
+    # Pass 4c: Wide date window (name>=70 + date ±14 days)
     if claim_name and claim_date:
         for offset in range(-14, 15):
             if -7 <= offset <= 7:
@@ -361,10 +361,10 @@ def _match_single_claim(
             check_date = claim_date + timedelta(days=offset)
             for br in billing_by_date.get(check_date, []):
                 score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 80:
+                if score >= 70:
                     return br, 0.55, "pass_4c_wide_date"
 
-    # Pass 4d: Very wide date window (name>=80 + date ±30 days)
+    # Pass 4d: Very wide date window (name>=70 + date ±30 days)
     if claim_name and claim_date:
         for offset in range(-30, 31):
             if -14 <= offset <= 14:
@@ -372,7 +372,7 @@ def _match_single_claim(
             check_date = claim_date + timedelta(days=offset)
             for br in billing_by_date.get(check_date, []):
                 score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-                if score >= 80:
+                if score >= 70:
                     return br, 0.50, "pass_4d_very_wide_date"
 
     # Pass 5: Amount-anchored (carrier + date + billed amount)
@@ -416,7 +416,7 @@ def _match_single_claim(
                 if name_key[1] != claim_modality.upper():
                     continue
                 score = _name_score_pair(claim_name, name_key[0])
-                if score >= 80 and len(brs) == 1:
+                if score >= 70 and len(brs) == 1:
                     return brs[0], 0.58, "pass_6_name_modality"
 
     # Pass 7: Name + amount (NO date required) — for claims missing service_date
@@ -431,11 +431,11 @@ def _match_single_claim(
             for br in candidates:
                 if br.total_payment and abs(float(br.total_payment) - claim_billed) < 0.01:
                     return br, 0.62, "pass_7_name_amount"
-        # Also try fuzzy name (>=80) across all billing records
+        # Also try fuzzy name (>=70) across all billing records
         if not candidates:
             for name_key, brs in billing_by_name.items():
                 score = _name_score_pair(claim_name, name_key)
-                if score >= 80:
+                if score >= 70:
                     for br in brs:
                         if br.total_payment and claim_paid and abs(float(br.total_payment) - claim_paid) < 0.01:
                             return br, 0.60, "pass_7_name_amount"
@@ -463,20 +463,21 @@ def _match_single_claim(
         if not candidates:
             for name_key, brs in billing_by_name.items():
                 score = _name_score_pair(claim_name, name_key)
-                if score >= 80 and len(brs) == 1:
+                if score >= 70 and len(brs) == 1:
                     return brs[0], 0.50, "pass_8_name_only"
 
-    # Pass 9: Broad fuzzy scan (name>=80 across ALL billing records)
-    # Catches remaining claims where name similarity is 80-89% and no other
+    # Pass 9: Broad fuzzy scan (name>=70 across ALL billing records)
+    # Catches remaining claims where name similarity is 70%+ and no other
     # pass matched (e.g., different date ranges, missing modality/amount).
-    # User confirmed: 80%+ name matches are the correct patient.
+    # User confirmed: 70%+ name matches are correct (marriage/divorce name
+    # changes, first-name-only matches). Below ~66% accuracy drops off.
     if claim_name:
         best_br = None
         best_score = 0
         best_date_gap = 9999
         for br in billing_records_list:
             score = _best_name_score(claim_name, br, billing_norm_names, billing_display_names)
-            if score < 80:
+            if score < 70:
                 continue
             # Prefer higher name score, then closer date
             date_gap = abs((br.service_date - claim_date).days) if (claim_date and br.service_date) else 9999
