@@ -141,7 +141,7 @@ function UnmatchedTable() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadItems(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadItems(); }, [page]); // eslint-disable-line
 
   if (loading) return <div className="text-center py-3"><Spinner animation="border" size="sm" /></div>;
   if (items.length === 0) return <Alert variant="success">All ERA claims have been matched!</Alert>;
