@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
         ("business_tasks", "action_steps", "TEXT"),
         ("era_claim_lines", "diagnosis_codes", "TEXT"),
         ("billing_records", "diagnosis_codes", "TEXT"),
+        ("fee_schedule", "cpt_code", "VARCHAR(20)"),
     ]
     for table, column, col_type in new_columns:
         try:
@@ -67,8 +68,11 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug(f"Column {table}.{column} widen skipped: {e}")
 
-    # Drop old non-negative payment constraints (refunds/adjustments are legitimate)
-    for old_ck in ["ck_billing_primary_nonneg", "ck_billing_secondary_nonneg", "ck_billing_total_nonneg"]:
+    # Drop old constraints that need to be replaced
+    for old_ck in [
+        "ck_billing_primary_nonneg", "ck_billing_secondary_nonneg", "ck_billing_total_nonneg",
+        "uq_fee_schedule_payer_modality",  # Replaced by uq_fee_schedule_payer_modality_cpt
+    ]:
         try:
             async with engine.begin() as conn:
                 await conn.execute(text(
@@ -88,6 +92,7 @@ async def lifespan(app: FastAPI):
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_claim_status CHECK (claim_status IS NULL OR claim_status IN ('1','2','4','22','23'))",
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_cas_group CHECK (cas_group_code IS NULL OR cas_group_code IN ('CO','CR','OA','PI','PR'))",
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_confidence_range CHECK (match_confidence IS NULL OR (match_confidence >= 0 AND match_confidence <= 1))",
+        "ALTER TABLE fee_schedule ADD CONSTRAINT uq_fee_schedule_payer_modality_cpt UNIQUE (payer_code, modality, cpt_code)",
     ]
     for sql in constraints:
         try:

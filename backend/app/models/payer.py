@@ -46,11 +46,15 @@ class FeeSchedule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     payer_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     modality: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    # Optional CPT code for procedure-specific rates. NULL = modality-level default.
+    # When set, this rate takes priority over the modality-level rate.
+    cpt_code: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     expected_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     underpayment_threshold: Mapped[float] = mapped_column(Numeric(3, 2), default=0.80)
 
     __table_args__ = (
-        UniqueConstraint("payer_code", "modality", name="uq_fee_schedule_payer_modality"),
+        # Unique on (payer, modality, cpt) — allows both modality-level and CPT-level rates
+        UniqueConstraint("payer_code", "modality", "cpt_code", name="uq_fee_schedule_payer_modality_cpt"),
         CheckConstraint("expected_rate > 0", name="ck_fee_rate_positive"),
         CheckConstraint(
             "underpayment_threshold >= 0.3 AND underpayment_threshold <= 1.0",

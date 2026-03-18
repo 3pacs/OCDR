@@ -158,6 +158,57 @@ CPT_TO_MODALITY = {
     "76000": "FLUORO", "76001": "FLUORO",
 }
 
+# HCPCS Level II supply/drug codes that accompany imaging procedures.
+# These are billed as separate ERA line items with small dollar amounts
+# and should be linked to the same billing record as the parent procedure.
+# Maps HCPCS code → associated modality (for fallback matching).
+HCPCS_SUPPLY_CODES: dict[str, str] = {
+    # Gadolinium contrast agents → MRI
+    "A9576": "HMRI",   # Gadolinium (generic)
+    "A9577": "HMRI",   # Gadobenate dimeglumine (MultiHance)
+    "A9578": "HMRI",   # Gadobutrol (Gadavist)
+    "A9579": "HMRI",   # Gadoterate meglumine (Dotarem)
+    "A9585": "HMRI",   # Gadobutrol (Gadavist) — alternate code
+    "A9581": "HMRI",   # Gadoxetate disodium (Eovist)
+    "A4641": "HMRI",   # Supply: MRI contrast, per ml
+    # Iodinated contrast agents → CT
+    "Q9965": "CT",     # Iodinated contrast, low osmolar, 100-199 mg/ml
+    "Q9966": "CT",     # Iodinated contrast, low osmolar, 200-299 mg/ml
+    "Q9967": "CT",     # Iodinated contrast, low osmolar, 300-399 mg/ml
+    "A9578": "CT",     # Iohexol (Omnipaque) — sometimes used for CT
+    "A9575": "CT",     # Iodinated contrast, injection
+    # PET radiopharmaceuticals
+    "A9580": "PET",    # FDG (fluorodeoxyglucose) for PET
+    "A9587": "PET",    # Gallium-68 PSMA
+    "A9588": "PET",    # Fluciclovine F18 (Axumin)
+    "A9515": "PET",    # Choline C-11 for PET
+    "A9590": "PET",    # F-18 labeled PSMA PET agent
+    "A9591": "PET",    # Ga-68 PSMA-11 (UCLA/UCSF)
+    "A9597": "PET",    # Piflufolastat F-18 (Pylarify)
+    # Nuclear medicine / bone scan
+    "A9503": "BONE",   # Tc-99m medronate (MDP) for bone scan
+    "A9500": "BONE",   # Tc-99m sestamibi
+    "A9502": "BONE",   # Tc-99m tetrofosmin
+    "A9540": "BONE",   # Tc-99m macroaggregated albumin
+    "A9560": "BONE",   # Tc-99m labeled RBC
+    # General radiology supplies (no specific modality)
+    "A4642": "DX",     # Sterile saline for contrast dilution
+    "Q9951": "CT",     # Low osmolar contrast, 200-299 mg/ml iodine
+    "Q9958": "CT",     # High osmolar contrast, per ml
+    "Q9963": "CT",     # LOCM, 300-399 mg/ml iodine, per ml
+}
+
+
+def _is_supply_code(cpt_code: str | None) -> bool:
+    """Check if a CPT/HCPCS code is a supply/drug (not a procedure)."""
+    if not cpt_code:
+        return False
+    code = cpt_code.strip().upper()
+    # HCPCS Level II: starts with letter (A, Q, J, etc.)
+    if code and code[0].isalpha():
+        return True
+    return code in HCPCS_SUPPLY_CODES
+
 CLAIM_STATUS_MAP = {
     "1": "PAID_PRIMARY",
     "2": "PAID_SECONDARY",
@@ -824,6 +875,64 @@ async def run_auto_match(session: AsyncSession) -> dict:
                 )
 
     await session.commit()
+
+    # --- Pass S: Sibling-claim linking for supply/drug charges ---
+    # Gado contrast, PET radiopharmaceuticals, and other HCPCS supply codes
+    # are billed as separate ERA line items. Link them to the same billing
+    # record as the parent imaging procedure claim on the same ERA payment.
+    stats["pass_s_supply_linked"] = 0
+    supply_unmatched = await session.execute(
+        select(ERAClaimLine).where(
+            ERAClaimLine.matched_billing_id.is_(None),
+        )
+    )
+    supply_candidates = [
+        c for c in supply_unmatched.scalars().all()
+        if _is_supply_code(c.cpt_code)
+    ]
+
+    if supply_candidates:
+        # Group by ERA payment for sibling lookups
+        payment_ids = {c.era_payment_id for c in supply_candidates}
+        sibling_result = await session.execute(
+            select(ERAClaimLine).where(
+                ERAClaimLine.era_payment_id.in_(payment_ids),
+                ERAClaimLine.matched_billing_id.isnot(None),
+            )
+        )
+        # Build index: (era_payment_id, patient_name_normalized, service_date) → matched_billing_id
+        sibling_matches: dict[tuple, int] = {}
+        for sib in sibling_result.scalars().all():
+            sib_name = _normalize_name(sib.patient_name_835) if sib.patient_name_835 else ""
+            sib_date = sib.service_date_835
+            key = (sib.era_payment_id, sib_name, sib_date)
+            sibling_matches[key] = sib.matched_billing_id
+            # Also store without date for cases where supply has no date
+            key_nodate = (sib.era_payment_id, sib_name, None)
+            if key_nodate not in sibling_matches:
+                sibling_matches[key_nodate] = sib.matched_billing_id
+
+        for claim in supply_candidates:
+            claim_name_s = _normalize_name(claim.patient_name_835) if claim.patient_name_835 else ""
+            # Try exact match first (same payment, name, date)
+            key = (claim.era_payment_id, claim_name_s, claim.service_date_835)
+            matched_id = sibling_matches.get(key)
+            # Try without date
+            if not matched_id:
+                key_nodate = (claim.era_payment_id, claim_name_s, None)
+                matched_id = sibling_matches.get(key_nodate)
+            if matched_id:
+                claim.matched_billing_id = matched_id
+                claim.match_confidence = 0.95
+                stats["pass_s_supply_linked"] += 1
+                stats["unmatched"] -= 1
+
+        if stats["pass_s_supply_linked"] > 0:
+            await session.commit()
+            logger.info(
+                f"Auto-match Pass S: linked {stats['pass_s_supply_linked']} supply/drug "
+                f"charges to sibling procedure billing records"
+            )
 
     # --- Pass 10: Auto-create stub billing records for remaining unmatched ---
     # These are typically ERA payments for services that predate the current OCMRI

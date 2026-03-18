@@ -27,14 +27,109 @@ PAYERS = [
 ]
 
 FEE_SCHEDULES = [
-    {"payer_code": "DEFAULT", "modality": "CT", "expected_rate": 395.00, "underpayment_threshold": 0.80},
+    # === MODALITY-LEVEL DEFAULTS (fallback when no CPT-specific rate) ===
+    {"payer_code": "DEFAULT", "modality": "CT", "expected_rate": 300.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "HMRI", "expected_rate": 750.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "PET", "expected_rate": 2500.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "BONE", "expected_rate": 1800.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "OPEN", "expected_rate": 750.00, "underpayment_threshold": 0.80},
-    {"payer_code": "DEFAULT", "modality": "DX", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "DEFAULT", "modality": "DX", "expected_rate": 100.00, "underpayment_threshold": 0.80},
+    {"payer_code": "DEFAULT", "modality": "US", "expected_rate": 200.00, "underpayment_threshold": 0.80},
+    {"payer_code": "DEFAULT", "modality": "MAMMO", "expected_rate": 150.00, "underpayment_threshold": 0.80},
+    {"payer_code": "DEFAULT", "modality": "DEXA", "expected_rate": 75.00, "underpayment_threshold": 0.80},
+    {"payer_code": "DEFAULT", "modality": "FLUORO", "expected_rate": 125.00, "underpayment_threshold": 0.80},
     {"payer_code": "JHANGIANI", "modality": "HMRI", "expected_rate": 950.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "PET_PSMA", "expected_rate": 8046.00, "underpayment_threshold": 0.80},
+
+    # === MEDICARE CPT-SPECIFIC RATES (2025 MPFS, freestanding imaging center) ===
+    # These are approximate Medicare Physician Fee Schedule rates for outpatient
+    # imaging at a freestanding facility. Rates vary by locality — these are
+    # national averages. Adjust to your MAC locality when real data is available.
+    #
+    # CT — Head/Brain
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70450", "expected_rate": 130.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70460", "expected_rate": 160.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70470", "expected_rate": 185.00, "underpayment_threshold": 0.80},
+    # CT — Sinuses
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70486", "expected_rate": 120.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70487", "expected_rate": 150.00, "underpayment_threshold": 0.80},
+    # CT — Neck
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70490", "expected_rate": 155.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "70491", "expected_rate": 185.00, "underpayment_threshold": 0.80},
+    # CT — Chest
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "71250", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "71260", "expected_rate": 185.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "71270", "expected_rate": 220.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "71275", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    # CT — Spine
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72125", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72128", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72131", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    # CT — Abdomen
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74150", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74160", "expected_rate": 185.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74170", "expected_rate": 225.00, "underpayment_threshold": 0.80},
+    # CT — Abd + Pelvis (most common CT at outpatient imaging)
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74176", "expected_rate": 195.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74177", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74178", "expected_rate": 310.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "74174", "expected_rate": 340.00, "underpayment_threshold": 0.80},
+    # CT — Pelvis
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72192", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72193", "expected_rate": 185.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "72194", "expected_rate": 225.00, "underpayment_threshold": 0.80},
+    # CT — Extremities
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "73200", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "CT", "cpt_code": "73700", "expected_rate": 145.00, "underpayment_threshold": 0.80},
+
+    # MRI — Brain
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "70551", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "70552", "expected_rate": 330.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "70553", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+    # MRI — Spine (cervical, thoracic, lumbar)
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72141", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72146", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72148", "expected_rate": 250.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72156", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72157", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72158", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+    # MRI — Joints/Extremities
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "73221", "expected_rate": 275.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "73721", "expected_rate": 275.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "73718", "expected_rate": 275.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "73720", "expected_rate": 375.00, "underpayment_threshold": 0.80},
+    # MRI — Abdomen/Pelvis
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "74181", "expected_rate": 275.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "74183", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72195", "expected_rate": 275.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "cpt_code": "72197", "expected_rate": 400.00, "underpayment_threshold": 0.80},
+
+    # PET/CT
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78816", "expected_rate": 1100.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78815", "expected_rate": 1050.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78814", "expected_rate": 950.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78813", "expected_rate": 1050.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78812", "expected_rate": 1000.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "cpt_code": "78811", "expected_rate": 900.00, "underpayment_threshold": 0.80},
+
+    # Bone scan
+    {"payer_code": "M/M", "modality": "BONE", "cpt_code": "78306", "expected_rate": 200.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "BONE", "cpt_code": "78305", "expected_rate": 175.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "BONE", "cpt_code": "78300", "expected_rate": 150.00, "underpayment_threshold": 0.80},
+
+    # X-ray — Chest
+    {"payer_code": "M/M", "modality": "DX", "cpt_code": "71045", "expected_rate": 25.00, "underpayment_threshold": 0.75},
+    {"payer_code": "M/M", "modality": "DX", "cpt_code": "71046", "expected_rate": 30.00, "underpayment_threshold": 0.75},
+
+    # === MEDICARE MODALITY-LEVEL DEFAULTS (for CPTs not listed above) ===
+    {"payer_code": "M/M", "modality": "CT", "expected_rate": 200.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "HMRI", "expected_rate": 325.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "PET", "expected_rate": 1000.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "BONE", "expected_rate": 175.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "DX", "expected_rate": 30.00, "underpayment_threshold": 0.75},
+    {"payer_code": "M/M", "modality": "US", "expected_rate": 100.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "MAMMO", "expected_rate": 100.00, "underpayment_threshold": 0.80},
+    {"payer_code": "M/M", "modality": "DEXA", "expected_rate": 40.00, "underpayment_threshold": 0.80},
 ]
 
 
@@ -54,11 +149,14 @@ async def seed_payers(session: AsyncSession) -> int:
 
 async def seed_fee_schedule(session: AsyncSession) -> int:
     """Insert fee schedule records if they don't already exist. Returns count inserted."""
-    existing = await session.execute(select(FeeSchedule.payer_code, FeeSchedule.modality))
-    existing_keys = {(row[0], row[1]) for row in existing.fetchall()}
+    existing = await session.execute(
+        select(FeeSchedule.payer_code, FeeSchedule.modality, FeeSchedule.cpt_code)
+    )
+    existing_keys = {(row[0], row[1], row[2]) for row in existing.fetchall()}
     count = 0
     for f in FEE_SCHEDULES:
-        if (f["payer_code"], f["modality"]) not in existing_keys:
+        key = (f["payer_code"], f["modality"], f.get("cpt_code"))
+        if key not in existing_keys:
             session.add(FeeSchedule(**f))
             count += 1
     if count:
