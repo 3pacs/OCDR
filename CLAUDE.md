@@ -428,3 +428,53 @@ the database to confirm data matches and add verified entries here.
 | F-20 Backup | DONE | 1 |
 | F-21 Pipeline Improvements | **DONE** (session 2026-03-18) | 6 |
 | F-22 Business Tasks | **DONE** (session 2026-03-18) | 6 |
+
+---
+
+## What Was Done (Session 2026-03-18, part 3)
+
+### Commit 16: `e69af1b` — LLM-readable task log, action step runbooks, pipeline notes
+
+**TASKS.md auto-writer:**
+- Created `backend/app/tasks/task_log_writer.py` — regenerates `TASKS.md` on every
+  task mutation (complete, skip, add, edit, delete)
+- TASKS.md contains: today's checklist with status, 7-day completion history, full
+  task runbooks with action steps, and pipeline improvement notes
+- This is the single file any connected LLM should read to understand operational state
+
+**Action step runbooks:**
+- Added `action_steps` (TEXT) column to `BusinessTask` model
+- Wrote detailed step-by-step markdown runbooks for all 19 seeded tasks
+- Each runbook includes numbered steps, system page references (/import, /matching, etc.),
+  tips, and cross-references to CLAUDE.md gotchas
+- Backfill on startup for existing databases
+
+**Pipeline notes:**
+- Each pipeline suggestion card now has a notes textarea and status selector
+  (Open → Acknowledged → In Progress → Resolved → Dismissed)
+- Notes saved to `InsightLog.resolution_notes` via `PATCH /api/analytics/pipeline-suggestions/note`
+- Pipeline notes included in TASKS.md so LLMs see progress updates
+- New `GET /api/analytics/pipeline-notes` endpoint for programmatic access
+
+**Frontend updates:**
+- Tasks: "steps" button shows runbook inline, "note" button adds per-instance notes
+- Tasks: add-task modal includes action_steps markdown textarea
+- Pipeline: notes + status per suggestion, saved to TASKS.md
+
+**Key files:**
+- New: `task_log_writer.py`
+- Modified: `business_task.py`, `task_routes.py`, `analytics_routes.py`, `seed_data.py`,
+  `main.py`, `BusinessTasks.js`, `PipelineImprovements.js`
+
+---
+
+## LLM Integration Notes
+
+**For any LLM connected to this codebase:**
+
+1. Read `TASKS.md` for current operational state (auto-generated, always current)
+2. Read `CLAUDE.md` for system architecture, data gotchas, and session history
+3. User can add notes via the app UI — they appear in TASKS.md automatically
+4. Pipeline improvement suggestions include user status and notes
+5. Task action steps are detailed runbooks — use them to guide the user through tasks
+6. The `/api/tasks/sync-log` endpoint forces a TASKS.md regeneration
