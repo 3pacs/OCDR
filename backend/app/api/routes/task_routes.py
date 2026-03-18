@@ -1,18 +1,34 @@
-"""API routes for business task management."""
+"""API routes for business task management.
 
-from datetime import date, datetime
+Every mutation (create, update, complete, skip) regenerates TASKS.md so any
+connected LLM always has an up-to-date view of operational state.
+"""
+
+import logging
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from sqlalchemy import select, and_, update, func
+from sqlalchemy import select, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
 from backend.app.models.business_task import BusinessTask, TaskInstance
 from backend.app.tasks.task_scheduler import generate_due_tasks
+from backend.app.tasks.task_log_writer import write_tasks_md
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _sync_log(db: AsyncSession):
+    """Best-effort regeneration of TASKS.md after any mutation."""
+    try:
+        await write_tasks_md(db)
+    except Exception as e:
+        logger.warning(f"Failed to write TASKS.md: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +54,7 @@ async def list_templates(db: AsyncSession = Depends(get_db)):
             "estimated_minutes": t.estimated_minutes,
             "is_active": t.is_active,
             "notes": t.notes,
+            "action_steps": t.action_steps,
         }
         for t in tasks
     ]
@@ -52,6 +69,7 @@ class TemplateCreate(BaseModel):
     priority: int = 3
     estimated_minutes: Optional[int] = None
     notes: Optional[str] = None
+    action_steps: Optional[str] = None
 
 
 @router.post("/templates")
@@ -61,6 +79,7 @@ async def create_template(body: TemplateCreate, db: AsyncSession = Depends(get_d
     db.add(task)
     await db.commit()
     await db.refresh(task)
+    await _sync_log(db)
     return {"id": task.id, "title": task.title, "status": "created"}
 
 
@@ -74,6 +93,7 @@ class TemplateUpdate(BaseModel):
     estimated_minutes: Optional[int] = None
     is_active: Optional[bool] = None
     notes: Optional[str] = None
+    action_steps: Optional[str] = None
 
 
 @router.patch("/templates/{task_id}")
@@ -86,6 +106,7 @@ async def update_template(task_id: int, body: TemplateUpdate, db: AsyncSession =
     for key, val in body.model_dump(exclude_unset=True).items():
         setattr(task, key, val)
     await db.commit()
+    await _sync_log(db)
     return {"id": task.id, "status": "updated"}
 
 
@@ -96,14 +117,10 @@ async def delete_template(task_id: int, db: AsyncSession = Depends(get_db)):
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task template not found")
-    # Delete instances first
-    await db.execute(
-        select(TaskInstance).where(TaskInstance.task_id == task_id)
-    )
-    from sqlalchemy import delete
     await db.execute(delete(TaskInstance).where(TaskInstance.task_id == task_id))
     await db.delete(task)
     await db.commit()
+    await _sync_log(db)
     return {"status": "deleted"}
 
 
@@ -114,12 +131,10 @@ async def delete_template(task_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/today")
 async def today_tasks(db: AsyncSession = Depends(get_db)):
     """Get today's task checklist. Auto-generates instances if needed."""
-    # Generate any missing instances for today
     await generate_due_tasks(db)
 
     today = date.today()
 
-    # Get today's instances with their template info
     result = await db.execute(
         select(TaskInstance, BusinessTask)
         .join(BusinessTask, TaskInstance.task_id == BusinessTask.id)
@@ -143,9 +158,9 @@ async def today_tasks(db: AsyncSession = Depends(get_db)):
             "completed_at": instance.completed_at.isoformat() if instance.completed_at else None,
             "completed_by": instance.completed_by,
             "notes": instance.notes,
+            "action_steps": template.action_steps,
         })
 
-    # Summary stats
     total = len(tasks)
     completed = sum(1 for t in tasks if t["status"] == "COMPLETED")
     skipped = sum(1 for t in tasks if t["status"] == "SKIPPED")
@@ -171,7 +186,7 @@ async def task_history(
     db: AsyncSession = Depends(get_db),
 ):
     """Get task completion history for the last N days."""
-    start_date = date.today() - __import__("datetime").timedelta(days=days)
+    start_date = date.today() - timedelta(days=days)
 
     result = await db.execute(
         select(TaskInstance, BusinessTask)
@@ -181,7 +196,6 @@ async def task_history(
     )
     rows = result.all()
 
-    # Group by date
     by_date = {}
     for instance, template in rows:
         d = instance.due_date.isoformat()
@@ -193,6 +207,7 @@ async def task_history(
             "category": template.category,
             "status": instance.status,
             "completed_at": instance.completed_at.isoformat() if instance.completed_at else None,
+            "notes": instance.notes,
         })
         by_date[d]["total"] += 1
         if instance.status == "COMPLETED":
@@ -209,7 +224,7 @@ class InstanceUpdate(BaseModel):
 
 @router.patch("/instances/{instance_id}")
 async def update_instance(instance_id: int, body: InstanceUpdate, db: AsyncSession = Depends(get_db)):
-    """Update a task instance (complete, skip, or reset)."""
+    """Update a task instance (complete, skip, or reset). Syncs TASKS.md."""
     result = await db.execute(
         select(TaskInstance).where(TaskInstance.id == instance_id)
     )
@@ -228,6 +243,7 @@ async def update_instance(instance_id: int, body: InstanceUpdate, db: AsyncSessi
         instance.completed_by = body.completed_by
 
     await db.commit()
+    await _sync_log(db)
     return {"instance_id": instance.id, "status": instance.status}
 
 
@@ -235,4 +251,12 @@ async def update_instance(instance_id: int, body: InstanceUpdate, db: AsyncSessi
 async def force_generate(db: AsyncSession = Depends(get_db)):
     """Manually trigger task instance generation for today."""
     count = await generate_due_tasks(db)
+    await _sync_log(db)
     return {"generated": count}
+
+
+@router.post("/sync-log")
+async def sync_log(db: AsyncSession = Depends(get_db)):
+    """Force regenerate TASKS.md."""
+    path = await write_tasks_md(db)
+    return {"status": "synced", "path": path}

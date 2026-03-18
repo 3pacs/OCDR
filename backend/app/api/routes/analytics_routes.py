@@ -4,16 +4,19 @@ Covers: Payer Monitor, Physician Analytics, PSMA Tracking, Gado Analytics,
 Duplicate Detection, and Denial Reason Analytics.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, extract, text, and_, or_, cast, String
+from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+from sqlalchemy import select, func, case, extract, text, and_, or_, cast, String, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
 from backend.app.models.billing import BillingRecord
 from backend.app.models.payer import Payer, FeeSchedule
 from backend.app.models.era import ERAClaimLine
+from backend.app.models.insight_log import InsightLog
 
 router = APIRouter()
 
@@ -44,6 +47,22 @@ async def pipeline_suggestions(db: AsyncSession = Depends(get_db)):
         by_category[cat] = by_category.get(cat, 0) + 1
         total_impact += abs(s.get("estimated_impact") or 0)
 
+    # Fetch user notes from persisted insights
+    notes_result = await db.execute(
+        select(InsightLog.title, InsightLog.status, InsightLog.resolution_notes)
+        .where(InsightLog.category.like("PIPELINE_%"))
+    )
+    notes_map = {
+        row[0]: {"status": row[1], "notes": row[2]}
+        for row in notes_result.all()
+    }
+
+    # Merge notes into suggestions
+    for s in suggestions:
+        info = notes_map.get(s["title"], {})
+        s["user_status"] = info.get("status", "OPEN")
+        s["user_notes"] = info.get("notes")
+
     return {
         "suggestions": suggestions,
         "total": len(suggestions),
@@ -54,6 +73,71 @@ async def pipeline_suggestions(db: AsyncSession = Depends(get_db)):
         "benchmarks": BENCHMARKS,
         "generated_at": date.today().isoformat(),
     }
+
+
+class PipelineNoteUpdate(BaseModel):
+    title: str
+    status: Optional[str] = None  # OPEN, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, DISMISSED
+    notes: Optional[str] = None
+
+
+@router.patch("/pipeline-suggestions/note")
+async def update_pipeline_note(body: PipelineNoteUpdate, db: AsyncSession = Depends(get_db)):
+    """Add a note or update status on a pipeline suggestion. Written to TASKS.md for LLM access."""
+    result = await db.execute(
+        select(InsightLog).where(
+            and_(
+                InsightLog.category.like("PIPELINE_%"),
+                InsightLog.title == body.title,
+            )
+        )
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="Pipeline suggestion not found in log")
+
+    if body.status is not None:
+        log.status = body.status
+        if body.status == "RESOLVED":
+            log.resolved_at = datetime.utcnow()
+    if body.notes is not None:
+        log.resolution_notes = body.notes
+
+    await db.commit()
+
+    # Also regenerate TASKS.md so LLM sees updated pipeline notes
+    try:
+        from backend.app.tasks.task_log_writer import write_tasks_md
+        await write_tasks_md(db)
+    except Exception:
+        pass
+
+    return {"title": log.title, "status": log.status, "notes": log.resolution_notes}
+
+
+@router.get("/pipeline-notes")
+async def list_pipeline_notes(db: AsyncSession = Depends(get_db)):
+    """Get all pipeline suggestion notes/statuses for LLM consumption."""
+    result = await db.execute(
+        select(InsightLog)
+        .where(InsightLog.category.like("PIPELINE_%"))
+        .order_by(InsightLog.updated_at.desc())
+    )
+    logs = result.scalars().all()
+    return [
+        {
+            "id": l.id,
+            "title": l.title,
+            "category": l.category,
+            "severity": l.severity,
+            "status": l.status,
+            "notes": l.resolution_notes,
+            "estimated_impact": float(l.estimated_impact) if l.estimated_impact else None,
+            "created_at": l.created_at.isoformat(),
+            "updated_at": l.updated_at.isoformat(),
+        }
+        for l in logs
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,9 @@ class BusinessTask(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # Step-by-step action markdown — LLM-readable runbook for completing the task
+    action_steps: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Optional metadata
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

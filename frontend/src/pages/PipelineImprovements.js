@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Card, Row, Col, Badge, Alert, Spinner, Table, ProgressBar, Button } from "react-bootstrap";
+import { Card, Row, Col, Badge, Alert, Spinner, Table, ProgressBar, Button, Form } from "react-bootstrap";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import api from "../services/api";
 
@@ -23,6 +23,14 @@ const CATEGORY_LABELS = {
   DATA_QUALITY: "Data Quality",
   BEST_PRACTICE: "Best Practice",
 };
+
+const STATUS_OPTIONS = [
+  { value: "OPEN", label: "Open", color: "secondary" },
+  { value: "ACKNOWLEDGED", label: "Acknowledged", color: "info" },
+  { value: "IN_PROGRESS", label: "In Progress", color: "primary" },
+  { value: "RESOLVED", label: "Resolved", color: "success" },
+  { value: "DISMISSED", label: "Dismissed", color: "dark" },
+];
 
 function formatMoney(val) {
   if (val == null || val === 0) return "$0";
@@ -145,9 +153,30 @@ function ImpactSummary({ data }) {
   );
 }
 
-function SuggestionCard({ suggestion, index }) {
+function SuggestionCard({ suggestion, index, onNoteUpdate }) {
   const s = suggestion;
-  const [expanded, setExpanded] = useState(index < 3); // First 3 auto-expanded
+  const [expanded, setExpanded] = useState(index < 3);
+  const [noteText, setNoteText] = useState(s.user_notes || "");
+  const [currentStatus, setCurrentStatus] = useState(s.user_status || "OPEN");
+  const [saving, setSaving] = useState(false);
+
+  const saveNote = async () => {
+    setSaving(true);
+    try {
+      await api.patch("/analytics/pipeline-suggestions/note", {
+        title: s.title,
+        status: currentStatus,
+        notes: noteText,
+      });
+      if (onNoteUpdate) onNoteUpdate();
+    } catch (err) {
+      alert("Failed to save note: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const statusInfo = STATUS_OPTIONS.find(o => o.value === currentStatus) || STATUS_OPTIONS[0];
 
   return (
     <Card className={`border-0 shadow-sm mb-3 border-start border-4 border-${SEVERITY_COLORS[s.severity] || "secondary"}`}>
@@ -158,6 +187,7 @@ function SuggestionCard({ suggestion, index }) {
             <SeverityBadge severity={s.severity} />
             <Badge bg="light" text="dark">{CATEGORY_LABELS[s.subcategory] || s.subcategory}</Badge>
             <EffortBadge effort={s.effort} />
+            <Badge bg={statusInfo.color}>{statusInfo.label}</Badge>
             {s.entity_id && <Badge bg="outline-dark" className="border">{s.entity_id}</Badge>}
           </div>
           <div className="text-end">
@@ -193,13 +223,13 @@ function SuggestionCard({ suggestion, index }) {
             </div>
 
             {s.best_practice && (
-              <div className="small text-muted">
+              <div className="small text-muted mb-2">
                 <strong>Industry reference:</strong> {s.best_practice}
               </div>
             )}
 
             {s.benchmark != null && s.current_value != null && (
-              <div className="mt-2">
+              <div className="mt-2 mb-3">
                 <div className="d-flex justify-content-between small mb-1">
                   <span>Current: {s.current_value}%</span>
                   <span>Target: {s.benchmark}%</span>
@@ -213,6 +243,40 @@ function SuggestionCard({ suggestion, index }) {
                 </ProgressBar>
               </div>
             )}
+
+            {/* Notes section */}
+            <div className="border-top pt-2 mt-2">
+              <div className="d-flex align-items-center gap-2 mb-2">
+                <strong className="small">Your notes:</strong>
+                <Form.Select
+                  size="sm"
+                  style={{ width: "auto" }}
+                  value={currentStatus}
+                  onChange={(e) => setCurrentStatus(e.target.value)}
+                >
+                  {STATUS_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </Form.Select>
+              </div>
+              <Form.Control
+                as="textarea"
+                rows={2}
+                size="sm"
+                placeholder="Add notes about progress, blockers, decisions... (saved to TASKS.md for LLM access)"
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                className="mb-2"
+              />
+              <Button
+                variant="outline-primary"
+                size="sm"
+                onClick={saveNote}
+                disabled={saving}
+              >
+                {saving ? <Spinner size="sm" /> : "Save Note"}
+              </Button>
+            </div>
           </div>
         )}
       </Card.Body>
@@ -262,31 +326,25 @@ function PipelineImprovements() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState("all"); // all, CRITICAL, HIGH, QUICK_WIN
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await api.get("/analytics/pipeline-suggestions", { timeout: 60000 });
-        setData(res.data);
-      } catch (err) {
-        setError("Failed to load pipeline suggestions. The backend may still be starting up.");
-      } finally {
-        setLoading(false);
-      }
+  const fetchData = async () => {
+    try {
+      const res = await api.get("/analytics/pipeline-suggestions", { timeout: 60000 });
+      setData(res.data);
+    } catch (err) {
+      setError("Failed to load pipeline suggestions. The backend may still be starting up.");
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
     fetchData();
   }, []);
 
   const refresh = async () => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await api.get("/analytics/pipeline-suggestions", { timeout: 60000 });
-      setData(res.data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    await fetchData();
   };
 
   if (loading) {
@@ -312,6 +370,7 @@ function PipelineImprovements() {
           <h2 className="mb-1">Pipeline Improvements</h2>
           <small className="text-muted">
             Data-driven suggestions based on your billing patterns vs. industry best practices.
+            Notes you add here are saved to TASKS.md for LLM access.
             {data?.generated_at && <> Last analyzed: {data.generated_at}</>}
           </small>
         </div>
@@ -350,7 +409,7 @@ function PipelineImprovements() {
           )}
 
           {filtered.map((s, i) => (
-            <SuggestionCard key={i} suggestion={s} index={i} />
+            <SuggestionCard key={i} suggestion={s} index={i} onNoteUpdate={fetchData} />
           ))}
         </Col>
 
@@ -366,6 +425,7 @@ function PipelineImprovements() {
                 <li>Identifies revenue leaks and compliance gaps</li>
                 <li>Prioritizes by financial impact</li>
                 <li>Tags quick wins vs. major projects</li>
+                <li><strong>Your notes sync to TASKS.md</strong> for AI access</li>
               </ul>
             </Card.Body>
           </Card>

@@ -78,23 +78,22 @@ function BusinessTasks() {
     init();
   }, [fetchToday, fetchTemplates]);
 
-  const toggleTask = async (instanceId, currentStatus) => {
-    const newStatus = currentStatus === "COMPLETED" ? "PENDING" : "COMPLETED";
+  const updateInstance = async (instanceId, updates) => {
     try {
-      await api.patch(`/tasks/instances/${instanceId}`, { status: newStatus });
+      await api.patch(`/tasks/instances/${instanceId}`, updates);
       await fetchToday();
     } catch (err) {
       setError("Failed to update task.");
     }
   };
 
+  const toggleTask = async (instanceId, currentStatus) => {
+    const newStatus = currentStatus === "COMPLETED" ? "PENDING" : "COMPLETED";
+    await updateInstance(instanceId, { status: newStatus });
+  };
+
   const skipTask = async (instanceId) => {
-    try {
-      await api.patch(`/tasks/instances/${instanceId}`, { status: "SKIPPED" });
-      await fetchToday();
-    } catch (err) {
-      setError("Failed to skip task.");
-    }
+    await updateInstance(instanceId, { status: "SKIPPED" });
   };
 
   const toggleTemplate = async (taskId, isActive) => {
@@ -206,6 +205,7 @@ function BusinessTasks() {
           tasks={todayData?.tasks || []}
           onToggle={toggleTask}
           onSkip={skipTask}
+          onSaveNote={updateInstance}
         />
       )}
 
@@ -232,7 +232,116 @@ function BusinessTasks() {
   );
 }
 
-function TodayView({ tasks, onToggle, onSkip }) {
+function TaskItem({ t, onToggle, onSkip, onSaveNote }) {
+  const [showSteps, setShowSteps] = useState(false);
+  const [noteText, setNoteText] = useState(t.notes || "");
+  const [showNote, setShowNote] = useState(!!t.notes);
+
+  return (
+    <div className="mb-2">
+      <div
+        className={`d-flex align-items-center p-2 rounded ${
+          t.status === "COMPLETED"
+            ? "bg-light text-decoration-line-through text-muted"
+            : t.status === "SKIPPED"
+              ? "bg-light text-muted"
+              : ""
+        }`}
+      >
+        <Form.Check
+          type="checkbox"
+          checked={t.status === "COMPLETED"}
+          onChange={() => onToggle(t.instance_id, t.status)}
+          className="me-3"
+        />
+        <div className="flex-grow-1">
+          <div className="fw-bold">{t.title}</div>
+          {t.description && (
+            <small className="text-muted">{t.description}</small>
+          )}
+        </div>
+        <div className="d-flex align-items-center gap-2">
+          {t.estimated_minutes && (
+            <Badge bg="light" text="dark" className="border">
+              {t.estimated_minutes}m
+            </Badge>
+          )}
+          <Badge bg={FREQ_LABELS[t.frequency]?.color || "secondary"}>
+            {FREQ_LABELS[t.frequency]?.label || t.frequency}
+          </Badge>
+          {t.action_steps && (
+            <Button
+              variant="outline-info"
+              size="sm"
+              className="py-0 px-1"
+              onClick={() => setShowSteps(!showSteps)}
+              title="Show action steps"
+            >
+              steps
+            </Button>
+          )}
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            className="py-0 px-1"
+            onClick={() => setShowNote(!showNote)}
+            title="Add note"
+          >
+            note
+          </Button>
+          {t.status === "PENDING" && (
+            <OverlayTrigger overlay={<Tooltip>Skip for today</Tooltip>}>
+              <Button
+                variant="outline-secondary"
+                size="sm"
+                className="py-0 px-1"
+                onClick={() => onSkip(t.instance_id)}
+              >
+                skip
+              </Button>
+            </OverlayTrigger>
+          )}
+          {t.completed_at && (
+            <small className="text-success">
+              {new Date(t.completed_at).toLocaleTimeString()}
+            </small>
+          )}
+        </div>
+      </div>
+
+      {showSteps && t.action_steps && (
+        <div className="ms-4 mt-2 p-2 bg-light rounded small">
+          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", marginBottom: 0 }}>
+            {t.action_steps}
+          </pre>
+        </div>
+      )}
+
+      {showNote && (
+        <div className="ms-4 mt-2 d-flex gap-2 align-items-start">
+          <Form.Control
+            as="textarea"
+            rows={1}
+            size="sm"
+            placeholder="Add a note (saved to TASKS.md for LLM access)..."
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            style={{ maxWidth: 500 }}
+          />
+          <Button
+            variant="outline-primary"
+            size="sm"
+            onClick={() => onSaveNote(t.instance_id, { status: t.status, notes: noteText })}
+          >
+            Save
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TodayView({ tasks, onToggle, onSkip, onSaveNote }) {
   // Group by category
   const grouped = {};
   for (const t of tasks) {
@@ -257,59 +366,13 @@ function TodayView({ tasks, onToggle, onSkip }) {
               {CAT_ICONS[cat] || "📋"} {cat.replace(/_/g, " ")}
             </Card.Title>
             {catTasks.map((t) => (
-              <div
+              <TaskItem
                 key={t.instance_id}
-                className={`d-flex align-items-center p-2 mb-2 rounded ${
-                  t.status === "COMPLETED"
-                    ? "bg-light text-decoration-line-through text-muted"
-                    : t.status === "SKIPPED"
-                      ? "bg-light text-muted"
-                      : ""
-                }`}
-              >
-                <Form.Check
-                  type="checkbox"
-                  checked={t.status === "COMPLETED"}
-                  onChange={() => onToggle(t.instance_id, t.status)}
-                  className="me-3"
-                />
-                <div className="flex-grow-1">
-                  <div className="fw-bold">{t.title}</div>
-                  {t.description && (
-                    <small className="text-muted">{t.description}</small>
-                  )}
-                </div>
-                <div className="d-flex align-items-center gap-2">
-                  {t.estimated_minutes && (
-                    <Badge bg="light" text="dark" className="border">
-                      {t.estimated_minutes}m
-                    </Badge>
-                  )}
-                  <Badge bg={FREQ_LABELS[t.frequency]?.color || "secondary"}>
-                    {FREQ_LABELS[t.frequency]?.label || t.frequency}
-                  </Badge>
-                  <Badge bg={PRIORITY_LABELS[t.priority]?.color || "info"}>
-                    P{t.priority}
-                  </Badge>
-                  {t.status === "PENDING" && (
-                    <OverlayTrigger overlay={<Tooltip>Skip for today</Tooltip>}>
-                      <Button
-                        variant="outline-secondary"
-                        size="sm"
-                        className="py-0 px-1"
-                        onClick={() => onSkip(t.instance_id)}
-                      >
-                        skip
-                      </Button>
-                    </OverlayTrigger>
-                  )}
-                  {t.completed_at && (
-                    <small className="text-success">
-                      {new Date(t.completed_at).toLocaleTimeString()}
-                    </small>
-                  )}
-                </div>
-              </div>
+                t={t}
+                onToggle={onToggle}
+                onSkip={onSkip}
+                onSaveNote={onSaveNote}
+              />
             ))}
           </Card.Body>
         </Card>
@@ -463,6 +526,7 @@ function AddTaskModal({ show, onHide, onCreated }) {
     schedule_day: "",
     priority: 3,
     estimated_minutes: "",
+    action_steps: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -474,12 +538,14 @@ function AddTaskModal({ show, onHide, onCreated }) {
         ...form,
         schedule_day: form.schedule_day ? parseInt(form.schedule_day) : null,
         estimated_minutes: form.estimated_minutes ? parseInt(form.estimated_minutes) : null,
+        action_steps: form.action_steps || null,
       };
       await api.post("/tasks/templates", payload);
       onCreated();
       setForm({
         title: "", description: "", category: "DATA_IMPORT",
         frequency: "DAILY", schedule_day: "", priority: 3, estimated_minutes: "",
+        action_steps: "",
       });
     } catch (err) {
       alert("Failed to create task: " + (err.response?.data?.detail || err.message));
@@ -577,6 +643,17 @@ function AddTaskModal({ show, onHide, onCreated }) {
               </Form.Group>
             </Col>
           </Row>
+          <Form.Group className="mb-3">
+            <Form.Label>Action Steps (Markdown)</Form.Label>
+            <Form.Control
+              as="textarea"
+              rows={6}
+              placeholder={"## Task Name\n\n1. First step\n2. Second step\n3. Third step\n\n**Notes:** Additional context for LLM..."}
+              value={form.action_steps}
+              onChange={(e) => setForm({ ...form, action_steps: e.target.value })}
+            />
+            <Form.Text>Step-by-step instructions saved to TASKS.md. LLMs read these to guide you through the task.</Form.Text>
+          </Form.Group>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={onHide}>Cancel</Button>

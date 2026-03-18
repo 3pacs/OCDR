@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
             ("billing_records", "import_file_id", "INTEGER"),
             ("billing_records", "extra_data", "JSONB"),
             ("billing_records", "topaz_id", "VARCHAR(50)"),
+            ("business_tasks", "action_steps", "TEXT"),
         ]
         for table, column, col_type in new_columns:
             try:
