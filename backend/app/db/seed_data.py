@@ -127,6 +127,57 @@ Columns G and P are dates. Column M is chart ID, Column V is Topaz patient ID.""
 **Key:** Topaz uses prefix-encoded patient IDs (10XXXXX = primary, 20XXXXX = secondary). See CLAUDE.md G-05.""",
     },
     {
+        "title": "Verify posted payments (post checks)",
+        "description": "After posting to Topaz, verify payments posted correctly. Catch errors before they compound.",
+        "category": "POSTING", "frequency": "DAILY", "priority": 1, "estimated_minutes": 15,
+        "action_steps": """## Verify Posted Payments (Post Checks)
+
+Run these checks after completing the "Post payments to Topaz" task.
+
+### 1. Topaz Batch Totals
+- Pull today's posting batch total from Topaz
+- Compare against ERA 835 payment totals for the same claims
+- If totals don't match, find the discrepancy before closing the batch
+
+### 2. Patient-Level Spot Check
+- Pick 3-5 random patients from today's postings
+- Open each in Topaz and verify:
+  - Payment amount matches ERA paid amount
+  - Adjustment codes match CARC/RARC from ERA
+  - Payment posted to correct insurance line (primary vs secondary)
+  - Check/EFT number recorded correctly
+  - Service date matches
+
+### 3. Secondary Insurance Triggers
+- For any primary payment that left a patient balance:
+  - Verify if patient has secondary insurance on file
+  - If yes, confirm secondary claim was generated or queued
+  - Check `/secondary-followup` page for any new items
+- For Medicare patients: secondary should auto-crossover — verify it did
+
+### 4. Denial Postings
+- For claims posted as denied:
+  - Verify denial reason code matches the ERA CARC code
+  - Confirm appeal deadline was calculated correctly
+  - Check that the claim appears in `/denials` queue
+
+### 5. Zero-Pay / Adjustment-Only Claims
+- Review any claims posted with $0 payment:
+  - Contractual adjustment only (CO-45) → normal
+  - Patient responsibility (PR-1, PR-2, PR-3) → verify balance transferred to patient
+  - Duplicate claim (CO-18) → verify original was paid
+
+### 6. Running Totals
+- Update the daily posting log:
+  - Total claims posted today
+  - Total dollars posted (payments + adjustments)
+  - Number of denials posted
+  - Number of secondary claims triggered
+- Compare with yesterday — flag any large swings
+
+**Why this matters:** Posting errors compound. A wrong amount today becomes a wrong A/R balance tomorrow, a wrong statement next week, and a write-off next quarter. 5 minutes of checking saves hours of correction.""",
+    },
+    {
         "title": "Reconcile transactions with bank",
         "description": "Match daily bank transactions against posted payments. Flag discrepancies.",
         "category": "RECONCILIATION", "frequency": "DAILY", "priority": 2, "estimated_minutes": 15,
