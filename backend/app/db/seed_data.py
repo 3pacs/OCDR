@@ -674,8 +674,30 @@ reports what matters, saving you 15-20 minutes of clicking through pages.**""",
 
 async def seed_business_tasks(session: AsyncSession) -> int:
     """Insert default business tasks if table is empty. Backfill action_steps on existing tasks."""
-    existing = await session.execute(select(BusinessTask))
-    existing_tasks = {t.title: t for t in existing.scalars().all()}
+    try:
+        existing = await session.execute(select(BusinessTask))
+        existing_tasks = {t.title: t for t in existing.scalars().all()}
+    except Exception:
+        # Table may not have all columns yet on first run — skip gracefully
+        await session.rollback()
+        try:
+            # Try fresh insert (table exists but may be empty)
+            from sqlalchemy import text as sa_text
+            row = await session.execute(sa_text("SELECT count(*) FROM business_tasks"))
+            count_val = row.scalar()
+            if count_val and count_val > 0:
+                return 0
+        except Exception:
+            await session.rollback()
+            return 0
+
+        count = 0
+        for t in BUSINESS_TASKS:
+            session.add(BusinessTask(**t))
+            count += 1
+        if count:
+            await session.commit()
+        return count
 
     if not existing_tasks:
         # Fresh seed
@@ -690,12 +712,23 @@ async def seed_business_tasks(session: AsyncSession) -> int:
     # Backfill action_steps on existing tasks that don't have them
     updated = 0
     for t in BUSINESS_TASKS:
-        existing = existing_tasks.get(t["title"])
-        if existing and not existing.action_steps and t.get("action_steps"):
-            existing.action_steps = t["action_steps"]
+        ex = existing_tasks.get(t["title"])
+        if ex:
+            try:
+                if not ex.action_steps and t.get("action_steps"):
+                    ex.action_steps = t["action_steps"]
+                    updated += 1
+            except Exception:
+                pass  # Column may not exist yet
+        else:
+            # New task not in DB yet — add it
+            session.add(BusinessTask(**t))
             updated += 1
     if updated:
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
     return updated
 
 
@@ -703,7 +736,10 @@ async def run_all_seeds(session: AsyncSession) -> dict:
     """Run all seed operations."""
     payers_count = await seed_payers(session)
     fees_count = await seed_fee_schedule(session)
-    tasks_count = await seed_business_tasks(session)
+    try:
+        tasks_count = await seed_business_tasks(session)
+    except Exception as e:
+        tasks_count = f"error: {e}"
     return {
         "payers_inserted": payers_count,
         "fee_schedules_inserted": fees_count,
