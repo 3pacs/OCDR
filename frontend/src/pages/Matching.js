@@ -1402,6 +1402,7 @@ function Matching() {
               {lastResult.pass_6_name_modality > 0 && <span> &mdash; Name+Mod: {lastResult.pass_6_name_modality}</span>}
               {lastResult.pass_7_name_amount > 0 && <span> &mdash; Name+Amt: {lastResult.pass_7_name_amount}</span>}
               {lastResult.pass_8_name_only > 0 && <span> &mdash; Name only: {lastResult.pass_8_name_only}</span>}
+              {lastResult.pass_9_broad_fuzzy > 0 && <span> &mdash; Broad fuzzy: {lastResult.pass_9_broad_fuzzy}</span>}
             </Alert>
           )}
 
