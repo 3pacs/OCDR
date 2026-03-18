@@ -16,6 +16,9 @@ from backend.app.models.era import ERAClaimLine, ERAPayment
 from backend.app.analytics.public_code_tables import CARC_CODES
 from backend.app.revenue.denial_actions import get_denial_detail, CAS_GROUP_CONTEXT
 
+# Terminal statuses — written-off claims should not appear in any actionable view
+TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
+
 
 def _recoverability_score(billed: float | None, service_date: date | None) -> float:
     """recoverability_score = billed_amount * (1 - days_old/365)."""
@@ -98,8 +101,16 @@ async def get_denials(
     ]
     query = select(BillingRecord).where(or_(*conditions))
 
+    # Exclude terminal statuses unless user explicitly filters by one
     if status:
         query = query.where(BillingRecord.denial_status == status.upper())
+    else:
+        query = query.where(
+            or_(
+                BillingRecord.denial_status.is_(None),
+                ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+            )
+        )
     if carrier:
         query = query.where(BillingRecord.insurance_carrier.ilike(f"%{carrier}%"))
     if modality:
@@ -178,35 +189,42 @@ async def get_denial_queue(
 
 
 async def get_denial_summary(db: AsyncSession) -> dict:
-    """Summary stats for denials."""
-    base = or_(
-        BillingRecord.total_payment == 0,
-        BillingRecord.denial_status.isnot(None),
+    """Summary stats for denials. Excludes written-off/resolved from active counts."""
+    # Active denials only (exclude terminal statuses)
+    active_base = and_(
+        or_(
+            BillingRecord.total_payment == 0,
+            BillingRecord.denial_status.isnot(None),
+        ),
+        or_(
+            BillingRecord.denial_status.is_(None),
+            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+        ),
     )
 
-    # Total denied
-    total_q = select(func.count()).where(base)
+    # Total active denied
+    total_q = select(func.count()).where(active_base)
     total_denied = (await db.execute(total_q)).scalar() or 0
 
-    # By status
+    # By status (active only)
     status_q = (
         select(
             func.coalesce(BillingRecord.denial_status, "DENIED").label("status"),
             func.count().label("count"),
         )
-        .where(base)
+        .where(active_base)
         .group_by(func.coalesce(BillingRecord.denial_status, "DENIED"))
     )
     status_result = await db.execute(status_q)
     by_status = [{"status": r.status, "count": r.count} for r in status_result]
 
-    # By carrier
+    # By carrier (active only)
     carrier_q = (
         select(
             BillingRecord.insurance_carrier.label("carrier"),
             func.count().label("count"),
         )
-        .where(base)
+        .where(active_base)
         .group_by(BillingRecord.insurance_carrier)
         .order_by(func.count().desc())
         .limit(10)
@@ -214,13 +232,13 @@ async def get_denial_summary(db: AsyncSession) -> dict:
     carrier_result = await db.execute(carrier_q)
     by_carrier = [{"carrier": r.carrier, "count": r.count} for r in carrier_result]
 
-    # By denial reason code
+    # By denial reason code (active only)
     reason_q = (
         select(
             func.coalesce(BillingRecord.denial_reason_code, "UNKNOWN").label("reason"),
             func.count().label("count"),
         )
-        .where(base, BillingRecord.denial_reason_code.isnot(None))
+        .where(active_base, BillingRecord.denial_reason_code.isnot(None))
         .group_by(BillingRecord.denial_reason_code)
         .order_by(func.count().desc())
         .limit(10)
@@ -228,21 +246,21 @@ async def get_denial_summary(db: AsyncSession) -> dict:
     reason_result = await db.execute(reason_q)
     by_reason = [{"reason": r.reason, "count": r.count} for r in reason_result]
 
-    # Appealed count
+    # Appealed count (still active — not yet resolved)
     appealed = (await db.execute(
         select(func.count()).where(BillingRecord.denial_status == "APPEALED")
     )).scalar() or 0
 
-    # Resolved count
-    resolved = (await db.execute(
-        select(func.count()).where(BillingRecord.denial_status.in_(["RESOLVED", "WRITTEN_OFF"]))
+    # Written off / resolved count (for reference, not in active total)
+    written_off = (await db.execute(
+        select(func.count()).where(BillingRecord.denial_status.in_(list(TERMINAL_STATUSES)))
     )).scalar() or 0
 
     return {
         "total_denied": total_denied,
         "appealed": appealed,
-        "resolved": resolved,
-        "pending": total_denied - appealed - resolved,
+        "written_off": written_off,
+        "pending": total_denied - appealed,
         "by_status": by_status,
         "by_carrier": by_carrier,
         "by_reason": by_reason,

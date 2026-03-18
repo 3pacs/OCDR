@@ -8,13 +8,16 @@ Implements BR-03 (gado premium) and BR-02 (PSMA rate).
 
 import logging
 
-from sqlalchemy import select, func, case, and_, literal
+from sqlalchemy import select, func, case, and_, or_, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
 from backend.app.models.payer import FeeSchedule
 
 logger = logging.getLogger(__name__)
+
+# Terminal statuses — written-off claims should not appear in any actionable view
+TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
 
 GADO_PREMIUM = 200.00  # BR-03
 
@@ -44,8 +47,14 @@ async def get_underpayments(
         .subquery()
     )
 
-    # Get all paid claims
-    query = select(BillingRecord).where(BillingRecord.total_payment > 0)
+    # Get all paid claims (exclude written-off / resolved)
+    query = select(BillingRecord).where(
+        BillingRecord.total_payment > 0,
+        or_(
+            BillingRecord.denial_status.is_(None),
+            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+        ),
+    )
 
     if carrier:
         query = query.where(BillingRecord.insurance_carrier == carrier)
@@ -127,9 +136,15 @@ async def get_underpayment_summary(session: AsyncSession) -> dict:
     """
     Summary statistics for underpayments across all paid claims.
     """
-    # Get all paid claims
+    # Get all paid claims (exclude written-off / resolved)
     result = await session.execute(
-        select(BillingRecord).where(BillingRecord.total_payment > 0)
+        select(BillingRecord).where(
+            BillingRecord.total_payment > 0,
+            or_(
+                BillingRecord.denial_status.is_(None),
+                ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+            ),
+        )
     )
     records = result.scalars().all()
 

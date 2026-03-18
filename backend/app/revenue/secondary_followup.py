@@ -7,11 +7,14 @@ Known finding: 1,919 claims, est. $643K missing.
 
 from datetime import date
 
-from sqlalchemy import select, func, and_, update
+from sqlalchemy import select, func, and_, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
 from backend.app.models.payer import Payer
+
+# Terminal statuses — written-off claims should not appear in any actionable view
+TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
 
 
 # Carriers known to expect secondary insurance
@@ -65,6 +68,10 @@ async def get_secondary_followup(
         BillingRecord.primary_payment > 0,
         BillingRecord.secondary_payment == 0,
         BillingRecord.insurance_carrier.in_(expected_carriers),
+        or_(
+            BillingRecord.denial_status.is_(None),
+            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+        ),
     )
 
     if carrier:
@@ -101,6 +108,10 @@ async def get_secondary_summary(db: AsyncSession) -> dict:
         BillingRecord.primary_payment > 0,
         BillingRecord.secondary_payment == 0,
         BillingRecord.insurance_carrier.in_(expected_carriers),
+        or_(
+            BillingRecord.denial_status.is_(None),
+            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
+        ),
     )
 
     # Total missing

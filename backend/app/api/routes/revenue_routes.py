@@ -367,7 +367,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
     # --- Unmatched ERA claims ---
     unmatched_count = await db.execute(
         select(func.count(ERAClaimLine.id))
-        .where(ERAClaimLine.billing_record_id.is_(None))
+        .where(ERAClaimLine.matched_billing_id.is_(None))
     )
 
     # --- Filing deadline alerts ---
