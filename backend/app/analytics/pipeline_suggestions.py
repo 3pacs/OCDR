@@ -22,6 +22,7 @@ from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine, ERAPayment
 from backend.app.models.payer import Payer
 from backend.app.models.insight_log import InsightLog
+from backend.app.revenue.writeoff_filter import not_written_off
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +501,7 @@ async def _analyze_payment_posting(db: AsyncSession) -> list[dict]:
     """Identify payment posting gaps."""
     results = []
 
-    # Billing records with $0 total payment that have been matched to ERA
+    # Billing records with $0 total payment that have been matched to ERA (exclude written-off)
     zero_pay_matched = await db.execute(
         select(func.count(BillingRecord.id))
         .where(BillingRecord.era_claim_id.is_not(None))
@@ -508,6 +509,7 @@ async def _analyze_payment_posting(db: AsyncSession) -> list[dict]:
             BillingRecord.total_payment == 0,
             BillingRecord.total_payment.is_(None),
         ))
+        .where(not_written_off())
     )
     zero_count = zero_pay_matched.scalar() or 0
 
@@ -589,7 +591,7 @@ async def _analyze_payer_contract_compliance(db: AsyncSession) -> list[dict]:
             func.count(BillingRecord.id).label("claim_count"),
             func.avg(BillingRecord.total_payment).label("avg_payment"),
         )
-        .where(BillingRecord.total_payment > 0)
+        .where(BillingRecord.total_payment > 0, not_written_off())
         .group_by(BillingRecord.insurance_carrier)
         .having(func.count(BillingRecord.id) >= 20)
         .order_by(func.count(BillingRecord.id).desc())

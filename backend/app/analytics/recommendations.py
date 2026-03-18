@@ -25,6 +25,7 @@ from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine
 from backend.app.models.payer import Payer, FeeSchedule
 from backend.app.models.insight_log import InsightLog
+from backend.app.revenue.writeoff_filter import not_written_off
 
 
 async def generate_all_recommendations(db: AsyncSession) -> list[dict]:
@@ -66,7 +67,7 @@ async def _analyze_denial_patterns(db: AsyncSession) -> list[dict]:
     """Find recurring denial patterns by payer + modality + reason code."""
     results = []
 
-    # Denial rate by payer+modality
+    # Denial rate by payer+modality (exclude written-off)
     q = (
         select(
             BillingRecord.insurance_carrier.label("carrier"),
@@ -75,6 +76,7 @@ async def _analyze_denial_patterns(db: AsyncSession) -> list[dict]:
             func.sum(case((BillingRecord.total_payment == 0, 1), else_=0)).label("denied"),
             func.sum(case((BillingRecord.total_payment > 0, BillingRecord.total_payment), else_=0)).label("avg_paid_rev"),
         )
+        .where(not_written_off())
         .group_by(BillingRecord.insurance_carrier, BillingRecord.modality)
         .having(func.count() >= 10)
     )
@@ -129,7 +131,7 @@ async def _analyze_payer_underpayment_patterns(db: AsyncSession) -> list[dict]:
     for fs in fs_result.scalars():
         fee_map[(fs.payer_code, fs.modality)] = float(fs.expected_rate)
 
-    # Avg payment by payer+modality where paid > 0
+    # Avg payment by payer+modality where paid > 0 (exclude written-off)
     q = (
         select(
             BillingRecord.insurance_carrier.label("carrier"),
@@ -138,7 +140,7 @@ async def _analyze_payer_underpayment_patterns(db: AsyncSession) -> list[dict]:
             func.avg(BillingRecord.total_payment).label("avg_payment"),
             func.sum(BillingRecord.total_payment).label("total_paid"),
         )
-        .where(BillingRecord.total_payment > 0)
+        .where(BillingRecord.total_payment > 0, not_written_off())
         .group_by(BillingRecord.insurance_carrier, BillingRecord.modality)
         .having(func.count() >= 10)
     )
@@ -206,6 +208,7 @@ async def _analyze_secondary_gaps(db: AsyncSession) -> list[dict]:
             BillingRecord.insurance_carrier.in_(secondary_carriers),
             BillingRecord.primary_payment > 0,
             BillingRecord.secondary_payment == 0,
+            not_written_off(),
         )
         .group_by(BillingRecord.insurance_carrier)
         .having(func.count() >= 10)
@@ -253,7 +256,7 @@ async def _analyze_payer_trends(db: AsyncSession) -> list[dict]:
             func.count().label("count"),
             func.sum(BillingRecord.total_payment).label("revenue"),
         )
-        .where(BillingRecord.service_date.isnot(None))
+        .where(BillingRecord.service_date.isnot(None), not_written_off())
         .group_by(BillingRecord.insurance_carrier, BillingRecord.service_year)
     )
 
@@ -332,6 +335,7 @@ async def _analyze_physician_denial_rates(db: AsyncSession) -> list[dict]:
             func.sum(case((BillingRecord.total_payment == 0, 1), else_=0)).label("denied"),
             func.sum(BillingRecord.total_payment).label("revenue"),
         )
+        .where(not_written_off())
         .group_by(BillingRecord.referring_doctor)
         .having(func.count() >= 20)
     )
@@ -341,7 +345,7 @@ async def _analyze_physician_denial_rates(db: AsyncSession) -> list[dict]:
     global_q = select(
         func.count().label("total"),
         func.sum(case((BillingRecord.total_payment == 0, 1), else_=0)).label("denied"),
-    )
+    ).where(not_written_off())
     global_r = (await db.execute(global_q)).one()
     global_rate = global_r.denied / global_r.total if global_r.total else 0
 
@@ -384,11 +388,12 @@ async def _analyze_filing_risks(db: AsyncSession) -> list[dict]:
 
     today = date.today()
 
-    # Claims past deadline
+    # Claims past deadline (exclude written-off)
     past_q = select(func.count()).where(
         BillingRecord.total_payment == 0,
         BillingRecord.appeal_deadline.isnot(None),
         BillingRecord.appeal_deadline < today,
+        not_written_off(),
     )
     past_count = (await db.execute(past_q)).scalar() or 0
 
@@ -398,6 +403,7 @@ async def _analyze_filing_risks(db: AsyncSession) -> list[dict]:
         BillingRecord.appeal_deadline.isnot(None),
         BillingRecord.appeal_deadline >= today,
         BillingRecord.appeal_deadline <= today + timedelta(days=30),
+        not_written_off(),
     )
     warning_count = (await db.execute(warning_q)).scalar() or 0
 
@@ -462,7 +468,7 @@ async def _analyze_modality_pricing_gaps(db: AsyncSession) -> list[dict]:
             func.avg(BillingRecord.total_payment).label("avg_payment"),
             func.sum(BillingRecord.total_payment).label("total_revenue"),
         )
-        .where(BillingRecord.total_payment > 0)
+        .where(BillingRecord.total_payment > 0, not_written_off())
         .group_by(BillingRecord.modality)
         .having(func.count() >= 20)
     )
@@ -510,12 +516,11 @@ async def _analyze_process_improvements(db: AsyncSession) -> list[dict]:
     """Suggest workflow improvements based on data patterns."""
     results = []
 
-    # 1. Check for claims with no insurance carrier
+    # 1. Check for claims with no insurance carrier (X = written off, not missing)
     no_carrier_q = select(func.count()).where(
         or_(
             BillingRecord.insurance_carrier.is_(None),
             BillingRecord.insurance_carrier == "",
-            BillingRecord.insurance_carrier == "X",
         )
     )
     no_carrier = (await db.execute(no_carrier_q)).scalar() or 0
@@ -523,14 +528,14 @@ async def _analyze_process_improvements(db: AsyncSession) -> list[dict]:
         results.append({
             "category": "PROCESS_IMPROVEMENT",
             "severity": "MEDIUM",
-            "title": f"{no_carrier} claims with missing/unknown insurance carrier",
+            "title": f"{no_carrier} claims with missing insurance carrier",
             "description": (
-                f"{no_carrier} claims have no insurance carrier or are marked 'X'. "
+                f"{no_carrier} claims have no insurance carrier. "
                 f"These cannot be properly billed or followed up."
             ),
             "recommendation": (
                 f"Implement front-desk insurance verification checklist. "
-                f"Review the {no_carrier} 'X' carrier claims to identify the actual payer. "
+                f"Review the {no_carrier} blank carrier claims to identify the actual payer. "
                 f"Add insurance verification step to patient intake workflow."
             ),
             "estimated_impact": no_carrier * 200,
@@ -540,13 +545,14 @@ async def _analyze_process_improvements(db: AsyncSession) -> list[dict]:
             "data": {"unknown_carrier_count": no_carrier},
         })
 
-    # 2. Check for claims without linked ERA data
+    # 2. Check for claims without linked ERA data (exclude written-off)
     no_era_q = select(func.count()).where(
         BillingRecord.era_claim_id.is_(None),
         BillingRecord.total_payment > 0,
+        not_written_off(),
     )
     no_era = (await db.execute(no_era_q)).scalar() or 0
-    total_paid_q = select(func.count()).where(BillingRecord.total_payment > 0)
+    total_paid_q = select(func.count()).where(BillingRecord.total_payment > 0, not_written_off())
     total_paid = (await db.execute(total_paid_q)).scalar() or 0
 
     if total_paid > 0 and no_era / total_paid > 0.3:
@@ -574,7 +580,7 @@ async def _analyze_process_improvements(db: AsyncSession) -> list[dict]:
     gado_q = select(
         func.count().label("total"),
         func.sum(case((BillingRecord.gado_used == True, 1), else_=0)).label("with_gado"),
-    ).where(BillingRecord.modality.in_(["HMRI", "OPEN"]))
+    ).where(BillingRecord.modality.in_(["HMRI", "OPEN"]), not_written_off())
     gado_r = (await db.execute(gado_q)).one()
     if gado_r.total and gado_r.with_gado:
         gado_pct = gado_r.with_gado / gado_r.total

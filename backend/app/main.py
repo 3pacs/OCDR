@@ -103,6 +103,17 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.debug(f"Index skipped: {e}")
 
+        # Backfill: carrier "X" = WRITTEN_OFF (OCMRI convention)
+        try:
+            result = await conn.execute(text(
+                "UPDATE billing_records SET denial_status = 'WRITTEN_OFF' "
+                "WHERE insurance_carrier = 'X' AND (denial_status IS NULL OR denial_status != 'WRITTEN_OFF')"
+            ))
+            if result.rowcount:
+                logger.info(f"Backfill: marked {result.rowcount} carrier-X records as WRITTEN_OFF")
+        except Exception as e:
+            logger.debug(f"Carrier X backfill skipped: {e}")
+
     logger.info("Schema migrations + constraints applied")
 
     # Seed data on startup

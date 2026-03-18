@@ -311,6 +311,8 @@ def _parse_row(row: tuple, col_map: dict[int, str]) -> dict | None:
         "is_psma": _derive_psma(description, modality),
         "import_source": "EXCEL_IMPORT",
         "extra_data": extra if extra else None,
+        # Carrier "X" = written off in OCMRI convention
+        "denial_status": "WRITTEN_OFF" if insurance_carrier == "X" else None,
     }
 
 

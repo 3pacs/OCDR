@@ -10,16 +10,14 @@ Implements BR-05.
 import logging
 from datetime import date, timedelta
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
 from backend.app.models.payer import Payer
+from backend.app.revenue.writeoff_filter import not_written_off
 
 logger = logging.getLogger(__name__)
-
-# Terminal statuses — written-off claims should not appear in any actionable view
-TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
 
 WARNING_DAYS = 30  # Days before deadline to trigger warning
 
@@ -41,13 +39,10 @@ async def get_filing_deadlines(
     payer_result = await session.execute(select(Payer))
     payers = {p.code: p.filing_deadline_days for p in payer_result.scalars().all()}
 
-    # Get unpaid claims (exclude written-off / resolved)
+    # Get unpaid claims (exclude written-off / resolved / carrier X)
     query = select(BillingRecord).where(
         BillingRecord.total_payment == 0,
-        or_(
-            BillingRecord.denial_status.is_(None),
-            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
-        ),
+        not_written_off(),
     )
     result = await session.execute(query)
     records = result.scalars().all()

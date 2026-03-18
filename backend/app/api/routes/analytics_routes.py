@@ -903,7 +903,12 @@ async def patient_detail(patient_name: str, db: AsyncSession = Depends(get_db)):
         expected = fee_map.get((r.insurance_carrier, r.modality)) or fee_map.get(("DEFAULT", r.modality)) or 0
         total_billed += expected
 
-        if r.denial_status and r.denial_status not in ("RESOLVED", "PAID_ON_APPEAL"):
+        if r.insurance_carrier == "X" or r.denial_status == "WRITTEN_OFF":
+            status = "WRITTEN_OFF"
+            reason = "Written off"
+            action = None
+            fix = None
+        elif r.denial_status and r.denial_status not in ("RESOLVED", "PAID_ON_APPEAL", "WRITTEN_OFF"):
             status = "DENIED"
             denial_info = get_denial_detail(
                 r.denial_reason_code,

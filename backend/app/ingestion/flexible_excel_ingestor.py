@@ -550,6 +550,9 @@ async def import_excel_flexible(
                 record_data["scan_type"] = "UNKNOWN"
             if "insurance_carrier" not in record_data or not record_data["insurance_carrier"]:
                 record_data["insurance_carrier"] = "UNKNOWN"
+            # Carrier "X" = written off in OCMRI convention
+            if record_data.get("insurance_carrier") == "X":
+                record_data["denial_status"] = "WRITTEN_OFF"
             if "modality" not in record_data or not record_data["modality"]:
                 record_data["modality"] = "UNKNOWN"
             if "service_date" not in record_data or not record_data["service_date"]:

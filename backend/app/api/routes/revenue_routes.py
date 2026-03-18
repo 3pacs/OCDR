@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.db.session import get_db
 from backend.app.models.billing import BillingRecord
+from backend.app.revenue.writeoff_filter import not_written_off
 from backend.app.revenue.underpayment_detector import get_underpayments, get_underpayment_summary
 from backend.app.revenue.filing_deadlines import get_filing_deadlines, get_filing_deadline_alerts
 from backend.app.revenue.denial_tracker import (
@@ -279,7 +280,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
             func.sum(BillingRecord.total_payment).label("total_paid"),
         )
         .where(BillingRecord.denial_status.is_not(None))
-        .where(BillingRecord.denial_status.notin_(["RESOLVED", "WRITTEN_OFF", "PAID_ON_APPEAL"]))
+        .where(not_written_off())
         .group_by(BillingRecord.denial_reason_code)
     )
     denial_rows = denial_result.all()
@@ -325,7 +326,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
             BillingRecord.insurance_carrier,
         )
         .where(BillingRecord.denial_status.is_not(None))
-        .where(BillingRecord.denial_status.notin_(["RESOLVED", "WRITTEN_OFF", "PAID_ON_APPEAL"]))
+        .where(not_written_off())
         .where(BillingRecord.billed_amount.is_not(None))
         .order_by(BillingRecord.billed_amount.desc())
         .limit(20)
@@ -356,12 +357,12 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
     total_denied = await db.execute(
         select(func.count(BillingRecord.id))
         .where(BillingRecord.denial_status.is_not(None))
-        .where(BillingRecord.denial_status.notin_(["RESOLVED", "WRITTEN_OFF", "PAID_ON_APPEAL"]))
+        .where(not_written_off())
     )
     total_billed_denied = await db.execute(
         select(func.sum(BillingRecord.billed_amount))
         .where(BillingRecord.denial_status.is_not(None))
-        .where(BillingRecord.denial_status.notin_(["RESOLVED", "WRITTEN_OFF", "PAID_ON_APPEAL"]))
+        .where(not_written_off())
     )
 
     # --- Unmatched ERA claims ---

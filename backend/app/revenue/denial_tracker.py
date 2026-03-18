@@ -15,9 +15,7 @@ from backend.app.models.billing import BillingRecord
 from backend.app.models.era import ERAClaimLine, ERAPayment
 from backend.app.analytics.public_code_tables import CARC_CODES
 from backend.app.revenue.denial_actions import get_denial_detail, CAS_GROUP_CONTEXT
-
-# Terminal statuses — written-off claims should not appear in any actionable view
-TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
+from backend.app.revenue.writeoff_filter import not_written_off, is_written_off, TERMINAL_STATUSES
 
 
 def _recoverability_score(billed: float | None, service_date: date | None) -> float:
@@ -101,16 +99,11 @@ async def get_denials(
     ]
     query = select(BillingRecord).where(or_(*conditions))
 
-    # Exclude terminal statuses unless user explicitly filters by one
+    # Exclude written-off / resolved unless user explicitly filters by status
     if status:
         query = query.where(BillingRecord.denial_status == status.upper())
     else:
-        query = query.where(
-            or_(
-                BillingRecord.denial_status.is_(None),
-                ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
-            )
-        )
+        query = query.where(not_written_off())
     if carrier:
         query = query.where(BillingRecord.insurance_carrier.ilike(f"%{carrier}%"))
     if modality:
@@ -155,10 +148,10 @@ async def get_denial_queue(
         BillingRecord.total_payment == 0,
         BillingRecord.denial_status.isnot(None),
     ]
-    # Exclude already resolved
+    # Exclude written-off / resolved / carrier X
     query = select(BillingRecord).where(
         or_(*conditions),
-        ~BillingRecord.denial_status.in_(["RESOLVED", "WRITTEN_OFF"]) | BillingRecord.denial_status.is_(None),
+        not_written_off(),
     )
 
     result = await db.execute(query)
@@ -189,17 +182,14 @@ async def get_denial_queue(
 
 
 async def get_denial_summary(db: AsyncSession) -> dict:
-    """Summary stats for denials. Excludes written-off/resolved from active counts."""
-    # Active denials only (exclude terminal statuses)
+    """Summary stats for denials. Excludes written-off/resolved/carrier X from active counts."""
+    # Active denials only (exclude terminal statuses + carrier X)
     active_base = and_(
         or_(
             BillingRecord.total_payment == 0,
             BillingRecord.denial_status.isnot(None),
         ),
-        or_(
-            BillingRecord.denial_status.is_(None),
-            ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
-        ),
+        not_written_off(),
     )
 
     # Total active denied
@@ -253,7 +243,7 @@ async def get_denial_summary(db: AsyncSession) -> dict:
 
     # Written off / resolved count (for reference, not in active total)
     written_off = (await db.execute(
-        select(func.count()).where(BillingRecord.denial_status.in_(list(TERMINAL_STATUSES)))
+        select(func.count()).where(is_written_off())
     )).scalar() or 0
 
     return {
