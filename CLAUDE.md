@@ -354,3 +354,77 @@ When a new data issue is found:
 
 Upload screenshots of specific patients and I'll cross-reference against
 the database to confirm data matches and add verified entries here.
+
+---
+
+## What Was Done (Session 2026-03-18, continued)
+
+### Commit 15: `055d472` — Add Pipeline Improvements page and Business Tasks system
+
+**Pipeline Improvements (F-21):**
+- Created `backend/app/analytics/pipeline_suggestions.py` — 10 analyzers that
+  check billing data against healthcare best practices (MGMA/HFMA/RBMA benchmarks):
+  denial prevention, timely filing, secondary capture, eligibility gaps, crosswalk
+  coverage, match rate, payment posting, coding patterns, payer compliance, workflow
+  automation
+- API endpoint at `GET /api/analytics/pipeline-suggestions`
+- Frontend page at `/pipeline` with impact summary cards, severity/category charts,
+  filterable suggestion cards with recommendations, and industry benchmark table
+- Daily auto-refresh via APScheduler cron job at 6 AM
+- Prominent yellow "Pipeline" nav link in top nav bar
+
+**Business Tasks (F-22):**
+- Created `backend/app/models/business_task.py` — `BusinessTask` (recurring templates)
+  and `TaskInstance` (daily occurrences) models
+- Created `backend/app/tasks/task_scheduler.py` — generates daily instances from
+  active templates based on frequency and schedule_day
+- Created `backend/app/api/routes/task_routes.py` — full CRUD for templates, today's
+  checklist with auto-generation, instance status updates, 14-day history
+- 19 pre-seeded tasks:
+  - **Daily** (6): Import patient data, add EOBs, post to Topaz, reconcile bank,
+    export denials, review unmatched ERA
+  - **Weekly** (3): Bank deposits (Tue), payer monitor review (Mon), appeal follow-up (Wed)
+  - **Bi-weekly** (2): Payroll (Fri), banking reconciliation (Fri)
+  - **Monthly** (8): PET/CT/gado supply bills (1st), Jhangiani research billing (5th),
+    Beach research billing (5th), all-account bank reconciliation (28th), SBA payment
+    (15th), pipeline review (1st)
+- Frontend page at `/tasks` with today's checklist (checkbox to complete, skip button),
+  template management (add/toggle active), and completion history
+- Morning task generation via APScheduler cron job at 7 AM
+- "Tasks" nav link in top nav bar
+
+**Files changed:**
+- New: `pipeline_suggestions.py`, `business_task.py`, `task_scheduler.py`,
+  `task_routes.py`, `PipelineImprovements.js`, `BusinessTasks.js`
+- Modified: `analytics_routes.py`, `seed_data.py`, `main.py`, `__init__.py`,
+  `App.js`, `Layout.js`
+
+---
+
+## Feature Completion Status (updated)
+
+| Feature | Status | Sprint |
+|---------|--------|--------|
+| F-00 Scaffolding | DONE | 1 |
+| F-01 Excel Import | DONE | 1 |
+| F-02 835 ERA Parser | DONE | 1 |
+| F-03 Auto-Match Engine | DONE | 2 |
+| F-04 Denial Tracking | DONE | 2 |
+| F-05 Underpayment Detector | DONE | 1 |
+| F-06 Filing Deadlines | DONE | 1 |
+| F-07 Secondary Follow-Up | DONE | 2 |
+| F-08 Duplicate Detector | DONE | 2 |
+| F-09 Payer Monitor | DONE | 3 |
+| F-10 Physician Statements | NOT STARTED | 4 |
+| F-11 Folder Monitor | PARTIAL (EOB scanner) | 3 |
+| F-12 CSV/PDF Import | PARTIAL (stubs) | 3 |
+| F-13 PSMA Tracking | DONE | 4 |
+| F-14 Gado Analytics | DONE | 5 |
+| F-15 Physician Analytics | DONE | 5 |
+| F-16 Denial Analytics | DONE | 4 |
+| F-17 Payment Reconciliation | NOT STARTED | 4 |
+| F-18 CSV Export Bridge | NOT STARTED | 5 |
+| F-19 Dashboard UI | DONE | 6 |
+| F-20 Backup | DONE | 1 |
+| F-21 Pipeline Improvements | **DONE** (session 2026-03-18) | 6 |
+| F-22 Business Tasks | **DONE** (session 2026-03-18) | 6 |
