@@ -1,5 +1,5 @@
 """
-Auto-Matching Engine — 14 passes.
+Auto-Matching Engine — 14 passes + auto-create.
 
 Matches ERA claim lines (from 835 files) to billing records using
 progressively looser matching criteria:
@@ -18,6 +18,7 @@ progressively looser matching criteria:
   Pass 7:  Name + amount  (no date required, name>=70 + billed amt)   → 65%
   Pass 8:  Name only      (no date required, name>=70, multi-record)  → 55%
   Pass 9:  Broad fuzzy    (name>=70, scan all billing records)        → 45%
+  Pass 10: Auto-create    (stub billing record from ERA data)         → 100%
 
 Many-to-one: Multiple ERA claims can link to the same billing record
 (original payment, adjustments, secondary payers, appeals). Billing
@@ -46,7 +47,7 @@ After matching, updates:
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from rapidfuzz import fuzz
 from sqlalchemy import select, func
@@ -721,6 +722,85 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
     await session.commit()
 
+    # --- Pass 10: Auto-create stub billing records for remaining unmatched ---
+    # These are typically ERA payments for services that predate the current OCMRI
+    # spreadsheet. We have the payment info from the ERA — create a billing record
+    # so the money is tracked in the system.
+    still_unmatched = await session.execute(
+        select(ERAClaimLine).where(
+            ERAClaimLine.matched_billing_id.is_(None),
+            ERAClaimLine.patient_name_835.isnot(None),
+            ERAClaimLine.claim_id.isnot(None),
+        )
+    )
+    stub_claims = list(still_unmatched.scalars().all())
+    stats["pass_10_auto_created"] = 0
+
+    if stub_claims:
+        # Load ERA payments for payer name
+        stub_payment_ids = {c.era_payment_id for c in stub_claims}
+        stub_payments_result = await session.execute(
+            select(ERAPayment).where(ERAPayment.id.in_(stub_payment_ids))
+        )
+        stub_payments = {p.id: p for p in stub_payments_result.scalars().all()}
+
+        for claim in stub_claims:
+            era_payment = stub_payments.get(claim.era_payment_id)
+            cpt = claim.cpt_code
+            modality = CPT_TO_MODALITY.get(cpt, "UNKNOWN") if cpt else "UNKNOWN"
+
+            # Determine service date: ERA service date > payment date > today
+            svc_date = claim.service_date_835
+            if not svc_date and era_payment and era_payment.payment_date:
+                svc_date = era_payment.payment_date
+            if not svc_date:
+                svc_date = date.today()
+
+            # Decode topaz ID from claim_id
+            raw_claim_id = claim.claim_id.strip()
+            base_id, _ = _decode_topaz_id(raw_claim_id)
+            topaz_id_val = raw_claim_id
+
+            # Determine payment amount and denial status from claim status
+            paid = float(claim.paid_amount) if claim.paid_amount else 0
+            status_label = CLAIM_STATUS_MAP.get(claim.claim_status)
+
+            carrier = "UNKNOWN"
+            if era_payment and era_payment.payer_name:
+                carrier = era_payment.payer_name
+
+            stub_br = BillingRecord(
+                patient_name=claim.patient_name_835,
+                referring_doctor="UNKNOWN",
+                scan_type=cpt or "UNKNOWN",
+                gado_used=False,
+                insurance_carrier=carrier,
+                modality=modality,
+                service_date=svc_date,
+                total_payment=paid,
+                primary_payment=paid if status_label in ("PAID_PRIMARY", None) else 0,
+                secondary_payment=paid if status_label == "PAID_SECONDARY" else 0,
+                topaz_id=topaz_id_val,
+                era_claim_id=raw_claim_id,
+                import_source="ERA_AUTO",
+                denial_status=status_label if status_label == "DENIED" else None,
+                denial_reason_code=claim.cas_reason_code if status_label == "DENIED" else None,
+            )
+            session.add(stub_br)
+            await session.flush()  # Get the ID
+
+            claim.matched_billing_id = stub_br.id
+            claim.match_confidence = 1.0
+            stats["pass_10_auto_created"] += 1
+
+        await session.commit()
+        stats["unmatched"] -= stats["pass_10_auto_created"]
+
+        logger.info(
+            f"Auto-match Pass 10: created {stats['pass_10_auto_created']} stub billing "
+            f"records from unmatched ERA claims (pre-cutoff services)"
+        )
+
     stats["matched_total"] = stats["total"] - stats["unmatched"]
     stats["match_rate"] = round(
         (stats["matched_total"] / stats["total"] * 100) if stats["total"] > 0 else 0, 1
@@ -734,7 +814,7 @@ async def run_auto_match(session: AsyncSession) -> dict:
         f"P4c:{stats['pass_4c_wide_date']} P4d:{stats['pass_4d_very_wide_date']} "
         f"P5:{stats['pass_5_amount']} P6:{stats['pass_6_name_modality']} "
         f"P7:{stats['pass_7_name_amount']} P8:{stats['pass_8_name_only']} "
-        f"P9:{stats['pass_9_broad_fuzzy']}"
+        f"P9:{stats['pass_9_broad_fuzzy']} P10:{stats['pass_10_auto_created']}"
     )
     # Add diagnostics to help debug remaining unmatched claims
     stats["diagnostics"] = {
