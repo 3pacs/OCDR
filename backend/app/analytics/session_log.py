@@ -151,13 +151,14 @@ async def _get_key_metrics(db: AsyncSession) -> dict:
     today = date.today()
 
     # Denial counts by status
+    denial_status_col = func.coalesce(BillingRecord.denial_status, "DENIED").label("status")
     denial_q = (
         select(
-            func.coalesce(BillingRecord.denial_status, "DENIED").label("status"),
+            denial_status_col,
             func.count().label("count"),
         )
         .where(BillingRecord.total_payment == 0)
-        .group_by(func.coalesce(BillingRecord.denial_status, "DENIED"))
+        .group_by(denial_status_col)
     )
     denial_result = await db.execute(denial_q)
     denial_by_status = {r.status: r.count for r in denial_result}

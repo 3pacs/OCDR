@@ -8,7 +8,7 @@ Implements BR-03 (gado premium) and BR-02 (PSMA rate).
 
 import logging
 
-from sqlalchemy import select, func, case, and_, literal
+from sqlalchemy import select, func, case, and_, or_, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.billing import BillingRecord
@@ -135,10 +135,7 @@ async def get_underpayment_summary(session: AsyncSession) -> dict:
     result = await session.execute(
         select(BillingRecord).where(
             BillingRecord.total_payment > 0,
-            or_(
-                BillingRecord.denial_status.is_(None),
-                ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
-            ),
+            not_written_off(),
         )
     )
     records = result.scalars().all()

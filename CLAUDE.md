@@ -478,3 +478,50 @@ the database to confirm data matches and add verified entries here.
 4. Pipeline improvement suggestions include user status and notes
 5. Task action steps are detailed runbooks — use them to guide the user through tasks
 6. The `/api/tasks/sync-log` endpoint forces a TASKS.md regeneration
+7. Read `LLM_INSTRUCTIONS.md` for what's done, what's not, and how to continue
+8. Read `SETUP.md` for how to run the system locally without Docker
+
+---
+
+## What Was Done (Session 2026-03-18, part 4 — Code Review & Testing)
+
+### Commit 17: Bug fixes, sample data, test suite, documentation
+
+**Bugs Fixed (5 total):**
+- `denial_summary` 500 error — PostgreSQL `func.coalesce()` GROUP BY duplicate parameter
+  binding. Fixed by using a shared labeled column variable.
+- `underpayment_summary` 500 — Missing `or_` import + used inline filter instead of
+  `not_written_off()`. Fixed both.
+- `filing_deadline_alerts` 500 — Same issue as underpayments. Fixed with `not_written_off()`.
+- `session_report` 500 — Same coalesce GROUP BY bug in `session_log.py`. Fixed.
+- `reconciliation_dashboard` — Referenced `BillingRecord.billed_amount` which doesn't exist.
+  Replaced with `total_payment + extra_charges` expression.
+- Payer detail 404 for carriers with `/` (e.g., `M/M`) — path parameter couldn't handle
+  slashes. Changed to `{carrier:path}` in FastAPI route. Applied same fix to physician
+  and patient detail routes.
+
+**Sample Data Generator (`scripts/generate_sample_data.py`):**
+- Generates 200 realistic billing records with:
+  - 75 unique patients, 15 doctors, 15 payer codes, 6 modalities
+  - PSMA PET scans, gado contrast, written-off claims, research patients
+  - Hispanic compound names and name mismatches (tests G-01, G-04 gotchas)
+  - Topaz prefix-encoded IDs, zero-padded claim IDs (tests G-05, G-06)
+- Generates 6 ERA 835 files with 143 claim lines including:
+  - 5 payer groups + 10 intentionally unmatched phantom claims
+  - Service date offsets (tests G-08), name truncation (tests G-03)
+  - Denials with CARC codes, adjustments, secondary payments
+
+**API Test Suite (`scripts/test_all_endpoints.sh`):**
+- Tests all 38 API endpoints with status code checking
+- Result: 38 PASS, 0 FAIL
+
+**Documentation:**
+- `SETUP.md` — Complete setup guide (Docker + local), daily operations, troubleshooting
+- `LLM_INSTRUCTIONS.md` — Architecture truth, bugs fixed, what's TODO, how to add features
+
+**Files changed:**
+- Fixed: `denial_tracker.py`, `underpayment_detector.py`, `filing_deadlines.py`,
+  `session_log.py`, `revenue_routes.py`, `analytics_routes.py`
+- New: `scripts/generate_sample_data.py`, `scripts/test_all_endpoints.sh`,
+  `SETUP.md`, `LLM_INSTRUCTIONS.md`
+- Updated: `CLAUDE.md`

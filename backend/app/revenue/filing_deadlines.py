@@ -102,10 +102,7 @@ async def get_filing_deadline_alerts(session: AsyncSession) -> dict:
     result = await session.execute(
         select(BillingRecord).where(
             BillingRecord.total_payment == 0,
-            or_(
-                BillingRecord.denial_status.is_(None),
-                ~BillingRecord.denial_status.in_(TERMINAL_STATUSES),
-            ),
+            not_written_off(),
         )
     )
     records = result.scalars().all()

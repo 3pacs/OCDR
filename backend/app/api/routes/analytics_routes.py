@@ -274,7 +274,7 @@ async def payer_monitor(db: AsyncSession = Depends(get_db)):
     return {"carriers": carriers}
 
 
-@router.get("/payer-monitor/{carrier}")
+@router.get("/payer-monitor/{carrier:path}")
 async def payer_detail(carrier: str, db: AsyncSession = Depends(get_db)):
     """Monthly breakdown for a specific carrier."""
     result = await db.execute(
@@ -361,7 +361,7 @@ async def physician_rankings(
     return {"physicians": physicians, "total_revenue": total_rev}
 
 
-@router.get("/physicians/{name}")
+@router.get("/physicians/{name:path}")
 async def physician_detail(name: str, db: AsyncSession = Depends(get_db)):
     """Detailed breakdown for a specific physician."""
     # By modality
@@ -862,7 +862,7 @@ async def patient_search(
     return {"patients": patients, "total": len(patients)}
 
 
-@router.get("/patients/{patient_name}/detail")
+@router.get("/patients/{patient_name:path}/detail")
 async def patient_detail(patient_name: str, db: AsyncSession = Depends(get_db)):
     """Full billing history for a patient — every visit with payment status and why."""
     from backend.app.revenue.denial_actions import get_denial_detail

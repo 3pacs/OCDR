@@ -271,12 +271,16 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
     from backend.app.models.era import ERAClaimLine
     from backend.app.revenue.denial_actions import get_denial_detail, CARC_ACTION_MAP
 
+    # BillingRecord has no billed_amount column — use total_payment + extra_charges
+    # as a proxy for billed amount (actual billed is on ERAClaimLine.billed_amount)
+    billed_expr = (BillingRecord.total_payment + BillingRecord.extra_charges)
+
     # --- Denial action breakdown ---
     denial_result = await db.execute(
         select(
             BillingRecord.denial_reason_code,
             func.count(BillingRecord.id).label("count"),
-            func.sum(BillingRecord.billed_amount).label("total_billed"),
+            func.sum(billed_expr).label("total_billed"),
             func.sum(BillingRecord.total_payment).label("total_paid"),
         )
         .where(BillingRecord.denial_status.is_not(None))
@@ -318,7 +322,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
         select(
             BillingRecord.id,
             BillingRecord.patient_name,
-            BillingRecord.billed_amount,
+            billed_expr.label("billed_amount"),
             BillingRecord.total_payment,
             BillingRecord.denial_reason_code,
             BillingRecord.denial_status,
@@ -327,8 +331,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
         )
         .where(BillingRecord.denial_status.is_not(None))
         .where(not_written_off())
-        .where(BillingRecord.billed_amount.is_not(None))
-        .order_by(BillingRecord.billed_amount.desc())
+        .order_by(billed_expr.desc())
         .limit(20)
     )
     top_claims = []
@@ -360,7 +363,7 @@ async def reconciliation_dashboard(db: AsyncSession = Depends(get_db)):
         .where(not_written_off())
     )
     total_billed_denied = await db.execute(
-        select(func.sum(BillingRecord.billed_amount))
+        select(func.sum(billed_expr))
         .where(BillingRecord.denial_status.is_not(None))
         .where(not_written_off())
     )

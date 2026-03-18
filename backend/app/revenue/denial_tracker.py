@@ -197,13 +197,14 @@ async def get_denial_summary(db: AsyncSession) -> dict:
     total_denied = (await db.execute(total_q)).scalar() or 0
 
     # By status (active only)
+    status_col = func.coalesce(BillingRecord.denial_status, "DENIED").label("status")
     status_q = (
         select(
-            func.coalesce(BillingRecord.denial_status, "DENIED").label("status"),
+            status_col,
             func.count().label("count"),
         )
         .where(active_base)
-        .group_by(func.coalesce(BillingRecord.denial_status, "DENIED"))
+        .group_by(status_col)
     )
     status_result = await db.execute(status_q)
     by_status = [{"status": r.status, "count": r.count} for r in status_result]
