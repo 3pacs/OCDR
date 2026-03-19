@@ -61,11 +61,12 @@ def post_import_analysis():
     warning_30day = sum(1 for a in alerts_query if categorize_deadline(a.appeal_deadline, today) == 'WARNING_30DAY')
     filing_alerts = past_deadline + warning_30day
 
-    # Secondary follow-up (M/M and CALOPTIMA with primary but no secondary)
+    # Secondary follow-up (M/M with primary but no secondary)
+    # Note: CALOPTIMA/Medi-Cal patients generally don't have secondary
     secondary_missing = BillingRecord.query.filter(
         BillingRecord.primary_payment > 0,
         BillingRecord.secondary_payment == 0,
-        BillingRecord.insurance_carrier.in_(['M/M', 'CALOPTIMA']),
+        BillingRecord.insurance_carrier.in_(['M/M']),
     ).count()
 
     # PSMA PET count
@@ -148,7 +149,7 @@ def post_import_analysis():
     if secondary_missing > 0:
         recommendations.append(
             f'{secondary_missing:,} claims have primary payment but missing secondary '
-            f'(M/M and CALOPTIMA) — estimated recoverable revenue. '
+            f'(M/M) — estimated recoverable revenue. '
             f'Visit /api/secondary-followup'
         )
     if era_payments == 0:

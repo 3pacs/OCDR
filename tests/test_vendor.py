@@ -176,8 +176,9 @@ class TestAnalysisAPI:
         from datetime import date
 
         # Seed minimal data
-        db.session.add(Payer(code='M/M', display_name='Medicare', filing_deadline_days=365,
-                             expected_has_secondary=True))
+        if not Payer.query.filter_by(code='M/M').first():
+            db.session.add(Payer(code='M/M', display_name='Medicare', filing_deadline_days=365,
+                                 expected_has_secondary=True))
         if not FeeSchedule.query.filter_by(payer_code='DEFAULT', modality='CT').first():
             db.session.add(FeeSchedule(payer_code='DEFAULT', modality='CT',
                                         expected_rate=395.00, underpayment_threshold=0.80))

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Insights{% endblock %}
+{% block page_title %}Insights Log{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <p class="text-muted mb-0">AI-generated insights and recommendations from billing data analysis.</p>
+    <button class="btn btn-outline-primary btn-sm" onclick="runRecommendations()">
+        <i class="bi bi-stars"></i> Generate Recommendations
+    </button>
+</div>
+
+<!-- Filter -->
+<div class="d-flex gap-2 mb-3 flex-wrap">
+    <button class="btn btn-primary btn-sm filter-btn active" data-status="">All</button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-status="OPEN">Open</button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-status="IN_PROGRESS">In Progress</button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-status="RESOLVED">Resolved</button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-status="DISMISSED">Dismissed</button>
+</div>
+
+<div id="insights-list">
+    <div class="text-center py-4"><div class="spinner-border"></div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentStatus = "";
+
+async function loadInsights() {
+    const el = document.getElementById("insights-list");
+    try {
+        const url = currentStatus ? `/api/insights?status=${currentStatus}` : "/api/insights";
+        const data = await fetchJSON(url);
+        if (data.length === 0) {
+            el.innerHTML = '<div class="alert alert-info">No insights found.</div>';
+            return;
+        }
+        el.innerHTML = data.map(i => {
+            const sevColor = {CRITICAL:"danger",HIGH:"warning",MEDIUM:"info",LOW:"secondary"}[i.severity] || "secondary";
+            const statusColor = {OPEN:"secondary",ACKNOWLEDGED:"info",IN_PROGRESS:"primary",RESOLVED:"success",DISMISSED:"dark"}[i.status] || "secondary";
+            return `<div class="card border-0 shadow-sm mb-2 border-start border-3 border-${sevColor}">
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="badge bg-${sevColor} me-1">${i.severity}</span>
+                            <span class="badge bg-${statusColor} me-1">${i.status}</span>
+                            <span class="badge bg-dark me-2">${i.category}</span>
+                            <span class="small">${i.title}</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            ${i.estimated_impact ? `<span class="text-success fw-bold small">$${(i.estimated_impact/1000).toFixed(0)}K</span>` : ""}
+                            ${i.affected_count ? `<span class="text-muted small">${i.affected_count} claims</span>` : ""}
+                            <select class="form-select form-select-sm" style="width:auto;font-size:0.75rem" onchange="updateStatus(${i.id}, this.value)">
+                                ${["OPEN","ACKNOWLEDGED","IN_PROGRESS","RESOLVED","DISMISSED"].map(s =>
+                                    `<option value="${s}" ${s===i.status?"selected":""}>${s.replace("_"," ")}</option>`
+                                ).join("")}
+                            </select>
+                        </div>
+                    </div>
+                    ${i.resolution_notes ? `<div class="small text-muted mt-1"><em>${i.resolution_notes}</em></div>` : ""}
+                </div>
+            </div>`;
+        }).join("");
+    } catch (err) {
+        el.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+    }
+}
+
+async function updateStatus(id, status) {
+    try {
+        await fetchJSON(`/api/insights/${id}/status`, {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({status}),
+        });
+        loadInsights();
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+async function runRecommendations() {
+    try {
+        const data = await fetchJSON("/api/recommendations");
+        alert(`Generated ${data.total} recommendations, ${data.new_persisted} new.`);
+        loadInsights();
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach(b => {
+            b.classList.remove("btn-primary","active");
+            b.classList.add("btn-outline-secondary");
+        });
+        btn.classList.remove("btn-outline-secondary");
+        btn.classList.add("btn-primary","active");
+        currentStatus = btn.dataset.status;
+        loadInsights();
+    });
+});
+
+loadInsights();
+</script>
+{% endblock %}

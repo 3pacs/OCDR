@@ -2,8 +2,8 @@
    OCDR Dashboard — Shared JS utilities
    ═══════════════════════════════════════════════════════════════ */
 
-async function fetchJSON(url) {
-    const resp = await fetch(url);
+async function fetchJSON(url, options) {
+    const resp = await fetch(url, options);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${url}`);
     return resp.json();
 }

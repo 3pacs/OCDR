@@ -628,3 +628,150 @@ class OcrCorrection(db.Model):
     __table_args__ = (
         db.UniqueConstraint("ocr_text", "field_type", name="uq_ocr_correction"),
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Insight Log (AI-assisted session continuity)
+# ══════════════════════════════════════════════════════════════════
+
+class InsightLog(db.Model):
+    """Persistent log of system-generated insights and recommendations."""
+    __tablename__ = "insight_logs"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+
+    # Classification
+    category = db.Column(db.String(50), nullable=False, index=True)
+    severity = db.Column(db.String(20), nullable=False, index=True)
+
+    # Content
+    title = db.Column(db.String(500), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    recommendation = db.Column(db.Text, nullable=False)
+
+    # Quantification
+    estimated_impact = db.Column(db.Numeric(12, 2), nullable=True)
+    affected_count = db.Column(db.Integer, nullable=True)
+
+    # Context
+    entity_type = db.Column(db.String(50), nullable=True, index=True)
+    entity_id = db.Column(db.String(200), nullable=True, index=True)
+
+    # Structured data
+    data = db.Column(db.JSON, nullable=True)
+
+    # Lifecycle
+    status = db.Column(db.String(20), default="OPEN", index=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolution_notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Business Tasks (recurring operational tasks)
+# ══════════════════════════════════════════════════════════════════
+
+class BusinessTask(db.Model):
+    """A recurring task template (e.g., 'Import patient data' daily)."""
+    __tablename__ = "business_tasks"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(50), nullable=False, index=True)
+    frequency = db.Column(db.String(20), nullable=False, index=True)
+    schedule_day = db.Column(db.Integer, nullable=True)
+    priority = db.Column(db.Integer, default=3)
+    estimated_minutes = db.Column(db.Integer, nullable=True)
+
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+
+    action_steps = db.Column(db.Text, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    tags = db.Column(db.JSON, nullable=True)
+
+
+class TaskInstance(db.Model):
+    """A specific occurrence of a task on a given date."""
+    __tablename__ = "task_instances"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    task_id = db.Column(db.Integer, nullable=False, index=True)
+    due_date = db.Column(db.Date, nullable=False, index=True)
+
+    status = db.Column(db.String(20), default="PENDING", index=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    completed_by = db.Column(db.String(100), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Patient (consolidated demographics from crosswalk imports)
+# ══════════════════════════════════════════════════════════════════
+
+class Patient(db.Model):
+    """Consolidated patient demographics with dual identifiers."""
+    __tablename__ = "patients"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+
+    jacket_number = db.Column(db.String(50), nullable=True, index=True)
+    topaz_number = db.Column(db.String(50), nullable=True, index=True)
+
+    last_name = db.Column(db.String(100), nullable=True, index=True)
+    first_name = db.Column(db.String(100), nullable=True, index=True)
+    date_of_birth = db.Column(db.Date, nullable=True)
+    phone = db.Column(db.String(20), nullable=True)
+    city = db.Column(db.String(100), nullable=True)
+    state = db.Column(db.String(10), nullable=True)
+    zip_code = db.Column(db.String(15), nullable=True)
+    insurance_number = db.Column(db.String(50), nullable=True)
+
+    is_research = db.Column(db.Boolean, default=False)
+    researcher = db.Column(db.String(200), nullable=True, index=True)
+
+    custom_data = db.Column(db.JSON, nullable=True)
+
+    crosswalk_import_id = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        db.Index("ix_patient_jacket_topaz", "jacket_number", "topaz_number", unique=True),
+        db.Index("ix_patient_name", "last_name", "first_name"),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Server Source (external .NET server sync configuration)
+# ══════════════════════════════════════════════════════════════════
+
+class ServerSource(db.Model):
+    """Stores .NET server file locations for autonomous sync."""
+    __tablename__ = "server_sources"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+
+    name = db.Column(db.String(200), nullable=False)
+    directory_path = db.Column(db.String(1000), nullable=False)
+    field_mapping = db.Column(db.JSON, nullable=True)
+
+    enabled = db.Column(db.Boolean, default=True)
+    poll_interval_minutes = db.Column(db.Integer, default=60)
+
+    file_states = db.Column(db.JSON, nullable=True)
+
+    last_sync_at = db.Column(db.DateTime, nullable=True)
+    last_sync_result = db.Column(db.JSON, nullable=True)
+    total_files_processed = db.Column(db.Integer, default=0)
+    total_records_imported = db.Column(db.Integer, default=0)
+
+    status = db.Column(db.String(20), default="PENDING_SETUP")
+    last_error = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=_utcnow)
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)

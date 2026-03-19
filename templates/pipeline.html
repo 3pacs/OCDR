@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Improvements{% endblock %}
+{% block page_title %}Pipeline Improvements{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <p class="text-muted mb-0">Data-driven suggestions based on your billing patterns vs. industry best practices. Notes are saved to TASKS.md for LLM access.</p>
+        <small class="text-muted" id="last-analyzed"></small>
+    </div>
+    <button class="btn btn-outline-primary btn-sm" onclick="loadPipeline()" id="refresh-btn">
+        <i class="bi bi-arrow-clockwise"></i> Refresh Analysis
+    </button>
+</div>
+
+<!-- KPI Cards -->
+<div class="row g-3 mb-4" id="kpi-row">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Total Impact</div>
+            <div class="kpi-value" id="kpi-impact">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Suggestions</div>
+            <div class="kpi-value" id="kpi-total">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-red">
+            <div class="kpi-label">Critical / High</div>
+            <div class="kpi-value" id="kpi-urgent">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Quick Wins</div>
+            <div class="kpi-value" id="kpi-quickwins">--</div>
+        </div>
+    </div>
+</div>
+
+<!-- Filter Buttons -->
+<div class="d-flex gap-2 mb-3 flex-wrap" id="filter-bar">
+    <button class="btn btn-primary btn-sm filter-btn active" data-filter="all">All <span class="badge bg-light text-dark" id="cnt-all">0</span></button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="CRITICAL">Critical <span class="badge bg-light text-dark" id="cnt-critical">0</span></button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="HIGH">High <span class="badge bg-light text-dark" id="cnt-high">0</span></button>
+    <button class="btn btn-outline-secondary btn-sm filter-btn" data-filter="QUICK_WIN">Quick Wins <span class="badge bg-light text-dark" id="cnt-quickwin">0</span></button>
+</div>
+
+<div class="row g-3">
+    <!-- Suggestions List -->
+    <div class="col-md-9">
+        <div id="suggestions-list">
+            <div class="text-center py-5">
+                <div class="spinner-border" role="status"></div>
+                <div class="mt-2">Analyzing billing pipeline...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="col-md-3">
+        <!-- Benchmarks -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Industry Benchmarks</h6>
+                <table class="table table-sm small mb-0" id="benchmark-table">
+                    <thead><tr><th>Metric</th><th>Target</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- How It Works -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">How This Works</h6>
+                <ul class="small mb-0">
+                    <li>Analyzes your billing data</li>
+                    <li>Compares against MGMA/HFMA/RBMA benchmarks</li>
+                    <li>Identifies revenue leaks and compliance gaps</li>
+                    <li>Prioritizes by financial impact</li>
+                    <li>Tags quick wins vs. major projects</li>
+                    <li><strong>Your notes sync to TASKS.md</strong> for AI access</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Key Sources -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Key Sources</h6>
+                <ul class="small mb-0">
+                    <li>ANSI X12 835/837 standards</li>
+                    <li>CMS CARC/RARC code database</li>
+                    <li>MGMA radiology benchmarks</li>
+                    <li>HFMA denial management guide</li>
+                    <li>RBMA billing best practices</li>
+                    <li>ACR coding standards</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SEV_COLORS = {CRITICAL:"danger", HIGH:"warning", MEDIUM:"info", LOW:"secondary"};
+const EFFORT_LABELS = {QUICK_WIN:{label:"Quick Win",color:"success"}, MODERATE:{label:"Moderate",color:"warning"}, MAJOR_PROJECT:{label:"Major Project",color:"danger"}};
+const CAT_LABELS = {REVENUE_LEAK:"Revenue Leak", COMPLIANCE:"Compliance", EFFICIENCY:"Efficiency", DATA_QUALITY:"Data Quality", BEST_PRACTICE:"Best Practice"};
+const STATUS_OPTIONS = ["OPEN","ACKNOWLEDGED","IN_PROGRESS","RESOLVED","DISMISSED"];
+const BENCHMARK_ROWS = [
+    {key:"denial_rate_target", label:"Denial Rate", unit:"%"},
+    {key:"match_rate_target", label:"ERA Match Rate", unit:"%"},
+    {key:"crosswalk_coverage", label:"ID Crosswalk Coverage", unit:"%"},
+    {key:"ar_days_target", label:"A/R Days", unit:" days"},
+    {key:"days_to_submit", label:"Days to Submit", unit:" days"},
+    {key:"secondary_capture_rate", label:"Secondary Capture", unit:"%"},
+];
+
+let allSuggestions = [];
+let currentFilter = "all";
+
+function fmt$(val) {
+    if (!val) return "$0";
+    if (val >= 1e6) return `$${(val/1e6).toFixed(1)}M`;
+    if (val >= 1e3) return `$${(val/1e3).toFixed(0)}K`;
+    return `$${val.toFixed(0)}`;
+}
+
+function renderSuggestion(s, i) {
+    const sev = SEV_COLORS[s.severity] || "secondary";
+    const effort = EFFORT_LABELS[s.effort] || {};
+    const cat = CAT_LABELS[s.subcategory] || s.subcategory || "";
+    const status = s.user_status || "OPEN";
+    const statusColor = {OPEN:"secondary",ACKNOWLEDGED:"info",IN_PROGRESS:"primary",RESOLVED:"success",DISMISSED:"dark"}[status] || "secondary";
+    const notes = s.user_notes || "";
+
+    const statusOpts = STATUS_OPTIONS.map(o =>
+        `<option value="${o}" ${o===status?"selected":""}>${o.replace("_"," ")}</option>`
+    ).join("");
+
+    let progressBar = "";
+    if (s.benchmark != null && s.current_value != null) {
+        const pct = Math.min(s.current_value, 100);
+        const variant = s.current_value >= s.benchmark ? "success" : s.current_value >= s.benchmark * 0.7 ? "warning" : "danger";
+        progressBar = `<div class="mt-2 mb-2">
+            <div class="d-flex justify-content-between small mb-1"><span>Current: ${s.current_value}%</span><span>Target: ${s.benchmark}%</span></div>
+            <div class="progress"><div class="progress-bar bg-${variant}" style="width:${pct}%">${s.current_value}%</div></div>
+        </div>`;
+    }
+
+    return `<div class="card border-0 shadow-sm mb-3 border-start border-4 border-${sev}" id="suggestion-${i}">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="fw-bold">${i+1}.</span>
+                    <span class="badge bg-${sev}">${s.severity}</span>
+                    <span class="badge bg-secondary">${cat}</span>
+                    ${effort.label ? `<span class="badge bg-${effort.color}">${effort.label}</span>` : ""}
+                    <span class="badge bg-${statusColor}">${status.replace("_"," ")}</span>
+                    ${s.entity_id ? `<span class="badge border">${s.entity_id}</span>` : ""}
+                </div>
+                <div class="text-end">
+                    ${s.estimated_impact > 0 ? `<div class="fs-5 fw-bold text-success">${fmt$(s.estimated_impact)}</div>` : ""}
+                    ${s.affected_count > 0 ? `<small class="text-muted">${s.affected_count.toLocaleString()} claims</small>` : ""}
+                </div>
+            </div>
+            <h6 class="mb-2">${s.title}</h6>
+            <a href="#" class="small text-muted" onclick="toggleDetail(${i}); return false;" id="toggle-${i}">Show details</a>
+            <div id="detail-${i}" class="d-none mt-2">
+                <p class="small mb-2">${s.description || ""}</p>
+                <div class="bg-dark bg-opacity-25 rounded p-2 mb-2">
+                    <strong class="small">Recommendation:</strong>
+                    <pre class="small mb-0 mt-1" style="white-space:pre-wrap;font-family:inherit;">${s.recommendation || ""}</pre>
+                </div>
+                ${s.best_practice ? `<div class="small text-muted mb-2"><strong>Industry reference:</strong> ${s.best_practice}</div>` : ""}
+                ${progressBar}
+                <div class="border-top pt-2 mt-2">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <strong class="small">Your notes:</strong>
+                        <select class="form-select form-select-sm" style="width:auto" id="status-${i}">${statusOpts}</select>
+                    </div>
+                    <textarea class="form-control form-control-sm mb-2" rows="2" id="notes-${i}" placeholder="Add notes (saved to TASKS.md for LLM access)">${notes}</textarea>
+                    <button class="btn btn-outline-primary btn-sm" onclick="saveNote(${i})">Save Note</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+function toggleDetail(i) {
+    const el = document.getElementById(`detail-${i}`);
+    const btn = document.getElementById(`toggle-${i}`);
+    if (el.classList.contains("d-none")) {
+        el.classList.remove("d-none");
+        btn.textContent = "Collapse";
+    } else {
+        el.classList.add("d-none");
+        btn.textContent = "Show details";
+    }
+}
+
+async function saveNote(i) {
+    const s = allSuggestions[i];
+    const status = document.getElementById(`status-${i}`).value;
+    const notes = document.getElementById(`notes-${i}`).value;
+    try {
+        await fetchJSON("/api/pipeline-suggestions/note", {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({title: s.title, status, notes}),
+        });
+        s.user_status = status;
+        s.user_notes = notes;
+        renderAll();
+    } catch (err) {
+        alert("Failed to save: " + err.message);
+    }
+}
+
+function renderAll() {
+    const filtered = currentFilter === "all" ? allSuggestions
+        : currentFilter === "QUICK_WIN" ? allSuggestions.filter(s => s.effort === "QUICK_WIN")
+        : allSuggestions.filter(s => s.severity === currentFilter);
+
+    const container = document.getElementById("suggestions-list");
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="alert alert-success">No suggestions in this category. Your pipeline is looking good!</div>';
+    } else {
+        container.innerHTML = filtered.map((s, i) => renderSuggestion(s, allSuggestions.indexOf(s))).join("");
+    }
+}
+
+async function loadPipeline() {
+    document.getElementById("refresh-btn").disabled = true;
+    document.getElementById("suggestions-list").innerHTML = '<div class="text-center py-5"><div class="spinner-border"></div><div class="mt-2">Analyzing...</div></div>';
+
+    try {
+        const data = await fetchJSON("/api/pipeline-suggestions");
+        allSuggestions = data.suggestions || [];
+
+        document.getElementById("kpi-impact").textContent = fmt$(data.total_impact);
+        document.getElementById("kpi-total").textContent = data.total;
+        document.getElementById("kpi-urgent").textContent = (data.by_severity?.CRITICAL || 0) + (data.by_severity?.HIGH || 0);
+        document.getElementById("kpi-quickwins").textContent = allSuggestions.filter(s => s.effort === "QUICK_WIN").length;
+        document.getElementById("last-analyzed").textContent = "Last analyzed: " + data.generated_at;
+
+        document.getElementById("cnt-all").textContent = allSuggestions.length;
+        document.getElementById("cnt-critical").textContent = data.by_severity?.CRITICAL || 0;
+        document.getElementById("cnt-high").textContent = data.by_severity?.HIGH || 0;
+        document.getElementById("cnt-quickwin").textContent = allSuggestions.filter(s => s.effort === "QUICK_WIN").length;
+
+        // Benchmarks
+        if (data.benchmarks) {
+            const tbody = document.querySelector("#benchmark-table tbody");
+            tbody.innerHTML = BENCHMARK_ROWS.map(r =>
+                data.benchmarks[r.key] != null ? `<tr><td class="fw-bold">${r.label}</td><td>${data.benchmarks[r.key]}${r.unit}</td></tr>` : ""
+            ).join("");
+        }
+
+        renderAll();
+    } catch (err) {
+        document.getElementById("suggestions-list").innerHTML = `<div class="alert alert-warning">Failed to load: ${err.message}</div>`;
+    }
+    document.getElementById("refresh-btn").disabled = false;
+}
+
+// Filter button handlers
+document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach(b => {
+            b.classList.remove("btn-primary","active");
+            b.classList.add("btn-outline-secondary");
+        });
+        btn.classList.remove("btn-outline-secondary");
+        btn.classList.add("btn-primary","active");
+        currentFilter = btn.dataset.filter;
+        renderAll();
+    });
+});
+
+loadPipeline();
+</script>
+{% endblock %}

@@ -7,6 +7,7 @@ payment computation, and deduplication logic.
 from datetime import datetime, date, timedelta
 
 from app.models import db, BillingRecord
+from app.import_engine.carrier_normalization import normalize_era_payer
 
 
 # ── Excel serial date epoch ─────────────────────────────────────
@@ -30,7 +31,25 @@ CARRIER_NORMALIZE = {
     "SELFPAY": "SELF PAY", "SELF-PAY": "SELF PAY",
     "SELF PAY": "SELF PAY", "CASH": "SELF PAY",
     "MEDICARE": "M/M", "MEDICAID": "M/M", "MEDI-CAL": "M/M",
-    "MEDI CAL": "M/M",
+    "MEDI CAL": "M/M", "NORIDIAN": "M/M",
+    # CalOptima variants
+    "CALOPTIMA": "CALOPTIMA", "CAL OPTIMA": "CALOPTIMA",
+    "CA MEDI-CAL": "CALOPTIMA", "LA CARE": "CALOPTIMA",
+    "MOLINA": "CALOPTIMA",
+    # Commercial insurance → INS
+    "BLUE SHIELD": "INS", "BLUE CROSS": "INS",
+    "ANTHEM": "INS", "CIGNA": "INS", "AARP": "INS",
+    "UHC": "INS", "UNITEDHEALTHCARE": "INS", "UNITED HEALTHCARE": "INS",
+    "CALPERS": "INS", "UMR": "INS", "OXFORD": "INS",
+    "KEENAN": "INS", "AMVICARE": "INS", "NAVIGERE": "INS",
+    "COLONIAL PENN": "INS", "GOLDEN RULE": "INS",
+    "TRANSAMERICA": "INS",
+    # Physician groups → FAMILY
+    "PROSPECT": "FAMILY", "UNITED CARE": "FAMILY",
+    # One Call
+    "ONE CALL": "ONE CALL",
+    # Workers Comp
+    "WORKERS COMP": "W/C", "WORK COMP": "W/C",
 }
 
 # ── Date validation bounds ──────────────────────────────────────
@@ -108,11 +127,25 @@ def normalize_modality(val):
 
 
 def normalize_carrier(val):
-    """Normalize insurance carrier name."""
+    """Normalize insurance carrier name.
+
+    First checks CARRIER_NORMALIZE for short billing-import names,
+    then falls back to normalize_era_payer for longer ERA 835 payer names.
+    """
     if not val:
         return "UNKNOWN"
     upper = str(val).strip().upper()
-    return CARRIER_NORMALIZE.get(upper, str(val).strip().upper())
+    # 1. Exact match on short billing-import names
+    result = CARRIER_NORMALIZE.get(upper)
+    if result:
+        return result
+    # 2. Fall back to ERA payer normalization (handles long payer names
+    #    and substring matching)
+    era_result = normalize_era_payer(upper)
+    if era_result != "UNKNOWN":
+        return era_result
+    # 3. No match — return uppercased input as-is
+    return upper
 
 
 def detect_psma(description, scan_type=None):

@@ -195,10 +195,19 @@ class TestNormalizeCarrier(unittest.TestCase):
         self.assertEqual(normalize_carrier(""), "UNKNOWN")
 
     def test_other_passthrough(self):
-        self.assertEqual(normalize_carrier("BLUE CROSS"), "BLUE CROSS")
+        self.assertEqual(normalize_carrier("SOME UNKNOWN CARRIER"), "SOME UNKNOWN CARRIER")
 
     def test_case_preserved_for_unknown(self):
-        self.assertEqual(normalize_carrier("Cigna"), "CIGNA")
+        self.assertEqual(normalize_carrier("Acme Health"), "ACME HEALTH")
+
+    def test_commercial_insurance_maps_to_ins(self):
+        self.assertEqual(normalize_carrier("BLUE CROSS"), "INS")
+        self.assertEqual(normalize_carrier("Cigna"), "INS")
+        self.assertEqual(normalize_carrier("ANTHEM"), "INS")
+
+    def test_era_payer_fallback(self):
+        self.assertEqual(normalize_carrier("CALIFORNIA PHYSICIANS SERVICE DBA BLUE SHIELD CA"), "INS")
+        self.assertEqual(normalize_carrier("PROSPECT MEDICAL SYSTEMS"), "FAMILY")
 
 
 class TestDetectPsma(unittest.TestCase):

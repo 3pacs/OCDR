@@ -156,6 +156,24 @@ def aging_page():
     return render_template("aging.html")
 
 
+@ui_bp.route("/pipeline")
+@auth_required
+def pipeline_page():
+    return render_template("pipeline.html")
+
+
+@ui_bp.route("/tasks")
+@auth_required
+def tasks_page():
+    return render_template("tasks.html")
+
+
+@ui_bp.route("/insights")
+@auth_required
+def insights_page():
+    return render_template("insights.html")
+
+
 @ui_bp.route("/login", methods=["GET", "POST"])
 def login():
     from flask_login import login_user, current_user

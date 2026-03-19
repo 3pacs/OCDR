@@ -97,6 +97,7 @@ def create_app(config_class=Config, **config_overrides):
         _backfill_era_payments()
         _backfill_cpt_codes()
         _seed_lookup_tables()
+        _seed_payers()
         _seed_default_fee_schedule()
         _build_cpt_fee_schedule()
         _ensure_default_admin()
@@ -392,6 +393,37 @@ def _build_cpt_fee_schedule():
         db.session.rollback()
 
 
+def _seed_payers():
+    """Seed the payers table with all known carrier codes."""
+    from app.models import Payer
+    if Payer.query.first() is not None:
+        return
+
+    payers = [
+        {"code": "M/M", "display_name": "Medicare/Medicaid", "filing_deadline_days": 365, "expected_has_secondary": True, "alert_threshold_pct": 0.25},
+        {"code": "CALOPTIMA", "display_name": "CalOptima Managed Medicaid", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "FAMILY", "display_name": "Family Health Plan", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "INS", "display_name": "Commercial Insurance (General)", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "VU PHAN", "display_name": "Vu Phan Physician Group", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "W/C", "display_name": "Workers Compensation", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "BEACH", "display_name": "Beach Clinical Labs", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "ONE CALL", "display_name": "One Call Care Management", "filing_deadline_days": 90, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+        {"code": "OC ADV", "display_name": "One Call Advanced", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "SELF PAY", "display_name": "Self Pay / Uninsured", "filing_deadline_days": 9999, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "STATE", "display_name": "State Programs", "filing_deadline_days": 365, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "COMP", "display_name": "Complimentary / Charity", "filing_deadline_days": 9999, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+        {"code": "X", "display_name": "Unknown / Unclassified", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+        {"code": "GH", "display_name": "Group Health", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "JHANGIANI", "display_name": "Jhangiani Physician Group", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "C2C", "display_name": "Coast to Coast Medical", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+        {"code": "RESEARCH", "display_name": "Research / Clinical Trial", "filing_deadline_days": 9999, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+        {"code": "UNKNOWN", "display_name": "Unknown / Unmapped Payer", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+    ]
+    for p in payers:
+        db.session.add(Payer(**p))
+    db.session.commit()
+
+
 def _seed_lookup_tables():
     """Populate lookup tables with initial data if empty."""
     if Modality.query.first() is not None:
@@ -447,10 +479,13 @@ def _seed_default_fee_schedule():
     """
     from app.models import FeeSchedule
     defaults = {
-        'CT': 262.0, 'SR/CT': 261.0, 'HMRI': 360.0, 'MR': 360.0,
+        'CT': 300.0, 'HMRI': 750.0, 'PET': 2500.0, 'BONE': 1800.0,
+        'OPEN': 750.0, 'DX': 100.0, 'US': 200.0, 'MAMMO': 150.0,
+        'DEXA': 75.0, 'FLUORO': 125.0, 'PET_PSMA': 8046.0,
+        # Legacy combined modality codes (from historical data)
+        'SR/CT': 261.0, 'MR': 360.0,
         'CT/SR/PT/SC': 2450.0, 'CT/SR': 282.0, 'CT/SR/PT': 2545.0,
-        'CT/PT/SR/SC': 2266.0, 'DX': 250.0, 'CT/PT/SR': 2683.0,
-        'SR/CT/SC': 217.0, 'PET': 961.0, 'BONE': 500.0,
+        'CT/PT/SR/SC': 2266.0, 'CT/PT/SR': 2683.0, 'SR/CT/SC': 217.0,
     }
     added = 0
     for mod, rate in defaults.items():

@@ -50,9 +50,11 @@ class TestAPIEndpoints(unittest.TestCase):
 
     def _seed_data(self):
         """Seed test data."""
-        # Payers
-        db.session.add(Payer(code="M/M", display_name="Medicare", filing_deadline_days=365))
-        db.session.add(Payer(code="INS", display_name="Insurance", filing_deadline_days=180, expected_has_secondary=True))
+        # Payers (skip if already seeded)
+        if not Payer.query.filter_by(code="M/M").first():
+            db.session.add(Payer(code="M/M", display_name="Medicare", filing_deadline_days=365))
+        if not Payer.query.filter_by(code="INS").first():
+            db.session.add(Payer(code="INS", display_name="Insurance", filing_deadline_days=180, expected_has_secondary=True))
 
         # Fee schedule (skip if already seeded by _seed_default_fee_schedule)
         if not FeeSchedule.query.filter_by(payer_code="DEFAULT", modality="HMRI").first():

@@ -3338,3 +3338,361 @@ def _get_disk_info():
         }
     except Exception:
         return None
+
+
+# ── Pipeline Improvement Suggestions ──────────────────────────────────
+
+@api_bp.route("/pipeline-suggestions")
+def pipeline_suggestions():
+    """Generate pipeline improvement suggestions from billing data analysis."""
+    from app.analytics.pipeline_suggestions import (
+        generate_pipeline_suggestions,
+        persist_pipeline_suggestions,
+        BENCHMARKS,
+    )
+    from app.models import InsightLog
+
+    suggestions = generate_pipeline_suggestions()
+    saved = persist_pipeline_suggestions(suggestions)
+
+    by_severity = {}
+    by_category = {}
+    total_impact = 0
+    for s in suggestions:
+        sev = s.get("severity", "LOW")
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+        cat = s.get("subcategory", "GENERAL")
+        by_category[cat] = by_category.get(cat, 0) + 1
+        total_impact += abs(s.get("estimated_impact") or 0)
+
+    # Fetch user notes from persisted insights
+    notes_map = {
+        row.title: {"status": row.status, "notes": row.resolution_notes}
+        for row in InsightLog.query.filter(InsightLog.category.like("PIPELINE_%")).all()
+    }
+    for s in suggestions:
+        info = notes_map.get(s["title"], {})
+        s["user_status"] = info.get("status", "OPEN")
+        s["user_notes"] = info.get("notes")
+
+    return jsonify({
+        "suggestions": suggestions,
+        "total": len(suggestions),
+        "total_impact": round(total_impact, 2),
+        "new_persisted": saved,
+        "by_severity": by_severity,
+        "by_category": by_category,
+        "benchmarks": BENCHMARKS,
+        "generated_at": date.today().isoformat(),
+    })
+
+
+@api_bp.route("/pipeline-suggestions/note", methods=["PATCH"])
+def update_pipeline_note():
+    """Add a note or update status on a pipeline suggestion."""
+    from app.models import InsightLog
+    data = request.get_json()
+    title = data.get("title")
+    status = data.get("status")
+    notes = data.get("notes")
+
+    log = InsightLog.query.filter(
+        InsightLog.category.like("PIPELINE_%"),
+        InsightLog.title == title,
+    ).first()
+    if not log:
+        return jsonify({"error": "Pipeline suggestion not found"}), 404
+
+    if status is not None:
+        log.status = status
+        if status == "RESOLVED":
+            log.resolved_at = datetime.now(timezone.utc)
+    if notes is not None:
+        log.resolution_notes = notes
+
+    db.session.commit()
+
+    # Regenerate TASKS.md
+    try:
+        from app.tasks.task_log_writer import write_tasks_md
+        write_tasks_md()
+    except Exception:
+        pass
+
+    return jsonify({"title": log.title, "status": log.status, "notes": log.resolution_notes})
+
+
+@api_bp.route("/pipeline-notes")
+def list_pipeline_notes():
+    """Get all pipeline suggestion notes/statuses."""
+    from app.models import InsightLog
+    logs = InsightLog.query.filter(
+        InsightLog.category.like("PIPELINE_%")
+    ).order_by(InsightLog.severity, InsightLog.title).all()
+
+    return jsonify([{
+        "id": log.id,
+        "title": log.title,
+        "category": log.category,
+        "severity": log.severity,
+        "status": log.status,
+        "notes": log.resolution_notes,
+        "estimated_impact": float(log.estimated_impact) if log.estimated_impact else None,
+        "created_at": str(log.created_at),
+    } for log in logs])
+
+
+@api_bp.route("/daily-review")
+def daily_review():
+    """Run AI daily system review."""
+    from app.analytics.daily_review import run_daily_review
+    findings = run_daily_review()
+    try:
+        from app.tasks.task_log_writer import write_tasks_md
+        write_tasks_md()
+    except Exception:
+        pass
+    return jsonify(findings)
+
+
+@api_bp.route("/auto-improve", methods=["POST"])
+def auto_improve():
+    """Run auto-improvement routines."""
+    from app.analytics.auto_improvements import run_auto_improvements
+    results = run_auto_improvements()
+    return jsonify(results)
+
+
+@api_bp.route("/recommendations")
+def recommendations():
+    """Generate recommendations from billing data analysis."""
+    from app.analytics.recommendations import generate_all_recommendations, persist_recommendations
+    recs = generate_all_recommendations()
+    saved = persist_recommendations(recs)
+    return jsonify({"recommendations": recs, "total": len(recs), "new_persisted": saved})
+
+
+@api_bp.route("/session-report")
+def session_report():
+    """Generate session report for AI continuity."""
+    from app.analytics.session_log import generate_session_report
+    return jsonify(generate_session_report())
+
+
+@api_bp.route("/insights")
+def insights_list():
+    """List all insight log entries."""
+    from app.models import InsightLog
+    status_filter = request.args.get("status")
+    category_filter = request.args.get("category")
+
+    q = InsightLog.query
+    if status_filter:
+        q = q.filter(InsightLog.status == status_filter.upper())
+    if category_filter:
+        q = q.filter(InsightLog.category.like(f"{category_filter.upper()}%"))
+
+    logs = q.order_by(InsightLog.created_at.desc()).limit(100).all()
+    return jsonify([{
+        "id": log.id, "category": log.category, "severity": log.severity,
+        "title": log.title, "description": log.description,
+        "recommendation": log.recommendation, "status": log.status,
+        "estimated_impact": float(log.estimated_impact) if log.estimated_impact else None,
+        "affected_count": log.affected_count,
+        "resolution_notes": log.resolution_notes,
+        "created_at": str(log.created_at),
+    } for log in logs])
+
+
+@api_bp.route("/insights/<int:insight_id>/status", methods=["PATCH"])
+def update_insight(insight_id):
+    """Update an insight's status."""
+    from app.analytics.session_log import update_insight_status
+    data = request.get_json()
+    result = update_insight_status(insight_id, data.get("status", ""), data.get("notes"))
+    if "error" in result:
+        return jsonify(result), 400 if "Status must be" in result["error"] else 404
+    return jsonify(result)
+
+
+# ── Business Tasks ────────────────────────────────────────────────────
+
+def _sync_tasks_md():
+    """Best-effort regeneration of TASKS.md after any mutation."""
+    try:
+        from app.tasks.task_log_writer import write_tasks_md
+        write_tasks_md()
+    except Exception:
+        pass
+
+
+@api_bp.route("/tasks/templates")
+def list_task_templates():
+    """List all business task templates."""
+    from app.models import BusinessTask
+    tasks = BusinessTask.query.order_by(BusinessTask.frequency, BusinessTask.priority).all()
+    return jsonify([{
+        "id": t.id, "title": t.title, "description": t.description,
+        "category": t.category, "frequency": t.frequency,
+        "schedule_day": t.schedule_day, "priority": t.priority,
+        "estimated_minutes": t.estimated_minutes, "is_active": t.is_active,
+        "notes": t.notes, "action_steps": t.action_steps,
+    } for t in tasks])
+
+
+@api_bp.route("/tasks/templates", methods=["POST"])
+def create_task_template():
+    """Create a new task template."""
+    from app.models import BusinessTask
+    data = request.get_json()
+    task = BusinessTask(
+        title=data["title"], description=data.get("description"),
+        category=data["category"], frequency=data["frequency"],
+        schedule_day=data.get("schedule_day"), priority=data.get("priority", 3),
+        estimated_minutes=data.get("estimated_minutes"),
+        notes=data.get("notes"), action_steps=data.get("action_steps"),
+    )
+    db.session.add(task)
+    db.session.commit()
+    _sync_tasks_md()
+    return jsonify({"id": task.id, "title": task.title, "status": "created"})
+
+
+@api_bp.route("/tasks/templates/<int:task_id>", methods=["PATCH"])
+def update_task_template(task_id):
+    """Update a task template."""
+    from app.models import BusinessTask
+    task = db.session.get(BusinessTask, task_id)
+    if not task:
+        return jsonify({"error": "Task template not found"}), 404
+    data = request.get_json()
+    for key in ("title", "description", "category", "frequency", "schedule_day",
+                "priority", "estimated_minutes", "is_active", "notes", "action_steps"):
+        if key in data:
+            setattr(task, key, data[key])
+    db.session.commit()
+    _sync_tasks_md()
+    return jsonify({"id": task.id, "status": "updated"})
+
+
+@api_bp.route("/tasks/today")
+def today_tasks():
+    """Get today's task checklist. Auto-generates instances if needed."""
+    from datetime import date as d
+    from app.models import BusinessTask, TaskInstance
+    from app.tasks.task_scheduler import generate_due_tasks
+
+    generate_due_tasks()
+    today = d.today()
+
+    rows = db.session.query(TaskInstance, BusinessTask).join(
+        BusinessTask, TaskInstance.task_id == BusinessTask.id
+    ).filter(TaskInstance.due_date == today).order_by(
+        BusinessTask.priority, BusinessTask.title
+    ).all()
+
+    tasks = []
+    for instance, template in rows:
+        tasks.append({
+            "instance_id": instance.id, "task_id": template.id,
+            "title": template.title, "description": template.description,
+            "category": template.category, "frequency": template.frequency,
+            "priority": template.priority,
+            "estimated_minutes": template.estimated_minutes,
+            "status": instance.status,
+            "completed_at": instance.completed_at.isoformat() if instance.completed_at else None,
+            "completed_by": instance.completed_by, "notes": instance.notes,
+            "action_steps": template.action_steps,
+        })
+
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t["status"] == "COMPLETED")
+    skipped = sum(1 for t in tasks if t["status"] == "SKIPPED")
+    pending = total - completed - skipped
+    total_minutes = sum(t["estimated_minutes"] or 0 for t in tasks if t["status"] == "PENDING")
+
+    return jsonify({
+        "date": today.isoformat(),
+        "tasks": tasks,
+        "summary": {
+            "total": total, "completed": completed, "skipped": skipped,
+            "pending": pending, "estimated_minutes_remaining": total_minutes,
+        },
+    })
+
+
+@api_bp.route("/tasks/history")
+def task_history():
+    """Get task completion history for the last N days."""
+    from datetime import date as d, timedelta
+    from app.models import BusinessTask, TaskInstance
+
+    days = request.args.get("days", 7, type=int)
+    days = max(1, min(days, 90))
+    start_date = d.today() - timedelta(days=days)
+
+    rows = db.session.query(TaskInstance, BusinessTask).join(
+        BusinessTask, TaskInstance.task_id == BusinessTask.id
+    ).filter(TaskInstance.due_date >= start_date).order_by(
+        TaskInstance.due_date.desc(), BusinessTask.priority
+    ).all()
+
+    by_date = {}
+    for instance, template in rows:
+        dt = instance.due_date.isoformat()
+        if dt not in by_date:
+            by_date[dt] = {"date": dt, "tasks": [], "completed": 0, "total": 0}
+        by_date[dt]["tasks"].append({
+            "instance_id": instance.id, "title": template.title,
+            "category": template.category, "status": instance.status,
+            "completed_at": instance.completed_at.isoformat() if instance.completed_at else None,
+            "notes": instance.notes,
+        })
+        by_date[dt]["total"] += 1
+        if instance.status == "COMPLETED":
+            by_date[dt]["completed"] += 1
+
+    return jsonify({"days": sorted(by_date.values(), key=lambda x: x["date"], reverse=True)})
+
+
+@api_bp.route("/tasks/instances/<int:instance_id>", methods=["PATCH"])
+def update_task_instance(instance_id):
+    """Update a task instance (complete, skip, or reset). Syncs TASKS.md."""
+    from datetime import datetime, timezone
+    from app.models import TaskInstance
+
+    instance = db.session.get(TaskInstance, instance_id)
+    if not instance:
+        return jsonify({"error": "Task instance not found"}), 404
+
+    data = request.get_json()
+    status = data.get("status", instance.status)
+    instance.status = status
+    if status == "COMPLETED":
+        instance.completed_at = datetime.now(timezone.utc)
+    else:
+        instance.completed_at = None
+    if "notes" in data:
+        instance.notes = data["notes"]
+    if "completed_by" in data:
+        instance.completed_by = data["completed_by"]
+    db.session.commit()
+    _sync_tasks_md()
+    return jsonify({"instance_id": instance.id, "status": instance.status})
+
+
+@api_bp.route("/tasks/generate", methods=["POST"])
+def force_generate_tasks():
+    """Manually trigger task instance generation for today."""
+    from app.tasks.task_scheduler import generate_due_tasks
+    count = generate_due_tasks()
+    _sync_tasks_md()
+    return jsonify({"generated": count})
+
+
+@api_bp.route("/tasks/sync-log", methods=["POST"])
+def sync_task_log():
+    """Force regenerate TASKS.md."""
+    from app.tasks.task_log_writer import write_tasks_md
+    path = write_tasks_md()
+    return jsonify({"status": "synced", "path": path})

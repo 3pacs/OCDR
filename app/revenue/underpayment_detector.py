@@ -227,11 +227,18 @@ def get_actual_payment(record):
 
 # ── Underpayment check (per record) ──────────────────────────────
 
+COMP_CARRIERS = ("COMP",)
+
+
 def check_underpayment(record, fee_map=None):
     """Check if a single billing record is underpaid.
 
     Returns dict with underpayment details, or None if not underpaid.
     """
+    # Skip COMP carriers — complimentary scans have $0 expected
+    if getattr(record, 'insurance_carrier', None) in COMP_CARRIERS:
+        return None
+
     if fee_map is None:
         fee_map = build_fee_map()
 
@@ -268,67 +275,69 @@ def check_underpayment(record, fee_map=None):
 def build_cpt_fee_schedule_from_era():
     """Analyze ERA payment history and build/update CPT-level fee schedule entries.
 
-    Groups ERA claim line payments by (carrier, CPT code) and computes
-    median expected rate. Only creates entries with >= 3 samples for reliability.
+    Groups ERA claim line payments by (normalized carrier, CPT code) and computes
+    weighted average expected rate. Only creates entries with >= 3 samples for reliability.
 
     Returns count of entries created/updated.
     """
     from sqlalchemy import text
+    from app.revenue.carrier_normalization import normalize_era_payer
 
-    # Get payment stats by CPT + carrier (using payer_name from era_payments)
+    # Get payment stats by CPT + payer (raw), then normalize carrier in Python
     rows = db.session.execute(text('''
         SELECT
             ep.payer_name,
             ecl.cpt_code,
             COUNT(*) as cnt,
-            AVG(ecl.paid_amount) as avg_paid,
-            MIN(ecl.paid_amount) as min_paid,
-            MAX(ecl.paid_amount) as max_paid
+            SUM(ecl.paid_amount) as total_paid
         FROM era_claim_lines ecl
         JOIN era_payments ep ON ecl.era_payment_id = ep.id
         WHERE ecl.cpt_code IS NOT NULL AND ecl.cpt_code != ''
           AND ecl.paid_amount > 0
         GROUP BY ep.payer_name, ecl.cpt_code
-        HAVING COUNT(*) >= 3
-        ORDER BY cnt DESC
     ''')).fetchall()
 
-    # Map ERA payer names to our carrier codes
-    from app.models import Payer
-    carrier_map = _build_carrier_map()
+    # Aggregate by (normalized_carrier, cpt) since multiple payer names
+    # can map to the same carrier code
+    aggregated = {}
+    for payer_name, cpt, cnt, total_paid in rows:
+        carrier = normalize_era_payer(payer_name)
+        if carrier == "UNKNOWN":
+            continue
+        key = (carrier, cpt)
+        if key not in aggregated:
+            aggregated[key] = {"cnt": 0, "total_paid": 0.0}
+        aggregated[key]["cnt"] += cnt
+        aggregated[key]["total_paid"] += float(total_paid)
 
     count = 0
-    for row in rows:
-        payer_name, cpt, cnt, avg_paid, min_paid, max_paid = row
-        carrier = carrier_map.get(payer_name, payer_name)
+    for (carrier, cpt), stats in aggregated.items():
+        if stats["cnt"] < 3:
+            continue
 
-        # Determine modality from CPT code
         modality = _cpt_to_modality(cpt)
+        mod = modality or 'UNKNOWN'
+        expected = round(stats["total_paid"] / stats["cnt"], 2)
 
-        # Use avg as expected rate (could use median with more data)
-        expected = round(avg_paid, 2)
-
-        # Check if entry exists
         existing = FeeSchedule.query.filter_by(
             payer_code=carrier,
+            modality=mod,
             cpt_code=cpt,
         ).first()
 
         if existing:
             existing.expected_rate = expected
-            existing.sample_count = cnt
+            existing.sample_count = stats["cnt"]
             existing.source = 'ERA_DERIVED'
-            if modality:
-                existing.modality = modality
         else:
             fs = FeeSchedule(
                 payer_code=carrier,
-                modality=modality or 'UNKNOWN',
+                modality=mod,
                 cpt_code=cpt,
                 expected_rate=expected,
                 underpayment_threshold=0.80,
                 source='ERA_DERIVED',
-                sample_count=cnt,
+                sample_count=stats["cnt"],
             )
             db.session.add(fs)
         count += 1
@@ -349,10 +358,12 @@ def build_cpt_fee_schedule_from_era():
     for row in default_rows:
         cpt, cnt, avg_paid = row
         modality = _cpt_to_modality(cpt)
+        mod = modality or 'UNKNOWN'
         expected = round(avg_paid, 2)
 
         existing = FeeSchedule.query.filter_by(
             payer_code='DEFAULT',
+            modality=mod,
             cpt_code=cpt,
         ).first()
 
@@ -363,7 +374,7 @@ def build_cpt_fee_schedule_from_era():
         else:
             fs = FeeSchedule(
                 payer_code='DEFAULT',
-                modality=modality or 'UNKNOWN',
+                modality=mod,
                 cpt_code=cpt,
                 expected_rate=expected,
                 underpayment_threshold=0.80,
@@ -382,32 +393,11 @@ def build_cpt_fee_schedule_from_era():
 def _build_carrier_map():
     """Map ERA payer names to our normalized carrier codes.
 
-    Builds from both hardcoded known mappings and the Payer table.
+    Delegates to carrier_normalization module for the actual mapping.
+    Returns a dict for backward-compat with callers expecting a dict.
     """
-    # Known ERA payer name -> billing carrier code
-    known = {
-        'MEDICARE SERVICE CENTER': 'M/M',
-        'MEDICARE': 'M/M',
-        'NORIDIAN HEALTHCARE SOLUTIONS, LLC': 'M/M',
-        'CALOPTIMA': 'CALOPTIMA',
-        'CA MEDI-CAL': 'CALOPTIMA',
-        'BLUE SHIELD OF CALIFORNIA PROMISE HEALTH PLAN': 'CALOPTIMA',
-        'CALPERS': 'INS',
-        'ANTHEM BC LIFE   HEALTH INS CO': 'INS',
-        'ANTHEM BC LIFE & HEALTH INS CO': 'INS',
-        'ANTHEM INSURANCE COMPANIES, INC.': 'INS',
-        'BLUE CROSS OF CALIFORNIA (CA)': 'INS',
-        'CALIFORNIA PHYSICIANS SERVICE DBA BLUE SHIELD CA': 'INS',
-        'CIGNA HEALTH AND LIFE INSURANCE COMPANY': 'INS',
-        'PROSPECT MEDICAL SYSTEMS': 'FAMILY',
-        'UNITED CARE MEDICAL GROUP': 'FAMILY',
-        'FEP BASIC CLAIMS ACCOUNT-FACETS': 'INS',
-        'FEP PPO BLUE FOCUS CLAIMS ACCOUNT': 'INS',
-        'FEP STANDARD CLAIMS ACCOUNT-FACETS': 'INS',
-        'POSTAL SERVICE HBP-BASIC': 'INS',
-        'POSTAL SERVICE HBP-STD': 'INS',
-    }
-    return known
+    from app.revenue.carrier_normalization import ERA_PAYER_TO_CARRIER
+    return ERA_PAYER_TO_CARRIER
 
 
 # CPT code prefix -> modality mapping

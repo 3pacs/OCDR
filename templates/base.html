@@ -33,6 +33,25 @@
                 </a>
             </li>
 
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.pipeline_page' %}active{% endif %}" href="/pipeline">
+                    <i class="bi bi-rocket-takeoff-fill"></i>
+                    <span>Pipeline</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.tasks_page' %}active{% endif %}" href="/tasks">
+                    <i class="bi bi-check2-square"></i>
+                    <span>Tasks</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'ui.insights_page' %}active{% endif %}" href="/insights">
+                    <i class="bi bi-lightbulb-fill"></i>
+                    <span>Insights</span>
+                </a>
+            </li>
+
             <li class="nav-section-label">Revenue Recovery</li>
             <li class="nav-item">
                 <a class="nav-link {% if request.endpoint == 'ui.underpayments_page' %}active{% endif %}" href="/underpayments">
