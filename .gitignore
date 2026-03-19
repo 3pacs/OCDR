@@ -17,3 +17,5 @@ venv/
 .credentials.enc
 node_modules/
 topaz_samples/
+*.db-shm
+*.db-wal
