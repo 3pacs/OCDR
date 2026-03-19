@@ -307,7 +307,10 @@ def denials():
     carrier = request.args.get("carrier")
     modality = request.args.get("modality")
 
-    query = BillingRecord.query.filter(BillingRecord.total_payment == 0)
+    query = BillingRecord.query.filter(
+        BillingRecord.total_payment == 0,
+        BillingRecord.denial_status.isnot(None),
+    )
     if carrier:
         query = query.filter(BillingRecord.insurance_carrier == carrier)
     if modality:
@@ -318,11 +321,11 @@ def denials():
     )
 
     today = date.today()
+    fee_map = _get_fee_map()
     items = []
     for r in records.items:
         days_old = (today - r.service_date).days if r.service_date else 0
         # Recoverability score: higher for newer, higher-value claims
-        fee_map = _get_fee_map()
         expected = fee_map.get(
             (r.insurance_carrier, r.modality),
             fee_map.get(("_default", r.modality), 500)
@@ -1895,8 +1898,10 @@ def backup_verify(filename):
     """Verify a specific backup's integrity."""
     from app.infra.backup_manager import verify_backup as _verify
     from flask import current_app
-    backup_dir = current_app.config.get("BACKUP_FOLDER", "backup")
-    backup_path = os.path.join(backup_dir, filename)
+    backup_dir = os.path.abspath(current_app.config.get("BACKUP_FOLDER", "backup"))
+    backup_path = os.path.abspath(os.path.join(backup_dir, filename))
+    if not backup_path.startswith(backup_dir + os.sep) and backup_path != backup_dir:
+        return jsonify({"error": "Invalid filename"}), 400
     if not os.path.exists(backup_path):
         return jsonify({"error": "Backup not found"}), 404
     return jsonify(_verify(backup_path))
@@ -3170,7 +3175,10 @@ def topaz_file_detail(filename):
     dir_path = request.args.get("path", "topaz_samples")
     if not os.path.isabs(dir_path):
         dir_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), dir_path)
-    file_path = os.path.join(dir_path, filename)
+    dir_path = os.path.abspath(dir_path)
+    file_path = os.path.abspath(os.path.join(dir_path, filename))
+    if not file_path.startswith(dir_path + os.sep) and file_path != dir_path:
+        return jsonify({"error": "Invalid filename"}), 400
 
     if not os.path.isfile(file_path):
         return jsonify({"error": f"File not found: {filename}"}), 404

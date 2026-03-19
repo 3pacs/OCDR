@@ -102,8 +102,7 @@ def parse_float(val):
         return float(val)
     try:
         cleaned = str(val).replace(",", "").replace("$", "").strip()
-        result = float(cleaned) if cleaned else 0.0
-        return max(result, 0.0)  # Payments should not be negative
+        return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
         return 0.0
 
@@ -121,7 +120,7 @@ def parse_bool(val):
 def normalize_modality(val):
     """Normalize modality string to standard codes."""
     if not val:
-        return "HMRI"
+        return None
     upper = str(val).strip().upper()
     return MODALITY_MAP.get(upper, upper)
 

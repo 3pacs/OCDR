@@ -263,7 +263,8 @@ def _backfill_charge_categories():
             "WHERE charge_category IS NULL"
         ))
         db.session.commit()
-    except Exception:
+    except Exception as e:
+        logging.getLogger('app').warning(f'Charge category backfill failed: {e}')
         db.session.rollback()
 
 
@@ -339,7 +340,8 @@ def _backfill_era_payments():
         ))
 
         db.session.commit()
-    except Exception:
+    except Exception as e:
+        logging.getLogger('app').warning(f'ERA payment backfill failed: {e}')
         db.session.rollback()
 
 
@@ -369,7 +371,8 @@ def _backfill_cpt_codes():
             ")"
         ))
         db.session.commit()
-    except Exception:
+    except Exception as e:
+        logging.getLogger('app').warning(f'CPT code backfill failed: {e}')
         db.session.rollback()
 
 

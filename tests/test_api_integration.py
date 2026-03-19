@@ -76,6 +76,7 @@ class TestAPIEndpoints(unittest.TestCase):
                 gado_used=(i % 2 == 0),
                 is_psma=(i == 4),
                 description="PSMA PET" if i == 4 else "BRAIN MRI",
+                denial_status="DENIED" if i >= 3 else None,
             ))
 
         db.session.commit()

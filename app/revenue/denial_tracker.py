@@ -20,7 +20,10 @@ def get_denial_queue(carrier=None, modality=None, status_filter=None,
     Performance: pre-loads fee schedule and ERA claims to avoid N+1 queries.
     """
     today = date.today()
-    query = BillingRecord.query.filter(BillingRecord.total_payment == 0)
+    query = BillingRecord.query.filter(
+        BillingRecord.total_payment == 0,
+        BillingRecord.denial_status.isnot(None),
+    )
 
     if carrier:
         query = query.filter(BillingRecord.insurance_carrier == carrier)
@@ -50,8 +53,8 @@ def get_denial_queue(carrier=None, modality=None, status_filter=None,
         paginated = query.paginate(page=page, per_page=per_page, error_out=False)
         records = paginated.items
     else:
-        # Recoverability sort requires Python computation — load all, but limit memory
-        records = query.all()
+        # Recoverability sort requires Python computation — cap to avoid OOM
+        records = query.limit(2000).all()
 
     # Pre-load ERA claim lines for current page records (fixes N+1)
     era_claim_ids = [r.era_claim_id for r in records if r.era_claim_id]

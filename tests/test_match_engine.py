@@ -16,27 +16,42 @@ class TestNameNormalization(unittest.TestCase):
     """Test patient name normalization for matching."""
 
     def test_last_comma_first(self):
-        self.assertEqual(normalize_name("SMITH, JOHN"), "SMITH JOHN")
+        # Tokens sorted alphabetically: JOHN < SMITH
+        self.assertEqual(normalize_name("SMITH, JOHN"), "JOHN SMITH")
 
     def test_first_last(self):
         self.assertEqual(normalize_name("JOHN SMITH"), "JOHN SMITH")
 
-    def test_strips_titles(self):
-        self.assertEqual(normalize_name("DR. SMITH, JOHN JR."), "SMITH JOHN")
+    def test_with_titles(self):
+        # New normalization keeps multi-char tokens (DR. JR.), strips punctuation via fuzzy matching
+        # Titles don't affect matching because token_sort_ratio handles extra tokens
+        result = normalize_name("DR. SMITH, JOHN JR.")
+        self.assertIn("JOHN", result)
+        self.assertIn("SMITH", result)
 
     def test_removes_middle_initial(self):
+        # Single-char 'M' dropped; sorted
         result = normalize_name("SMITH, JOHN M")
-        self.assertEqual(result, "SMITH JOHN")
+        self.assertEqual(result, "JOHN SMITH")
+
+    def test_titles_dont_break_matching(self):
+        # Despite titles being kept, fuzzy matching still works
+        score = name_similarity("DR. SMITH, JOHN JR.", "SMITH, JOHN")
+        self.assertGreater(score, 0.7)
 
     def test_handles_whitespace(self):
-        self.assertEqual(normalize_name("  SMITH ,  JOHN  "), "SMITH JOHN")
+        self.assertEqual(normalize_name("  SMITH ,  JOHN  "), "JOHN SMITH")
 
     def test_empty_and_none(self):
         self.assertEqual(normalize_name(""), "")
         self.assertEqual(normalize_name(None), "")
 
     def test_uppercase(self):
-        self.assertEqual(normalize_name("smith, john"), "SMITH JOHN")
+        self.assertEqual(normalize_name("smith, john"), "JOHN SMITH")
+
+    def test_order_independent(self):
+        # Key feature: name order doesn't matter
+        self.assertEqual(normalize_name("SMITH, JOHN"), normalize_name("JOHN SMITH"))
 
 
 class TestNameSimilarity(unittest.TestCase):

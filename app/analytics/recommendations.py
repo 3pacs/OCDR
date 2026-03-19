@@ -140,16 +140,14 @@ def _analyze_secondary_gaps() -> list[dict]:
 def _analyze_payer_trends() -> list[dict]:
     results = []
     try:
+        year_expr = extract("year", BillingRecord.service_date).cast(String)
         rows = db.session.query(
             BillingRecord.insurance_carrier.label("carrier"),
-            func.coalesce(
-                BillingRecord.service_year,
-                extract("year", BillingRecord.service_date).cast(String),
-            ).label("year"),
+            year_expr.label("year"),
             func.count().label("count"),
             func.sum(BillingRecord.total_payment).label("revenue"),
         ).filter(BillingRecord.service_date.isnot(None), not_written_off()).group_by(
-            BillingRecord.insurance_carrier, BillingRecord.service_year
+            BillingRecord.insurance_carrier, year_expr
         ).all()
     except Exception:
         return results

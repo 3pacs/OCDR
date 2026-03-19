@@ -157,9 +157,13 @@ class TestNameAliases(SmartMatchingTestBase):
 
     def test_alias_lookup_boosts_score(self):
         """Name similarity returns 1.0 when alias pair is found."""
-        from app.matching.match_engine import name_similarity
+        from app.matching.match_engine import name_similarity, normalize_name
 
-        alias_lookup = {"SMITH BILL": {"SMITH WILLIAM"}}
+        # Alias keys must use normalized (sorted) names
+        n1 = normalize_name("SMITH, BILL")    # "BILL SMITH"
+        n2 = normalize_name("SMITH, WILLIAM") # "SMITH WILLIAM"
+        a, b = (n1, n2) if n1 <= n2 else (n2, n1)
+        alias_lookup = {a: {b}}
         score = name_similarity("SMITH, BILL", "SMITH, WILLIAM", alias_lookup=alias_lookup)
         self.assertEqual(score, 1.0)
 
@@ -289,8 +293,8 @@ class TestSmartMatchEngine(SmartMatchingTestBase):
 
         stats = run_matching()
         self.assertEqual(stats["total_processed"], 1)
-        # Should have smart features info
-        self.assertIn("smart_features", stats)
+        # Should have pass breakdown info
+        self.assertIn("pass_1_exact", stats)
 
     def test_confirm_records_outcome(self):
         """confirm_match should record learning outcome."""
@@ -383,7 +387,8 @@ class TestDenialTrackerOptimized(SmartMatchingTestBase):
         from app.revenue.denial_tracker import get_denial_queue
         db.session.add(FeeSchedule(payer_code="BCBS", modality="HMRI", expected_rate=800.0))
         self._add_billing(total_payment=0, carrier="BCBS", modality="HMRI",
-                         service_date=date.today() - timedelta(days=30))
+                         service_date=date.today() - timedelta(days=30),
+                         denial_status="DENIED")
         db.session.commit()
 
         result = get_denial_queue()

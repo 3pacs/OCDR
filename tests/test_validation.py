@@ -83,9 +83,9 @@ class TestParseFloat(unittest.TestCase):
     def test_empty_string(self):
         self.assertEqual(parse_float(""), 0.0)
 
-    def test_negative_becomes_zero(self):
-        """Negative payment amounts should be treated as 0."""
-        self.assertEqual(parse_float("-100.00"), 0.0)
+    def test_negative_preserved(self):
+        """Negative values preserved for refunds/adjustments."""
+        self.assertEqual(parse_float("-100.00"), -100.0)
 
     def test_int_input(self):
         self.assertEqual(parse_float(750), 750.0)
@@ -162,11 +162,11 @@ class TestNormalizeModality(unittest.TestCase):
     def test_xray(self):
         self.assertEqual(normalize_modality("X-RAY"), "DX")
 
-    def test_none_defaults_hmri(self):
-        self.assertEqual(normalize_modality(None), "HMRI")
+    def test_none_returns_none(self):
+        self.assertIsNone(normalize_modality(None))
 
-    def test_empty_defaults_hmri(self):
-        self.assertEqual(normalize_modality(""), "HMRI")
+    def test_empty_returns_none(self):
+        self.assertIsNone(normalize_modality(""))
 
     def test_unknown_passthrough(self):
         self.assertEqual(normalize_modality("FLUORO"), "FLUORO")
