@@ -407,6 +407,10 @@ def _flow_back_era_payment(claim, billing_id):
         if claim.billed_amount and (not billing.billed_amount or billing.billed_amount == 0):
             billing.billed_amount = claim.billed_amount
 
+        # Flow CPT code from ERA claim line
+        if claim.cpt_code and (not billing.cpt_code):
+            billing.cpt_code = claim.cpt_code
+
         # Infer charge_category if not already set
         if not billing.charge_category:
             from app.revenue.underpayment_detector import infer_charge_category

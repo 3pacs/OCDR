@@ -178,8 +178,9 @@ class TestAnalysisAPI:
         # Seed minimal data
         db.session.add(Payer(code='M/M', display_name='Medicare', filing_deadline_days=365,
                              expected_has_secondary=True))
-        db.session.add(FeeSchedule(payer_code='DEFAULT', modality='CT',
-                                    expected_rate=395.00, underpayment_threshold=0.80))
+        if not FeeSchedule.query.filter_by(payer_code='DEFAULT', modality='CT').first():
+            db.session.add(FeeSchedule(payer_code='DEFAULT', modality='CT',
+                                        expected_rate=395.00, underpayment_threshold=0.80))
         db.session.add(BillingRecord(
             patient_name='SMITH, JOHN', referring_doctor='DOC, TEST',
             scan_type='ABDOMEN', insurance_carrier='M/M', modality='CT',

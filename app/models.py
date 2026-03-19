@@ -85,7 +85,8 @@ class BillingRecord(db.Model):
     topaz_patient_id = db.Column(db.Text, index=True)  # Legacy Topaz system patient ID
     import_source = db.Column(db.Text)
 
-    # ── Charge & Payment Detail (Sprint 16) ──────────────────────
+    # ── CPT & Charge Detail (Sprint 16) ──────────────────────────
+    cpt_code = db.Column(db.Text, index=True)              # CPT code(s) from ERA match, e.g. "71260" or "78815, A9552"
     charge_category = db.Column(db.Text, index=True)       # WITH_CONTRAST, WITHOUT_CONTRAST, PSMA, STANDARD
     contrast_type = db.Column(db.Text)                      # GADOLINIUM, IODINE, ORAL, NONE
     billed_amount = db.Column(db.Float, default=0.0)        # what we billed the insurer
@@ -128,6 +129,7 @@ class BillingRecord(db.Model):
             "appeal_deadline": self.appeal_deadline.isoformat() if self.appeal_deadline else None,
             "topaz_patient_id": self.topaz_patient_id,
             "import_source": self.import_source,
+            "cpt_code": self.cpt_code,
             "charge_category": self.charge_category,
             "contrast_type": self.contrast_type,
             "billed_amount": self.billed_amount,
@@ -275,15 +277,18 @@ class FeeSchedule(db.Model):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     payer_code = db.Column(db.Text, index=True)
     modality = db.Column(db.Text, index=True)
+    cpt_code = db.Column(db.Text, index=True)             # CPT code for CPT-level rates (null = modality-level)
     expected_rate = db.Column(db.Float, nullable=False)
     underpayment_threshold = db.Column(db.Float, default=0.80)
     gado_premium = db.Column(db.Float, default=0.0)
     effective_date = db.Column(db.Date)
     source = db.Column(db.Text, default="MANUAL")
     charge_category = db.Column(db.Text, default="STANDARD")  # STANDARD, WITH_CONTRAST, WITHOUT_CONTRAST, PSMA
+    sample_count = db.Column(db.Integer, default=0)        # how many claims this rate was derived from
 
     __table_args__ = (
         db.UniqueConstraint("payer_code", "modality", name="uq_fee_payer_modality"),
+        db.Index("idx_fee_cpt_payer", "cpt_code", "payer_code"),
     )
 
 

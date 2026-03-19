@@ -54,9 +54,11 @@ class TestAPIEndpoints(unittest.TestCase):
         db.session.add(Payer(code="M/M", display_name="Medicare", filing_deadline_days=365))
         db.session.add(Payer(code="INS", display_name="Insurance", filing_deadline_days=180, expected_has_secondary=True))
 
-        # Fee schedule
-        db.session.add(FeeSchedule(payer_code="DEFAULT", modality="HMRI", expected_rate=750.0))
-        db.session.add(FeeSchedule(payer_code="DEFAULT", modality="CT", expected_rate=395.0))
+        # Fee schedule (skip if already seeded by _seed_default_fee_schedule)
+        if not FeeSchedule.query.filter_by(payer_code="DEFAULT", modality="HMRI").first():
+            db.session.add(FeeSchedule(payer_code="DEFAULT", modality="HMRI", expected_rate=750.0))
+        if not FeeSchedule.query.filter_by(payer_code="DEFAULT", modality="CT").first():
+            db.session.add(FeeSchedule(payer_code="DEFAULT", modality="CT", expected_rate=395.0))
 
         # Billing records
         for i in range(5):

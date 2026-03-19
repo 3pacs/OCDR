@@ -95,7 +95,10 @@ def create_app(config_class=Config, **config_overrides):
         _auto_migrate_missing_columns(app)
         _backfill_charge_categories()
         _backfill_era_payments()
+        _backfill_cpt_codes()
         _seed_lookup_tables()
+        _seed_default_fee_schedule()
+        _build_cpt_fee_schedule()
         _ensure_default_admin()
         _init_ai_logs(app)
         _auto_backup_on_startup(app)
@@ -339,6 +342,56 @@ def _backfill_era_payments():
         db.session.rollback()
 
 
+def _backfill_cpt_codes():
+    """One-time backfill: copy CPT codes from matched ERA claim lines to billing records."""
+    from sqlalchemy import text
+    try:
+        result = db.session.execute(text(
+            "SELECT COUNT(*) FROM billing_records b "
+            "JOIN era_claim_lines e ON e.matched_billing_id = b.id "
+            "WHERE (b.cpt_code IS NULL OR b.cpt_code = '') "
+            "AND e.cpt_code IS NOT NULL AND e.cpt_code != ''"
+        )).scalar()
+        if result == 0:
+            return
+
+        db.session.execute(text(
+            "UPDATE billing_records SET cpt_code = ("
+            "  SELECT e.cpt_code FROM era_claim_lines e "
+            "  WHERE e.matched_billing_id = billing_records.id "
+            "  AND e.cpt_code IS NOT NULL AND e.cpt_code != '' "
+            "  LIMIT 1"
+            ") WHERE (cpt_code IS NULL OR cpt_code = '') AND id IN ("
+            "  SELECT matched_billing_id FROM era_claim_lines "
+            "  WHERE matched_billing_id IS NOT NULL "
+            "  AND cpt_code IS NOT NULL AND cpt_code != ''"
+            ")"
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def _build_cpt_fee_schedule():
+    """Build CPT-level fee schedule entries from ERA payment history."""
+    from app.models import FeeSchedule
+    try:
+        # Only run if no CPT-based entries exist yet
+        existing = FeeSchedule.query.filter(
+            FeeSchedule.cpt_code.isnot(None)
+        ).first()
+        if existing:
+            return
+
+        from app.revenue.underpayment_detector import build_cpt_fee_schedule_from_era
+        count = build_cpt_fee_schedule_from_era()
+        if count > 0:
+            logging.getLogger('app').info(f'Built {count} CPT-level fee schedule entries from ERA data')
+    except Exception as e:
+        logging.getLogger('app').warning(f'CPT fee schedule build failed: {e}')
+        db.session.rollback()
+
+
 def _seed_lookup_tables():
     """Populate lookup tables with initial data if empty."""
     if Modality.query.first() is not None:
@@ -386,6 +439,32 @@ def _seed_lookup_tables():
     db.session.commit()
 
 
+def _seed_default_fee_schedule():
+    """Ensure DEFAULT fee schedule entries exist for all modalities.
+
+    Only adds DEFAULT entries that don't already exist. These serve as
+    fallback rates when a carrier-specific entry is missing.
+    """
+    from app.models import FeeSchedule
+    defaults = {
+        'CT': 262.0, 'SR/CT': 261.0, 'HMRI': 360.0, 'MR': 360.0,
+        'CT/SR/PT/SC': 2450.0, 'CT/SR': 282.0, 'CT/SR/PT': 2545.0,
+        'CT/PT/SR/SC': 2266.0, 'DX': 250.0, 'CT/PT/SR': 2683.0,
+        'SR/CT/SC': 217.0, 'PET': 961.0, 'BONE': 500.0,
+    }
+    added = 0
+    for mod, rate in defaults.items():
+        existing = FeeSchedule.query.filter_by(payer_code='DEFAULT', modality=mod).first()
+        if not existing:
+            db.session.add(FeeSchedule(
+                payer_code='DEFAULT', modality=mod,
+                expected_rate=rate, gado_premium=200.0,
+            ))
+            added += 1
+    if added:
+        db.session.commit()
+
+
 def _init_ai_logs(app):
     """Initialize AI communication log directory and instruction files."""
     try:
@@ -428,7 +507,7 @@ def _auto_backup_on_startup(app):
             last_modified = history["backups"][0].get("modified", "")
             try:
                 last_dt = dt.fromisoformat(last_modified)
-                age_hours = (dt.utcnow() - last_dt).total_seconds() / 3600
+                age_hours = (dt.now(timezone.utc).replace(tzinfo=None) - last_dt).total_seconds() / 3600
                 if age_hours < 24:
                     need_backup = False
             except (ValueError, TypeError):
