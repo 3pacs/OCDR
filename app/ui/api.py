@@ -199,18 +199,13 @@ def revenue_by_modality():
 
 @api_bp.route("/underpayments")
 def underpayments():
-    """Underpaid claims list."""
+    """Underpaid claims list — uses unified underpayment detector."""
+    from app.revenue.underpayment_detector import build_fee_map, check_underpayment
+
     page = request.args.get("page", 1, type=int)
     per_page = _clamp_per_page(request.args.get("per_page", 50, type=int))
     carrier = request.args.get("carrier")
     modality = request.args.get("modality")
-
-    # Get fee schedule as dict
-    fee_map = {}
-    for fs in FeeSchedule.query.all():
-        fee_map[(fs.payer_code, fs.modality)] = fs.expected_rate
-        if fs.payer_code == "DEFAULT":
-            fee_map.setdefault(("_default", fs.modality), fs.expected_rate)
 
     query = BillingRecord.query.filter(BillingRecord.total_payment > 0)
     if carrier:
@@ -222,24 +217,12 @@ def underpayments():
         page=page, per_page=per_page, error_out=False
     )
 
+    fee_map = build_fee_map()
     items = []
     for r in records.items:
-        expected = fee_map.get(
-            (r.insurance_carrier, r.modality),
-            fee_map.get(("_default", r.modality), 0)
-        )
-        # Apply gado premium
-        if r.gado_used and r.modality in ("HMRI", "OPEN"):
-            expected += 200
-
-        if expected > 0 and r.total_payment < expected * 0.80:
-            variance = r.total_payment - expected
-            items.append({
-                **r.to_dict(),
-                "expected_rate": expected,
-                "variance": round(variance, 2),
-                "pct_of_expected": round(r.total_payment / expected * 100, 1),
-            })
+        underpay = check_underpayment(r, fee_map)
+        if underpay:
+            items.append({**r.to_dict(), **underpay})
 
     return jsonify({
         "items": items,
@@ -2003,45 +1986,33 @@ def _get_fee_map():
 
 
 def _get_underpayment_summary():
-    """Compute underpayment summary using SQL aggregates — no full table scan."""
-    fee_map = _get_fee_map()
+    """Compute underpayment summary per-record using unified detector.
+
+    Uses the same check_underpayment() as all other endpoints so gado/contrast
+    premiums, PSMA rates, and per-carrier thresholds are applied consistently.
+    """
+    from app.revenue.underpayment_detector import build_fee_map, check_underpayment
+
+    fee_map = build_fee_map()
     if not fee_map:
         return {"total_flagged": 0, "total_variance": 0, "by_carrier": [], "by_modality": []}
-
-    # Use SQL aggregate to get counts/sums by carrier+modality
-    results = db.session.query(
-        BillingRecord.insurance_carrier,
-        BillingRecord.modality,
-        func.count(BillingRecord.id).label("count"),
-        func.sum(BillingRecord.total_payment).label("total_paid"),
-        func.avg(BillingRecord.total_payment).label("avg_paid"),
-    ).filter(
-        BillingRecord.total_payment > 0
-    ).group_by(
-        BillingRecord.insurance_carrier, BillingRecord.modality
-    ).all()
 
     total_flagged = 0
     total_variance = 0.0
     by_carrier = {}
     by_modality = {}
 
-    for r in results:
-        expected = fee_map.get(
-            (r.insurance_carrier, r.modality),
-            fee_map.get(("_default", r.modality), 0)
-        )
-        if expected <= 0:
+    for r in BillingRecord.query.filter(BillingRecord.total_payment > 0).yield_per(500):
+        underpay = check_underpayment(r, fee_map)
+        if not underpay:
             continue
 
-        # If average payment is below 80% threshold, flag the whole group
-        if r.avg_paid < expected * 0.80:
-            variance = r.total_paid - (expected * r.count)
-            total_flagged += r.count
-            total_variance += variance
+        total_flagged += 1
+        variance = underpay['variance']
+        total_variance += variance
 
-            by_carrier[r.insurance_carrier] = by_carrier.get(r.insurance_carrier, 0) + variance
-            by_modality[r.modality] = by_modality.get(r.modality, 0) + variance
+        by_carrier[r.insurance_carrier] = by_carrier.get(r.insurance_carrier, 0) + variance
+        by_modality[r.modality] = by_modality.get(r.modality, 0) + variance
 
     return {
         "total_flagged": total_flagged,

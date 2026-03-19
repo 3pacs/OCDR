@@ -93,6 +93,8 @@ def create_app(config_class=Config, **config_overrides):
         _apply_sqlite_wal(app)
         db.create_all()
         _auto_migrate_missing_columns(app)
+        _backfill_charge_categories()
+        _backfill_era_payments()
         _seed_lookup_tables()
         _ensure_default_admin()
         _init_ai_logs(app)
@@ -227,6 +229,114 @@ def _ensure_directories(app):
         folder = app.config.get(folder_key)
         if folder:
             os.makedirs(folder, exist_ok=True)
+
+
+def _backfill_charge_categories():
+    """One-time backfill: set charge_category on existing billing records.
+
+    Infers from gado_used and is_psma flags. Only touches records where
+    charge_category is NULL (won't overwrite manually set values).
+    """
+    from sqlalchemy import text
+    try:
+        # Check if the column exists yet
+        result = db.session.execute(text(
+            "SELECT COUNT(*) FROM billing_records WHERE charge_category IS NULL"
+        )).scalar()
+        if result == 0:
+            return  # Nothing to backfill
+
+        db.session.execute(text(
+            "UPDATE billing_records SET charge_category = 'WITH_CONTRAST' "
+            "WHERE charge_category IS NULL AND gado_used = 1 AND modality IN ('HMRI', 'OPEN')"
+        ))
+        db.session.execute(text(
+            "UPDATE billing_records SET charge_category = 'PSMA' "
+            "WHERE charge_category IS NULL AND is_psma = 1 AND modality = 'PET'"
+        ))
+        db.session.execute(text(
+            "UPDATE billing_records SET charge_category = 'STANDARD' "
+            "WHERE charge_category IS NULL"
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
+def _backfill_era_payments():
+    """One-time backfill: flow ERA paid amounts to matched billing records.
+
+    For billing records that have a matched ERA claim line but no era_paid_amount,
+    copy the paid_amount from the ERA claim.
+    """
+    from sqlalchemy import text
+    try:
+        result = db.session.execute(text(
+            "SELECT COUNT(*) FROM billing_records b "
+            "JOIN era_claim_lines e ON e.matched_billing_id = b.id "
+            "WHERE b.era_paid_amount IS NULL AND e.paid_amount IS NOT NULL"
+        )).scalar()
+        if result == 0:
+            return
+
+        # Update era_paid_amount from matched ERA claims
+        db.session.execute(text(
+            "UPDATE billing_records SET era_paid_amount = ("
+            "  SELECT e.paid_amount FROM era_claim_lines e "
+            "  WHERE e.matched_billing_id = billing_records.id "
+            "  ORDER BY e.paid_amount DESC LIMIT 1"
+            ") WHERE era_paid_amount IS NULL AND id IN ("
+            "  SELECT matched_billing_id FROM era_claim_lines "
+            "  WHERE matched_billing_id IS NOT NULL AND paid_amount IS NOT NULL"
+            ")"
+        ))
+
+        # Update payment_method from ERA payment header
+        db.session.execute(text(
+            "UPDATE billing_records SET payment_method = ("
+            "  SELECT CASE ep.payment_method "
+            "    WHEN 'CHK' THEN 'CHECK' "
+            "    WHEN 'ACH' THEN 'EFT' "
+            "    WHEN 'FWT' THEN 'WIRE' "
+            "    ELSE ep.payment_method "
+            "  END "
+            "  FROM era_claim_lines e "
+            "  JOIN era_payments ep ON ep.id = e.era_payment_id "
+            "  WHERE e.matched_billing_id = billing_records.id "
+            "  LIMIT 1"
+            ") WHERE payment_method IS NULL AND id IN ("
+            "  SELECT matched_billing_id FROM era_claim_lines "
+            "  WHERE matched_billing_id IS NOT NULL"
+            ")"
+        ))
+
+        # Update billed_amount from ERA
+        db.session.execute(text(
+            "UPDATE billing_records SET billed_amount = ("
+            "  SELECT e.billed_amount FROM era_claim_lines e "
+            "  WHERE e.matched_billing_id = billing_records.id "
+            "  ORDER BY e.billed_amount DESC LIMIT 1"
+            ") WHERE (billed_amount IS NULL OR billed_amount = 0) AND id IN ("
+            "  SELECT matched_billing_id FROM era_claim_lines "
+            "  WHERE matched_billing_id IS NOT NULL AND billed_amount IS NOT NULL"
+            ")"
+        ))
+
+        # Update adjustment_amount from ERA
+        db.session.execute(text(
+            "UPDATE billing_records SET adjustment_amount = ("
+            "  SELECT e.cas_adjustment_amount FROM era_claim_lines e "
+            "  WHERE e.matched_billing_id = billing_records.id "
+            "  ORDER BY e.cas_adjustment_amount DESC LIMIT 1"
+            ") WHERE (adjustment_amount IS NULL OR adjustment_amount = 0) AND id IN ("
+            "  SELECT matched_billing_id FROM era_claim_lines "
+            "  WHERE matched_billing_id IS NOT NULL AND cas_adjustment_amount IS NOT NULL"
+            ")"
+        ))
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def _seed_lookup_tables():

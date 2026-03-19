@@ -84,6 +84,17 @@ class BillingRecord(db.Model):
     appeal_deadline = db.Column(db.Date, index=True)
     topaz_patient_id = db.Column(db.Text, index=True)  # Legacy Topaz system patient ID
     import_source = db.Column(db.Text)
+
+    # ── Charge & Payment Detail (Sprint 16) ──────────────────────
+    charge_category = db.Column(db.Text, index=True)       # WITH_CONTRAST, WITHOUT_CONTRAST, PSMA, STANDARD
+    contrast_type = db.Column(db.Text)                      # GADOLINIUM, IODINE, ORAL, NONE
+    billed_amount = db.Column(db.Float, default=0.0)        # what we billed the insurer
+    era_paid_amount = db.Column(db.Float)                   # actual amount paid per ERA 835 (flows back from match)
+    patient_responsibility = db.Column(db.Float, default=0.0)  # copay + deductible + coinsurance
+    payment_method = db.Column(db.Text)                     # CHECK, EFT, CREDIT_CARD, CASH, MIXED
+    adjustment_amount = db.Column(db.Float, default=0.0)    # contractual adjustment from ERA
+    write_off_amount = db.Column(db.Float, default=0.0)     # written off amount
+
     created_at = db.Column(db.DateTime, default=_utcnow)
     updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -117,6 +128,14 @@ class BillingRecord(db.Model):
             "appeal_deadline": self.appeal_deadline.isoformat() if self.appeal_deadline else None,
             "topaz_patient_id": self.topaz_patient_id,
             "import_source": self.import_source,
+            "charge_category": self.charge_category,
+            "contrast_type": self.contrast_type,
+            "billed_amount": self.billed_amount,
+            "era_paid_amount": self.era_paid_amount,
+            "patient_responsibility": self.patient_responsibility,
+            "payment_method": self.payment_method,
+            "adjustment_amount": self.adjustment_amount,
+            "write_off_amount": self.write_off_amount,
         }
 
 
@@ -261,6 +280,7 @@ class FeeSchedule(db.Model):
     gado_premium = db.Column(db.Float, default=0.0)
     effective_date = db.Column(db.Date)
     source = db.Column(db.Text, default="MANUAL")
+    charge_category = db.Column(db.Text, default="STANDARD")  # STANDARD, WITH_CONTRAST, WITHOUT_CONTRAST, PSMA
 
     __table_args__ = (
         db.UniqueConstraint("payer_code", "modality", name="uq_fee_payer_modality"),
@@ -331,6 +351,54 @@ class ScheduleRecord(db.Model):
             "ocr_source": self.ocr_source,
             "matched_billing_id": self.matched_billing_id,
             "match_status": self.match_status,
+        }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Payment Detail Tracking (Sprint 16)
+# ══════════════════════════════════════════════════════════════════
+
+class PaymentDetail(db.Model):
+    """Individual payment transactions against a billing record.
+
+    Tracks each payment event separately (primary EOB, secondary EOB,
+    patient payment, etc.) with method and source info.
+    """
+    __tablename__ = "payment_details"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    billing_record_id = db.Column(db.Integer, db.ForeignKey("billing_records.id"), nullable=False, index=True)
+    era_claim_line_id = db.Column(db.Integer, db.ForeignKey("era_claim_lines.id"), index=True)
+
+    payment_type = db.Column(db.Text, nullable=False, index=True)  # PRIMARY, SECONDARY, PATIENT, ADJUSTMENT, WRITE_OFF
+    payment_method = db.Column(db.Text, index=True)                # CHECK, EFT, CREDIT_CARD, CASH, ACH, WIRE
+    payment_amount = db.Column(db.Float, nullable=False)
+    check_number = db.Column(db.Text)
+    payer_name = db.Column(db.Text)
+    payment_date = db.Column(db.Date, index=True)
+    posted_date = db.Column(db.Date)
+    source = db.Column(db.Text)                                    # ERA_835, MANUAL, BANK_STATEMENT, LEGACY
+    notes = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=_utcnow)
+
+    __table_args__ = (
+        db.Index("idx_payment_detail_billing_type", "billing_record_id", "payment_type"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "billing_record_id": self.billing_record_id,
+            "era_claim_line_id": self.era_claim_line_id,
+            "payment_type": self.payment_type,
+            "payment_method": self.payment_method,
+            "payment_amount": self.payment_amount,
+            "check_number": self.check_number,
+            "payer_name": self.payer_name,
+            "payment_date": self.payment_date.isoformat() if self.payment_date else None,
+            "posted_date": self.posted_date.isoformat() if self.posted_date else None,
+            "source": self.source,
+            "notes": self.notes,
         }
 
 

@@ -20,7 +20,7 @@ from datetime import timedelta
 
 from rapidfuzz import fuzz
 
-from app.models import db, BillingRecord, EraClaimLine
+from app.models import db, BillingRecord, EraClaimLine, EraPayment
 
 
 # ── Name normalization ──────────────────────────────────────────
@@ -310,6 +310,7 @@ def confirm_match(claim_id, billing_id=None):
 
     claim.match_confidence = 1.0
     _record_smart_outcome(claim, billing_id, action)
+    _flow_back_era_payment(claim, billing_id)
     db.session.commit()
     return {"status": "confirmed", "claim_id": claim_id, "billing_id": claim.matched_billing_id}
 
@@ -369,6 +370,67 @@ def get_match_results(status_filter=None, page=1, per_page=50):
         "page": page,
         "pages": results.pages,
     }
+
+
+# ── ERA Payment Flow-Back ──────────────────────────────────────
+
+def _flow_back_era_payment(claim, billing_id):
+    """Flow ERA payment data back to the matched billing record.
+
+    Updates billing record with:
+    - era_paid_amount: actual amount paid per ERA 835
+    - payment_method: normalized from ERA payment method
+    - adjustment_amount: CAS adjustment amount
+    - charge_category: inferred if not already set
+    """
+    try:
+        billing = db.session.get(BillingRecord, billing_id) if billing_id else None
+        if not billing or not claim:
+            return
+
+        # Set era_paid_amount from ERA claim line
+        if claim.paid_amount is not None:
+            billing.era_paid_amount = claim.paid_amount
+
+        # Set adjustment amount from ERA
+        if claim.cas_adjustment_amount is not None:
+            billing.adjustment_amount = claim.cas_adjustment_amount
+
+        # Flow payment method from ERA payment header
+        if claim.era_payment_id:
+            era_payment = db.session.get(EraPayment, claim.era_payment_id)
+            if era_payment and era_payment.payment_method:
+                from app.revenue.underpayment_detector import normalize_payment_method
+                billing.payment_method = normalize_payment_method(era_payment.payment_method)
+
+        # Set billed_amount from ERA if not already set
+        if claim.billed_amount and (not billing.billed_amount or billing.billed_amount == 0):
+            billing.billed_amount = claim.billed_amount
+
+        # Infer charge_category if not already set
+        if not billing.charge_category:
+            from app.revenue.underpayment_detector import infer_charge_category
+            billing.charge_category = infer_charge_category(billing)
+
+        # Create PaymentDetail record for audit trail
+        try:
+            from app.models import PaymentDetail
+            detail = PaymentDetail(
+                billing_record_id=billing_id,
+                era_claim_line_id=claim.id,
+                payment_type='PRIMARY',
+                payment_method=billing.payment_method,
+                payment_amount=claim.paid_amount or 0.0,
+                payer_name=era_payment.payer_name if claim.era_payment_id and era_payment else None,
+                payment_date=era_payment.payment_date if claim.era_payment_id and era_payment else None,
+                source='ERA_835',
+            )
+            db.session.add(detail)
+        except Exception:
+            pass  # Don't fail the match if payment detail fails
+
+    except Exception:
+        pass  # Don't break match operations if flow-back fails
 
 
 # ── Smart Matching Helpers ──────────────────────────────────────
