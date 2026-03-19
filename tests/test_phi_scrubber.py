@@ -410,8 +410,10 @@ class TestAIAssistantRoutes:
 
     def test_ai_analyze_db_no_key(self, client):
         """Without API key, should return error message (not crash)."""
-        resp = client.get('/api/import/ai/analyze-db')
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert 'error' in data
-        assert 'key' in data['error'].lower() or 'api' in data['error'].lower()
+        from unittest.mock import patch
+        with patch('app.import_engine.ai_assistant._get_api_key', return_value=None):
+            resp = client.get('/api/import/ai/analyze-db')
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert 'error' in data
+            assert 'key' in data['error'].lower() or 'api' in data['error'].lower()

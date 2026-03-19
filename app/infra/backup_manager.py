@@ -7,7 +7,7 @@ Retention: 7 daily, 4 weekly, 12 monthly.
 import hashlib
 import os
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from glob import glob
 
 
@@ -48,7 +48,7 @@ def run_backup(app=None, db_path=None, backup_dir=None):
     if not os.path.exists(db_path):
         return {"error": f"Database not found: {db_path}"}
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_filename = f"ocdr_{timestamp}.db"
     backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -126,7 +126,7 @@ def _apply_retention(backup_dir, daily_keep=7, weekly_keep=4, monthly_keep=12):
     if len(files) <= daily_keep:
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     keep = set()
 
     # Parse timestamps from filenames and categorize

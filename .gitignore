@@ -16,3 +16,4 @@ build/
 venv/
 .credentials.enc
 node_modules/
+topaz_samples/

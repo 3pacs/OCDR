@@ -8,7 +8,7 @@ based on precision/recall metrics from historical outcomes.
 """
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func
 
@@ -224,7 +224,7 @@ def update_learned_weights(carrier=None, modality=None):
         if not weights:
             existing.sample_size = thresholds["sample_size"]
 
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     return existing
 
