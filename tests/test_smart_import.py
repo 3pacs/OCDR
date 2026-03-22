@@ -399,6 +399,34 @@ class TestScheduleCalendarPage:
         assert b'Smart Scan' in resp.data
         assert b'Scan Folder' in resp.data
 
+    def test_dashboard_renders_command_center(self, client):
+        """Dashboard shows the full insights command center."""
+        resp = client.get('/')
+        assert resp.status_code == 200
+        assert b'Command Center' in resp.data
+        assert b'Total Records' in resp.data
+        assert b'Revenue by Carrier' in resp.data
+        assert b'Filing Deadline Alerts' in resp.data
+        assert b'Denial Appeals' in resp.data
+
+    def test_all_page_routes(self, client):
+        """All page routes render without error."""
+        pages = ['/', '/import', '/schedules', '/underpayments',
+                 '/filing-deadlines', '/denials', '/duplicates',
+                 '/secondary', '/written-off']
+        for page in pages:
+            resp = client.get(page)
+            assert resp.status_code == 200, f'{page} returned {resp.status_code}'
+
+    def test_nav_has_revenue_dropdown(self, client):
+        """Navigation bar has Revenue dropdown with sub-pages."""
+        resp = client.get('/')
+        assert b'Revenue' in resp.data
+        assert b'/underpayments' in resp.data
+        assert b'/denials' in resp.data
+        assert b'/secondary' in resp.data
+        assert b'/filing-deadlines' in resp.data
+
 
 class TestScheduleCRUD:
     """Test the editable schedule CRUD operations."""

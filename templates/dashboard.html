@@ -1,53 +1,326 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 
-{% block content %}
-<h1 class="mb-4">OCDR Dashboard</h1>
+{% block head %}
+<style>
+    .kpi-card { transition: transform 0.15s; cursor: pointer; text-decoration: none; }
+    .kpi-card:hover { transform: translateY(-2px); }
+    .kpi-val { font-size: 1.8rem; font-weight: 700; }
+    .kpi-sub { font-size: 0.75rem; opacity: 0.85; }
+    .insight-card { border-left: 4px solid; }
+    .insight-card.urgent { border-left-color: #dc3545; }
+    .insight-card.warning { border-left-color: #ffc107; }
+    .insight-card.info { border-left-color: #0d6efd; }
+    .insight-card.success { border-left-color: #198754; }
+    .action-btn { font-size: 0.8rem; }
+    .chart-container { position: relative; height: 260px; }
+    .widget-header { font-size: 0.9rem; font-weight: 600; }
+    .rec-item { font-size: 0.8rem; padding: 6px 10px; border-bottom: 1px solid #eee; }
+    .rec-item:last-child { border-bottom: none; }
+    .rec-icon { width: 20px; text-align: center; }
+    .table-mini th, .table-mini td { font-size: 0.78rem; padding: 4px 8px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .spinner-sm { width: 1rem; height: 1rem; border-width: 0.15em; }
+</style>
+{% endblock %}
 
-<div class="row g-3 mb-4" id="kpi-cards">
-    <div class="col-md-3">
-        <div class="card text-bg-primary">
-            <div class="card-body">
-                <h6 class="card-title">Total Records</h6>
-                <h2 class="card-text" id="kpi-records">--</h2>
+{% block content %}
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h4 class="mb-0">OCDR Command Center</h4>
+        <small class="text-muted" id="last-refresh">Loading...</small>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" onclick="refreshAll()">
+            <span id="refresh-spinner" class="spinner-border spinner-sm d-none me-1"></span>
+            Refresh
+        </button>
+        <button class="btn btn-sm btn-outline-success" onclick="runBackup()">Backup</button>
+    </div>
+</div>
+
+<!-- ============ ROW 1: KPI Cards ============ -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="/import" class="kpi-card card text-bg-primary h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Total Records</small>
+                <div class="kpi-val" id="kpi-records">--</div>
+                <div class="kpi-sub" id="kpi-records-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="#" class="kpi-card card text-bg-success h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Total Revenue</small>
+                <div class="kpi-val" id="kpi-revenue">--</div>
+                <div class="kpi-sub" id="kpi-revenue-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="/underpayments" class="kpi-card card text-bg-warning h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Underpaid</small>
+                <div class="kpi-val" id="kpi-underpaid">--</div>
+                <div class="kpi-sub" id="kpi-underpaid-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="/filing-deadlines" class="kpi-card card text-bg-danger h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Filing Alerts</small>
+                <div class="kpi-val" id="kpi-filing">--</div>
+                <div class="kpi-sub" id="kpi-filing-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="/denials" class="kpi-card card text-bg-dark h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Unpaid Claims</small>
+                <div class="kpi-val" id="kpi-unpaid">--</div>
+                <div class="kpi-sub" id="kpi-unpaid-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a href="/secondary" class="kpi-card card text-bg-info h-100 text-decoration-none">
+            <div class="card-body p-2 text-center">
+                <small>Secondary Missing</small>
+                <div class="kpi-val" id="kpi-secondary">--</div>
+                <div class="kpi-sub" id="kpi-secondary-sub">&nbsp;</div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<!-- ============ ROW 2: Insights & Actions ============ -->
+<div class="row g-3 mb-3">
+    <!-- Recommendations / Insights Panel -->
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Insights &amp; Recommendations</span>
+                <span class="badge bg-secondary" id="rec-count">0</span>
+            </div>
+            <div class="card-body p-0" style="max-height:360px; overflow-y:auto" id="rec-list">
+                <div class="text-center py-4 text-muted">Loading analysis...</div>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card text-bg-danger">
-            <div class="card-body">
-                <h6 class="card-title">Filing Alerts</h6>
-                <h2 class="card-text" id="kpi-alerts">--</h2>
+
+    <!-- Quick Actions Grid -->
+    <div class="col-lg-3">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">Quick Actions</span></div>
+            <div class="card-body d-flex flex-column gap-2">
+                <a href="/import" class="btn btn-outline-primary action-btn w-100">Import Files</a>
+                <a href="/schedules" class="btn btn-outline-primary action-btn w-100">Schedule Calendar</a>
+                <button class="btn btn-outline-warning action-btn w-100" onclick="runRematch()">Re-match Schedules</button>
+                <button class="btn btn-outline-danger action-btn w-100" onclick="openDenialQueue()">Appeal Priority Queue</button>
+                <button class="btn btn-outline-info action-btn w-100" onclick="runBackup()">Run Backup</button>
+                <div id="action-result" class="small mt-auto"></div>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card text-bg-warning">
-            <div class="card-body">
-                <h6 class="card-title">Underpaid Claims</h6>
-                <h2 class="card-text" id="kpi-underpaid">--</h2>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-bg-success">
-            <div class="card-body">
-                <h6 class="card-title">System Status</h6>
-                <h2 class="card-text" id="kpi-status">--</h2>
+
+    <!-- System Status -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">System Status</span></div>
+            <div class="card-body p-0">
+                <table class="table table-mini mb-0">
+                    <tbody id="status-body">
+                        <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 </div>
 
-<div class="row">
-    <div class="col-12">
-        <div class="card">
+<!-- ============ ROW 3: Charts ============ -->
+<div class="row g-3 mb-3">
+    <!-- Revenue by Carrier -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">Revenue by Carrier</span></div>
             <div class="card-body">
-                <h5>Quick Actions</h5>
-                <a href="/api/underpayments/summary" class="btn btn-outline-warning me-2">Underpayment Summary</a>
-                <a href="/api/filing-deadlines/alerts" class="btn btn-outline-danger me-2">Filing Alerts</a>
-                <a href="/api/backup/status" class="btn btn-outline-info me-2">Backup Status</a>
-                <a href="/health" class="btn btn-outline-success">Health Check</a>
+                <div class="chart-container">
+                    <canvas id="chart-carrier"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Revenue by Modality -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">Revenue by Modality</span></div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="chart-modality"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Year-over-Year Trend -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">Year-over-Year Revenue</span></div>
+            <div class="card-body">
+                <div class="chart-container">
+                    <canvas id="chart-yearly"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ ROW 4: Tables ============ -->
+<div class="row g-3 mb-3">
+    <!-- Top Carriers Table -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Carrier Performance</span>
+                <a href="/underpayments" class="btn btn-sm btn-outline-warning py-0">View Underpayments</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height:300px; overflow-y:auto">
+                    <table class="table table-mini table-hover mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Carrier</th>
+                                <th class="text-end">Claims</th>
+                                <th class="text-end">Revenue</th>
+                                <th class="text-end">Avg Payment</th>
+                            </tr>
+                        </thead>
+                        <tbody id="carrier-tbody">
+                            <tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Modalities Table -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Modality Breakdown</span>
+                <a href="/schedules" class="btn btn-sm btn-outline-primary py-0">View Calendar</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height:300px; overflow-y:auto">
+                    <table class="table table-mini table-hover mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Modality</th>
+                                <th class="text-end">Claims</th>
+                                <th class="text-end">Revenue</th>
+                                <th class="text-end">Avg Payment</th>
+                                <th>Revenue Share</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modality-tbody">
+                            <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ ROW 5: Filing Alerts & Denial Queue Preview ============ -->
+<div class="row g-3 mb-3">
+    <!-- Filing Deadline Alerts -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Filing Deadline Alerts</span>
+                <a href="/filing-deadlines" class="btn btn-sm btn-outline-danger py-0">View All</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height:280px; overflow-y:auto">
+                    <table class="table table-mini table-hover mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Days</th>
+                                <th>Status</th>
+                                <th>Patient</th>
+                                <th>Carrier</th>
+                                <th>Deadline</th>
+                            </tr>
+                        </thead>
+                        <tbody id="filing-tbody">
+                            <tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Denial Appeal Queue Preview -->
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Top Denial Appeals (by recoverability)</span>
+                <a href="/denials" class="btn btn-sm btn-outline-dark py-0">Full Queue</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="max-height:280px; overflow-y:auto">
+                    <table class="table table-mini table-hover mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Patient</th>
+                                <th>Carrier</th>
+                                <th>Reason</th>
+                                <th>Status</th>
+                                <th class="text-end">Billed</th>
+                                <th class="text-end">Score</th>
+                            </tr>
+                        </thead>
+                        <tbody id="denial-tbody">
+                            <tr><td colspan="6" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============ ROW 6: Underpayment Summary & Backup ============ -->
+<div class="row g-3 mb-4">
+    <!-- Underpayment Summary -->
+    <div class="col-lg-8">
+        <div class="card h-100">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">Underpayment Analysis</span>
+                <a href="/underpayments" class="btn btn-sm btn-outline-warning py-0">Full Report</a>
+            </div>
+            <div class="card-body" id="underpayment-widget">
+                <div class="text-center text-muted py-3">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup & ERA Status -->
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header py-2"><span class="widget-header">ERA Payments &amp; Backup</span></div>
+            <div class="card-body" id="era-backup-widget">
+                <div class="text-center text-muted py-3">Loading...</div>
             </div>
         </div>
     </div>
@@ -55,5 +328,414 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+<script>
+// ---- Chart instances (for destroy on refresh) ----
+let chartCarrier = null, chartModality = null, chartYearly = null;
+
+const COLORS = ['#0d6efd','#198754','#ffc107','#dc3545','#6f42c1','#0dcaf0','#fd7e14','#20c997','#d63384','#6c757d'];
+const fmt$ = v => '$' + (v||0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0});
+const fmtK = v => v >= 1000000 ? '$' + (v/1000000).toFixed(1) + 'M' : v >= 1000 ? '$' + (v/1000).toFixed(0) + 'K' : fmt$(v);
+const esc = t => { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; };
+
+function refreshAll() {
+    const sp = document.getElementById('refresh-spinner');
+    sp.classList.remove('d-none');
+    Promise.all([
+        loadAnalysis(),
+        loadHealth(),
+        loadFilingPreview(),
+        loadDenialPreview(),
+        loadUnderpaymentSummary(),
+        loadEraBackup(),
+    ]).finally(() => {
+        sp.classList.add('d-none');
+        document.getElementById('last-refresh').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+    });
+}
+
+// ---- Main Analysis (KPIs, charts, tables, recommendations) ----
+function loadAnalysis() {
+    return fetch('/api/analysis/post-import')
+        .then(r => r.json())
+        .then(data => {
+            // KPIs
+            document.getElementById('kpi-records').textContent = (data.total_records||0).toLocaleString();
+            document.getElementById('kpi-revenue').textContent = fmtK(data.total_revenue||0);
+            document.getElementById('kpi-underpaid').textContent = (data.underpaid_claims||0).toLocaleString();
+            document.getElementById('kpi-underpaid-sub').textContent = data.underpaid_variance ? fmtK(Math.abs(data.underpaid_variance)) + ' gap' : '';
+            document.getElementById('kpi-filing').textContent = (data.filing_alerts||0).toLocaleString();
+            document.getElementById('kpi-filing-sub').textContent =
+                (data.past_deadline ? data.past_deadline + ' past' : '') +
+                (data.past_deadline && data.warning_30day ? ', ' : '') +
+                (data.warning_30day ? data.warning_30day + ' warning' : '');
+            document.getElementById('kpi-unpaid').textContent = (data.unpaid_claims||0).toLocaleString();
+            document.getElementById('kpi-secondary').textContent = (data.secondary_missing||0).toLocaleString();
+
+            if (data.era_payments) {
+                document.getElementById('kpi-records-sub').textContent = data.era_payments + ' ERA files';
+            }
+            if (data.psma_count) {
+                document.getElementById('kpi-secondary-sub').textContent = data.psma_count + ' PSMA PET scans';
+            }
+
+            // Recommendations
+            renderRecommendations(data.recommendations || []);
+
+            // Charts
+            renderCarrierChart(data.by_carrier || []);
+            renderModalityChart(data.by_modality || []);
+            renderYearlyChart(data.by_year || []);
+
+            // Tables
+            renderCarrierTable(data.by_carrier || []);
+            renderModalityTable(data.by_modality || [], data.total_revenue || 0);
+        })
+        .catch(err => {
+            document.getElementById('rec-list').innerHTML =
+                '<div class="text-danger p-3 small">Could not load analysis: ' + esc(err.message) + '</div>';
+        });
+}
+
+function renderRecommendations(recs) {
+    document.getElementById('rec-count').textContent = recs.length;
+    if (recs.length === 0) {
+        document.getElementById('rec-list').innerHTML =
+            '<div class="text-muted text-center py-4 small">No issues found. System is healthy.</div>';
+        return;
+    }
+    let html = '';
+    for (const rec of recs) {
+        let cls = 'info';
+        let icon = 'circle';
+        if (/URGENT|PAST/i.test(rec)) { cls = 'urgent'; icon = '!!'; }
+        else if (/approach|warning|missing/i.test(rec)) { cls = 'warning'; icon = '!'; }
+        else if (/underpaid|gap/i.test(rec)) { cls = 'warning'; icon = '$'; }
+        else if (/PSMA|detected/i.test(rec)) { cls = 'success'; icon = '*'; }
+
+        html += `<div class="rec-item d-flex align-items-start insight-card ${cls}">
+            <span class="rec-icon fw-bold me-2 text-${cls === 'urgent' ? 'danger' : cls === 'warning' ? 'warning' : cls === 'success' ? 'success' : 'primary'}">${icon}</span>
+            <span>${esc(rec)}</span>
+        </div>`;
+    }
+    document.getElementById('rec-list').innerHTML = html;
+}
+
+// ---- Charts ----
+function renderCarrierChart(carriers) {
+    if (chartCarrier) chartCarrier.destroy();
+    const ctx = document.getElementById('chart-carrier').getContext('2d');
+    const top8 = carriers.slice(0, 8);
+    chartCarrier = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: top8.map(c => c.carrier),
+            datasets: [{
+                data: top8.map(c => c.revenue),
+                backgroundColor: COLORS.slice(0, top8.length),
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'right', labels: { font: { size: 10 }, boxWidth: 12 } },
+                tooltip: { callbacks: { label: ctx => ctx.label + ': ' + fmt$(ctx.raw) } },
+            },
+        }
+    });
+}
+
+function renderModalityChart(modalities) {
+    if (chartModality) chartModality.destroy();
+    const ctx = document.getElementById('chart-modality').getContext('2d');
+    chartModality = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: modalities.map(m => m.modality),
+            datasets: [{
+                label: 'Revenue',
+                data: modalities.map(m => m.revenue),
+                backgroundColor: COLORS.slice(0, modalities.length),
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { ticks: { callback: v => fmtK(v) }, beginAtZero: true },
+                x: { ticks: { font: { size: 10 } } },
+            },
+        }
+    });
+}
+
+function renderYearlyChart(years) {
+    if (chartYearly) chartYearly.destroy();
+    const ctx = document.getElementById('chart-yearly').getContext('2d');
+    chartYearly = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: years.map(y => y.year),
+            datasets: [
+                {
+                    label: 'Revenue',
+                    data: years.map(y => y.revenue),
+                    borderColor: '#198754',
+                    backgroundColor: 'rgba(25,135,84,0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    yAxisID: 'y',
+                },
+                {
+                    label: 'Claims',
+                    data: years.map(y => y.count),
+                    borderColor: '#0d6efd',
+                    borderDash: [5, 3],
+                    tension: 0.3,
+                    yAxisID: 'y1',
+                },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { font: { size: 10 }, boxWidth: 12 } } },
+            scales: {
+                y: { position: 'left', ticks: { callback: v => fmtK(v) }, beginAtZero: true },
+                y1: { position: 'right', grid: { drawOnChartArea: false }, beginAtZero: true },
+            },
+        }
+    });
+}
+
+// ---- Tables ----
+function renderCarrierTable(carriers) {
+    const tbody = document.getElementById('carrier-tbody');
+    if (!carriers.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-muted text-center">No data</td></tr>'; return; }
+    tbody.innerHTML = carriers.map(c => `<tr>
+        <td>${esc(c.carrier)}</td>
+        <td class="text-end">${c.count.toLocaleString()}</td>
+        <td class="text-end">${fmt$(c.revenue)}</td>
+        <td class="text-end">${fmt$(c.avg_payment)}</td>
+    </tr>`).join('');
+}
+
+function renderModalityTable(modalities, totalRev) {
+    const tbody = document.getElementById('modality-tbody');
+    if (!modalities.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center">No data</td></tr>'; return; }
+    tbody.innerHTML = modalities.map(m => {
+        const pct = totalRev > 0 ? ((m.revenue / totalRev) * 100).toFixed(1) : 0;
+        return `<tr>
+            <td><strong>${esc(m.modality)}</strong></td>
+            <td class="text-end">${m.count.toLocaleString()}</td>
+            <td class="text-end">${fmt$(m.revenue)}</td>
+            <td class="text-end">${fmt$(m.avg_payment)}</td>
+            <td>
+                <div class="progress" style="height:14px">
+                    <div class="progress-bar bg-primary" style="width:${pct}%">${pct}%</div>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+// ---- Filing Deadline Preview ----
+function loadFilingPreview() {
+    return fetch('/api/filing-deadlines?per_page=15')
+        .then(r => r.json())
+        .then(data => {
+            const claims = data.claims || [];
+            const tbody = document.getElementById('filing-tbody');
+            if (!claims.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">No filing deadline alerts</td></tr>';
+                return;
+            }
+            tbody.innerHTML = claims.map(c => {
+                const days = c.days_remaining;
+                const status = c.deadline_status;
+                const badgeCls = status === 'PAST_DEADLINE' ? 'bg-danger'
+                    : status === 'WARNING_30DAY' ? 'bg-warning text-dark' : 'bg-success';
+                const daysCls = days < 0 ? 'text-danger fw-bold' : days <= 30 ? 'text-warning fw-bold' : '';
+                return `<tr>
+                    <td class="${daysCls}">${days}</td>
+                    <td><span class="badge ${badgeCls}" style="font-size:0.65rem">${status.replace(/_/g,' ')}</span></td>
+                    <td>${esc(c.patient_name)}</td>
+                    <td>${esc(c.insurance_carrier)}</td>
+                    <td>${c.appeal_deadline || ''}</td>
+                </tr>`;
+            }).join('');
+        })
+        .catch(() => {
+            document.getElementById('filing-tbody').innerHTML =
+                '<tr><td colspan="5" class="text-muted text-center py-3">Could not load</td></tr>';
+        });
+}
+
+// ---- Denial Queue Preview ----
+function loadDenialPreview() {
+    return fetch('/api/denials/queue?limit=15')
+        .then(r => r.json())
+        .then(data => {
+            const claims = data.claims || data.queue || [];
+            const tbody = document.getElementById('denial-tbody');
+            if (!claims.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No denied claims in queue</td></tr>';
+                return;
+            }
+            tbody.innerHTML = claims.map(c => {
+                const statusCls = c.denial_status === 'APPEALED' ? 'bg-warning text-dark'
+                    : c.denial_status === 'DENIED' ? 'bg-danger' : 'bg-secondary';
+                return `<tr>
+                    <td>${esc(c.patient_name || '')}</td>
+                    <td>${esc(c.insurance_carrier || c.carrier || '')}</td>
+                    <td><code class="small">${esc(c.denial_reason_code || c.reason_code || '?')}</code></td>
+                    <td><span class="badge ${statusCls}" style="font-size:0.65rem">${c.denial_status || ''}</span></td>
+                    <td class="text-end">${fmt$(c.billed_amount || c.total_payment || 0)}</td>
+                    <td class="text-end">${c.recoverability_score !== undefined ? c.recoverability_score.toFixed(1) : '--'}</td>
+                </tr>`;
+            }).join('');
+        })
+        .catch(() => {
+            document.getElementById('denial-tbody').innerHTML =
+                '<tr><td colspan="6" class="text-muted text-center py-3">Could not load</td></tr>';
+        });
+}
+
+// ---- Underpayment Summary ----
+function loadUnderpaymentSummary() {
+    return fetch('/api/underpayments/summary')
+        .then(r => r.json())
+        .then(data => {
+            const w = document.getElementById('underpayment-widget');
+            const total = data.total_flagged || 0;
+            const variance = Math.abs(data.total_variance || 0);
+            const byCarrier = data.by_carrier || [];
+            const byModality = data.by_modality || [];
+
+            let html = '<div class="row g-3">';
+            html += `<div class="col-md-3 text-center">
+                <div class="text-warning fw-bold" style="font-size:2rem">${total.toLocaleString()}</div>
+                <small class="text-muted">Underpaid Claims</small>
+            </div>`;
+            html += `<div class="col-md-3 text-center">
+                <div class="text-danger fw-bold" style="font-size:2rem">${fmtK(variance)}</div>
+                <small class="text-muted">Total Variance Gap</small>
+            </div>`;
+
+            // Top underpaid carriers
+            html += '<div class="col-md-3"><small class="fw-bold">By Carrier</small>';
+            if (byCarrier.length) {
+                html += '<table class="table table-mini mb-0"><tbody>';
+                for (const c of byCarrier.slice(0, 5)) {
+                    html += `<tr><td>${esc(c.carrier)}</td><td class="text-end">${c.count}</td>
+                        <td class="text-end text-danger">${fmt$(Math.abs(c.variance || 0))}</td></tr>`;
+                }
+                html += '</tbody></table>';
+            } else { html += '<div class="text-muted small">No data</div>'; }
+            html += '</div>';
+
+            // Top underpaid modalities
+            html += '<div class="col-md-3"><small class="fw-bold">By Modality</small>';
+            if (byModality.length) {
+                html += '<table class="table table-mini mb-0"><tbody>';
+                for (const m of byModality.slice(0, 5)) {
+                    html += `<tr><td>${esc(m.modality)}</td><td class="text-end">${m.count}</td>
+                        <td class="text-end text-danger">${fmt$(Math.abs(m.variance || 0))}</td></tr>`;
+                }
+                html += '</tbody></table>';
+            } else { html += '<div class="text-muted small">No data</div>'; }
+            html += '</div></div>';
+
+            w.innerHTML = html;
+        })
+        .catch(err => {
+            document.getElementById('underpayment-widget').innerHTML =
+                '<div class="text-muted small">Could not load underpayment summary</div>';
+        });
+}
+
+// ---- ERA & Backup ----
+function loadEraBackup() {
+    return Promise.all([
+        fetch('/api/era/payments?per_page=1').then(r => r.json()).catch(() => ({})),
+        fetch('/api/backup/status').then(r => r.json()).catch(() => ({})),
+    ]).then(([era, backup]) => {
+        const w = document.getElementById('era-backup-widget');
+        let html = '<table class="table table-mini mb-0"><tbody>';
+
+        // ERA
+        html += `<tr><td class="fw-bold">ERA Files Imported</td><td class="text-end">${era.total || 0}</td></tr>`;
+
+        // Backup
+        html += `<tr><td class="fw-bold">Backups</td><td class="text-end">${backup.count || 0}</td></tr>`;
+        if (backup.latest) {
+            html += `<tr><td class="text-muted ps-3">Latest</td><td class="text-end small">${backup.latest.filename || ''}</td></tr>`;
+            html += `<tr><td class="text-muted ps-3">Date</td><td class="text-end small">${backup.latest.date || ''}</td></tr>`;
+        }
+        if (backup.folder) {
+            html += `<tr><td class="text-muted ps-3">Folder</td><td class="text-end small text-truncate" style="max-width:160px" title="${esc(backup.folder)}">${esc(backup.folder)}</td></tr>`;
+        }
+
+        html += '</tbody></table>';
+        html += `<button class="btn btn-outline-success btn-sm w-100 mt-2 action-btn" onclick="runBackup()">Run Backup Now</button>`;
+        w.innerHTML = html;
+    });
+}
+
+// ---- Health / System Status ----
+function loadHealth() {
+    return fetch('/health')
+        .then(r => r.json())
+        .then(data => {
+            const tbody = document.getElementById('status-body');
+            const statusDot = data.status === 'ok'
+                ? '<span class="status-dot bg-success"></span>'
+                : '<span class="status-dot bg-danger"></span>';
+            tbody.innerHTML = `
+                <tr><td class="fw-bold">Status</td><td>${statusDot} ${data.status || 'unknown'}</td></tr>
+                <tr><td class="fw-bold">DB Size</td><td>${data.db_size || 'N/A'}</td></tr>
+                <tr><td class="fw-bold">Records</td><td>${(data.record_count||0).toLocaleString()}</td></tr>
+                <tr><td class="fw-bold">Uptime</td><td>${data.uptime_seconds ? Math.round(data.uptime_seconds/60) + ' min' : 'N/A'}</td></tr>
+            `;
+        })
+        .catch(() => {
+            document.getElementById('status-body').innerHTML =
+                '<tr><td colspan="2" class="text-danger small">System offline</td></tr>';
+        });
+}
+
+// ---- Actions ----
+function runBackup() {
+    const r = document.getElementById('action-result');
+    r.innerHTML = '<span class="spinner-border spinner-sm"></span> Running backup...';
+    fetch('/api/backup/run', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) { r.innerHTML = '<span class="text-danger">' + esc(data.error) + '</span>'; return; }
+            r.innerHTML = '<span class="text-success">Backup complete: ' + esc(data.filename || '') + '</span>';
+            loadEraBackup();
+        })
+        .catch(err => { r.innerHTML = '<span class="text-danger">' + esc(err.message) + '</span>'; });
+}
+
+function runRematch() {
+    const r = document.getElementById('action-result');
+    r.innerHTML = '<span class="spinner-border spinner-sm"></span> Re-matching schedules...';
+    fetch('/api/import/schedule/rematch', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+            r.innerHTML = `<span class="text-success">Matched: ${data.newly_matched}, Still unmatched: ${data.still_unmatched}</span>`;
+        })
+        .catch(err => { r.innerHTML = '<span class="text-danger">' + esc(err.message) + '</span>'; });
+}
+
+function openDenialQueue() {
+    window.location.href = '/denials';
+}
+
+// ---- Init ----
+refreshAll();
+setInterval(refreshAll, 120000);
+</script>
 {% endblock %}
