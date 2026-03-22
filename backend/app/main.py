@@ -271,6 +271,7 @@ from backend.app.api.routes.matching_routes import router as matching_router
 from backend.app.api.routes.insights_routes import router as insights_router
 from backend.app.api.routes.analytics_routes import router as analytics_router
 from backend.app.api.routes.task_routes import router as task_router
+from backend.app.api.routes.browser_routes import router as browser_router
 
 app.include_router(import_router, prefix="/api/import", tags=["import"])
 app.include_router(era_router, prefix="/api/era", tags=["era"])
@@ -280,3 +281,4 @@ app.include_router(matching_router, prefix="/api/matching", tags=["matching"])
 app.include_router(insights_router, prefix="/api/insights", tags=["insights"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(task_router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(browser_router, prefix="/api/browser", tags=["browser"])

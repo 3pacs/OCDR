@@ -20,6 +20,7 @@ import DenialAnalytics from "./pages/DenialAnalytics";
 import PatientLookup from "./pages/PatientLookup";
 import PipelineImprovements from "./pages/PipelineImprovements";
 import BusinessTasks from "./pages/BusinessTasks";
+import BrowserValidation from "./pages/BrowserValidation";
 
 function App() {
   return (
@@ -45,6 +46,7 @@ function App() {
           <Route path="insights" element={<Insights />} />
           <Route path="pipeline" element={<PipelineImprovements />} />
           <Route path="tasks" element={<BusinessTasks />} />
+          <Route path="browser-validation" element={<BrowserValidation />} />
         </Route>
       </Routes>
     </>
