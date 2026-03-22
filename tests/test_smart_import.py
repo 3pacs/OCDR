@@ -6,11 +6,12 @@ import sys
 import io
 import pytest
 import tempfile
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app import create_app
-from app.models import db, BillingRecord, EraPayment, EraClaimLine, ScheduleEntry
+from app.models import db, BillingRecord, EraPayment, EraClaimLine, ScheduleEntry, WatchlistItem
 
 
 class TestConfig:
@@ -699,3 +700,156 @@ class TestScheduleFolderScan:
             resp = client.get('/api/import/schedule/calendar?month=2024-01&modality_group=mri')
             data = resp.get_json()
             assert data['summary']['total_scheduled'] == 0
+
+
+class TestWatchlist:
+    """Test the watchlist CRUD and live stats."""
+
+    @pytest.fixture
+    def app(self):
+        app = create_app(TestConfig)
+        with app.app_context():
+            db.create_all()
+            yield app
+            db.session.remove()
+            db.drop_all()
+
+    @pytest.fixture
+    def client(self, app):
+        return app.test_client()
+
+    def test_empty_watchlist(self, client):
+        resp = client.get('/api/watchlist')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['total'] == 0
+        assert data['items'] == []
+
+    def test_add_ticker(self, client):
+        import json
+        resp = client.post('/api/watchlist',
+                           data=json.dumps({'ticker': 'M/M', 'label': 'Medicare'}),
+                           content_type='application/json')
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data['ticker'] == 'M/M'
+        assert data['label'] == 'Medicare'
+        assert 'live' in data
+
+    def test_add_ticker_requires_ticker(self, client):
+        import json
+        resp = client.post('/api/watchlist',
+                           data=json.dumps({}),
+                           content_type='application/json')
+        assert resp.status_code == 400
+
+    def test_add_ticker_auto_detects_modality(self, client):
+        import json
+        resp = client.post('/api/watchlist',
+                           data=json.dumps({'ticker': 'CT'}),
+                           content_type='application/json')
+        assert resp.status_code == 201
+        assert resp.get_json()['category'] == 'MODALITY'
+
+    def test_update_ticker(self, client):
+        import json
+        resp = client.post('/api/watchlist',
+                           data=json.dumps({'ticker': 'INS'}),
+                           content_type='application/json')
+        item_id = resp.get_json()['id']
+
+        resp = client.put(f'/api/watchlist/{item_id}',
+                          data=json.dumps({
+                              'label': 'Commercial Insurance',
+                              'notes': 'Watch closely',
+                              'target_value': 50000,
+                          }),
+                          content_type='application/json')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['label'] == 'Commercial Insurance'
+        assert data['notes'] == 'Watch closely'
+        assert data['target_value'] == 50000
+
+    def test_delete_ticker(self, client):
+        import json
+        resp = client.post('/api/watchlist',
+                           data=json.dumps({'ticker': 'W/C'}),
+                           content_type='application/json')
+        item_id = resp.get_json()['id']
+
+        resp = client.delete(f'/api/watchlist/{item_id}')
+        assert resp.status_code == 200
+        assert resp.get_json()['deleted'] == item_id
+
+        # Verify gone
+        resp = client.get('/api/watchlist')
+        assert resp.get_json()['total'] == 0
+
+    def test_delete_not_found(self, client):
+        resp = client.delete('/api/watchlist/99999')
+        assert resp.status_code == 404
+
+    def test_watchlist_with_live_stats(self, app, client):
+        """Live stats resolve from billing records."""
+        import json
+        with app.app_context():
+            # Add billing records for M/M carrier
+            for i in range(3):
+                rec = BillingRecord(
+                    patient_name=f'PATIENT{i}, TEST',
+                    referring_doctor='DR TEST',
+                    scan_type='BRAIN',
+                    insurance_carrier='M/M',
+                    modality='HMRI',
+                    service_date=date(2024, 1, 15),
+                    total_payment=500.0 + i * 100,
+                )
+                db.session.add(rec)
+            db.session.commit()
+
+            # Add M/M to watchlist
+            resp = client.post('/api/watchlist',
+                               data=json.dumps({'ticker': 'M/M'}),
+                               content_type='application/json')
+            assert resp.status_code == 201
+            data = resp.get_json()
+            assert data['live']['claim_count'] == 3
+            assert data['live']['revenue'] > 0
+
+    def test_suggestions_endpoint(self, app, client):
+        """Suggestions return distinct carriers and modalities."""
+        with app.app_context():
+            rec = BillingRecord(
+                patient_name='TEST, USER',
+                referring_doctor='DR A',
+                scan_type='BRAIN',
+                insurance_carrier='FAMILY',
+                modality='CT',
+                service_date=date(2024, 1, 15),
+                total_payment=100,
+            )
+            db.session.add(rec)
+            db.session.commit()
+
+            resp = client.get('/api/watchlist/suggestions')
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert 'FAMILY' in data['carriers']
+            assert 'CT' in data['modalities']
+
+    def test_reorder_watchlist(self, client):
+        import json
+        ids = []
+        for ticker in ['CT', 'PET', 'HMRI']:
+            resp = client.post('/api/watchlist',
+                               data=json.dumps({'ticker': ticker}),
+                               content_type='application/json')
+            ids.append(resp.get_json()['id'])
+
+        # Reverse order
+        resp = client.post('/api/watchlist/reorder',
+                           data=json.dumps({'order': list(reversed(ids))}),
+                           content_type='application/json')
+        assert resp.status_code == 200
+        assert resp.get_json()['reordered'] == 3

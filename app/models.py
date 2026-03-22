@@ -261,3 +261,32 @@ class PhysicianStatement(db.Model):
             'total_paid': self.total_paid,
             'status': self.status,
         }
+
+
+class WatchlistItem(db.Model):
+    __tablename__ = 'watchlist_items'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ticker = db.Column(db.Text, nullable=False, index=True)
+    label = db.Column(db.Text)
+    category = db.Column(db.Text, default='GENERAL', index=True)  # CARRIER, MODALITY, CLAIM, GENERAL
+    notes = db.Column(db.Text)
+    target_value = db.Column(db.Float)
+    alert_enabled = db.Column(db.Boolean, default=False)
+    sort_order = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'ticker': self.ticker,
+            'label': self.label,
+            'category': self.category,
+            'notes': self.notes,
+            'target_value': self.target_value,
+            'alert_enabled': self.alert_enabled,
+            'sort_order': self.sort_order,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

@@ -98,6 +98,118 @@
     </div>
 </div>
 
+<!-- ============ WATCHLIST ============ -->
+<div class="row g-3 mb-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                <span class="widget-header">My Watchlist</span>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" data-bs-toggle="modal" data-bs-target="#addTickerModal" style="font-size:0.8rem">+ Add Ticker</button>
+                    <span class="badge bg-secondary" id="watchlist-count">0</span>
+                </div>
+            </div>
+            <div class="card-body p-0" id="watchlist-container">
+                <div class="text-center py-3 text-muted small" id="watchlist-empty">
+                    No tickers yet. Click <strong>+ Add Ticker</strong> to start tracking carriers, modalities, or custom items.
+                </div>
+                <div class="row g-0" id="watchlist-cards"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Ticker Modal -->
+<div class="modal fade" id="addTickerModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title">Add to Watchlist</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Ticker / Code</label>
+                    <input type="text" class="form-control form-control-sm" id="wl-ticker"
+                           placeholder="e.g. M/M, CT, INS" list="ticker-suggestions">
+                    <datalist id="ticker-suggestions"></datalist>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Label (optional)</label>
+                    <input type="text" class="form-control form-control-sm" id="wl-label"
+                           placeholder="Display name">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Category</label>
+                    <select class="form-select form-select-sm" id="wl-category">
+                        <option value="">Auto-detect</option>
+                        <option value="CARRIER">Carrier</option>
+                        <option value="MODALITY">Modality</option>
+                        <option value="GENERAL">General</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Target Value ($, optional)</label>
+                    <input type="number" class="form-control form-control-sm" id="wl-target" step="0.01"
+                           placeholder="Revenue target">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Notes</label>
+                    <textarea class="form-control form-control-sm" id="wl-notes" rows="2"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="addTicker()">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Ticker Modal -->
+<div class="modal fade" id="editTickerModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title">Edit Watchlist Item</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-wl-id">
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Ticker</label>
+                    <input type="text" class="form-control form-control-sm" id="edit-wl-ticker">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Label</label>
+                    <input type="text" class="form-control form-control-sm" id="edit-wl-label">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Category</label>
+                    <select class="form-select form-select-sm" id="edit-wl-category">
+                        <option value="CARRIER">Carrier</option>
+                        <option value="MODALITY">Modality</option>
+                        <option value="GENERAL">General</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Target Value ($)</label>
+                    <input type="number" class="form-control form-control-sm" id="edit-wl-target" step="0.01">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small fw-bold">Notes</label>
+                    <textarea class="form-control form-control-sm" id="edit-wl-notes" rows="2"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-danger me-auto" onclick="deleteTicker()">Delete</button>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="saveTicker()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ============ ROW 2: Insights & Actions ============ -->
 <div class="row g-3 mb-3">
     <!-- Recommendations / Insights Panel -->
@@ -347,6 +459,7 @@ function refreshAll() {
         loadDenialPreview(),
         loadUnderpaymentSummary(),
         loadEraBackup(),
+        loadWatchlist(),
     ]).finally(() => {
         sp.classList.add('d-none');
         document.getElementById('last-refresh').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
@@ -732,6 +845,184 @@ function runRematch() {
 
 function openDenialQueue() {
     window.location.href = '/denials';
+}
+
+// ---- Watchlist ----
+function loadWatchlist() {
+    return fetch('/api/watchlist')
+        .then(r => r.json())
+        .then(data => {
+            const items = data.items || [];
+            document.getElementById('watchlist-count').textContent = items.length;
+            const emptyMsg = document.getElementById('watchlist-empty');
+            const container = document.getElementById('watchlist-cards');
+
+            if (!items.length) {
+                emptyMsg.style.display = '';
+                container.innerHTML = '';
+                return;
+            }
+            emptyMsg.style.display = 'none';
+
+            container.innerHTML = items.map(item => {
+                const live = item.live || {};
+                const catBadge = {
+                    CARRIER: 'bg-primary', MODALITY: 'bg-info', GENERAL: 'bg-secondary',
+                }[item.category] || 'bg-secondary';
+
+                // Target progress bar
+                let progressHtml = '';
+                if (item.target_value && item.target_value > 0 && live.revenue !== undefined) {
+                    const pct = Math.min(100, (live.revenue / item.target_value) * 100).toFixed(1);
+                    const barColor = pct >= 100 ? 'bg-success' : pct >= 60 ? 'bg-primary' : 'bg-warning';
+                    progressHtml = `<div class="progress mt-1" style="height:5px">
+                        <div class="progress-bar ${barColor}" style="width:${pct}%" title="${pct}% of target"></div>
+                    </div>
+                    <div class="d-flex justify-content-between" style="font-size:0.6rem">
+                        <span class="text-muted">${fmtK(live.revenue)}</span>
+                        <span class="text-muted">/ ${fmtK(item.target_value)}</span>
+                    </div>`;
+                }
+
+                // Alerts
+                let alertHtml = '';
+                if (live.unpaid_count > 0)
+                    alertHtml += `<span class="badge bg-danger me-1" style="font-size:0.6rem">${live.unpaid_count} unpaid</span>`;
+                if (live.underpaid_count > 0)
+                    alertHtml += `<span class="badge bg-warning text-dark me-1" style="font-size:0.6rem">${live.underpaid_count} underpaid</span>`;
+
+                return `<div class="col-6 col-md-4 col-lg-3 col-xl-2 p-2">
+                    <div class="border rounded p-2 h-100" style="cursor:pointer; font-size:0.78rem"
+                         onclick="editTickerById(${item.id})">
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <strong>${esc(item.ticker)}</strong>
+                            <span class="badge ${catBadge}" style="font-size:0.55rem">${item.category}</span>
+                        </div>
+                        ${item.label && item.label !== item.ticker ? '<div class="text-muted" style="font-size:0.7rem">' + esc(item.label) + '</div>' : ''}
+                        <div class="mt-1">
+                            <span class="fw-bold">${fmtK(live.revenue || 0)}</span>
+                            <span class="text-muted ms-1">${(live.claim_count || 0).toLocaleString()} claims</span>
+                        </div>
+                        <div>
+                            <span class="text-muted">Avg: ${fmt$(live.avg_payment || 0)}</span>
+                        </div>
+                        ${alertHtml ? '<div class="mt-1">' + alertHtml + '</div>' : ''}
+                        ${progressHtml}
+                        ${item.notes ? '<div class="text-muted mt-1" style="font-size:0.65rem">' + esc(item.notes).substring(0, 60) + '</div>' : ''}
+                    </div>
+                </div>`;
+            }).join('');
+        })
+        .catch(err => console.error('Watchlist error:', err));
+}
+
+// Load ticker suggestions on page load
+function loadTickerSuggestions() {
+    fetch('/api/watchlist/suggestions')
+        .then(r => r.json())
+        .then(data => {
+            const dl = document.getElementById('ticker-suggestions');
+            let html = '';
+            for (const c of (data.carriers || [])) {
+                html += `<option value="${esc(c)}">${esc(c)} (Carrier)</option>`;
+            }
+            for (const m of (data.modalities || [])) {
+                html += `<option value="${esc(m)}">${esc(m)} (Modality)</option>`;
+            }
+            dl.innerHTML = html;
+        })
+        .catch(() => {});
+}
+loadTickerSuggestions();
+
+function addTicker() {
+    const ticker = document.getElementById('wl-ticker').value.trim();
+    if (!ticker) { alert('Enter a ticker'); return; }
+
+    const data = {
+        ticker: ticker,
+        label: document.getElementById('wl-label').value || ticker,
+        category: document.getElementById('wl-category').value || '',
+        target_value: parseFloat(document.getElementById('wl-target').value) || null,
+        notes: document.getElementById('wl-notes').value || null,
+    };
+
+    fetch('/api/watchlist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) { alert(result.error); return; }
+        bootstrap.Modal.getInstance(document.getElementById('addTickerModal')).hide();
+        // Clear form
+        ['wl-ticker','wl-label','wl-target','wl-notes'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('wl-category').value = '';
+        loadWatchlist();
+    })
+    .catch(err => alert(err.message));
+}
+
+let editTickerModal = null;
+
+function editTickerById(id) {
+    fetch(`/api/watchlist`)
+        .then(r => r.json())
+        .then(data => {
+            const item = (data.items || []).find(i => i.id === id);
+            if (!item) return;
+
+            document.getElementById('edit-wl-id').value = item.id;
+            document.getElementById('edit-wl-ticker').value = item.ticker;
+            document.getElementById('edit-wl-label').value = item.label || '';
+            document.getElementById('edit-wl-category').value = item.category || 'GENERAL';
+            document.getElementById('edit-wl-target').value = item.target_value || '';
+            document.getElementById('edit-wl-notes').value = item.notes || '';
+
+            if (!editTickerModal) {
+                editTickerModal = new bootstrap.Modal(document.getElementById('editTickerModal'));
+            }
+            editTickerModal.show();
+        });
+}
+
+function saveTicker() {
+    const id = document.getElementById('edit-wl-id').value;
+    const data = {
+        ticker: document.getElementById('edit-wl-ticker').value,
+        label: document.getElementById('edit-wl-label').value,
+        category: document.getElementById('edit-wl-category').value,
+        target_value: parseFloat(document.getElementById('edit-wl-target').value) || null,
+        notes: document.getElementById('edit-wl-notes').value || null,
+    };
+
+    fetch(`/api/watchlist/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) { alert(result.error); return; }
+        if (editTickerModal) editTickerModal.hide();
+        loadWatchlist();
+    })
+    .catch(err => alert(err.message));
+}
+
+function deleteTicker() {
+    const id = document.getElementById('edit-wl-id').value;
+    if (!id || !confirm('Remove this ticker from your watchlist?')) return;
+
+    fetch(`/api/watchlist/${id}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) { alert(result.error); return; }
+        if (editTickerModal) editTickerModal.hide();
+        loadWatchlist();
+    })
+    .catch(err => alert(err.message));
 }
 
 // ---- Init ----
