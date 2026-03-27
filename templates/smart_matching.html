@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}Smart Matching{% endblock %}
+{% block page_title %}Smart Matching Analytics{% endblock %}
+
+{% block content %}
+<div class="row g-4 mb-4">
+    <!-- KPI Cards -->
+    <div class="col-md-3">
+        <div class="card kpi-card">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="kpi-icon bg-primary-subtle text-primary"><i class="bi bi-check-circle-fill"></i></div>
+                <div>
+                    <div class="kpi-value" id="total-outcomes">--</div>
+                    <div class="kpi-label">Match Outcomes</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card kpi-card">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="kpi-icon bg-success-subtle text-success"><i class="bi bi-graph-up-arrow"></i></div>
+                <div>
+                    <div class="kpi-value" id="confirm-rate">--</div>
+                    <div class="kpi-label">Confirm Rate</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card kpi-card">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="kpi-icon bg-info-subtle text-info"><i class="bi bi-people-fill"></i></div>
+                <div>
+                    <div class="kpi-value" id="active-aliases">--</div>
+                    <div class="kpi-label">Name Aliases</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card kpi-card">
+            <div class="card-body d-flex align-items-center gap-3">
+                <div class="kpi-icon bg-warning-subtle text-warning"><i class="bi bi-sliders2"></i></div>
+                <div>
+                    <div class="kpi-value" id="learned-weights">--</div>
+                    <div class="kpi-label">Learned Weights</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Feature Status -->
+<div class="row g-4 mb-4">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-stars me-2"></i>Active Smart Features</div>
+            <div class="card-body">
+                <div id="features-list" class="d-flex flex-column gap-2">
+                    <div class="text-muted">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-graph-up me-2"></i>Accuracy Trend</div>
+            <div class="card-body">
+                <canvas id="accuracyChart" height="200"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Learned Weights Table -->
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-sliders me-2"></i>Learned Weights by Carrier</span>
+                <button class="btn btn-sm btn-outline-danger" onclick="resetAllWeights()">Reset All</button>
+            </div>
+            <div class="card-body table-responsive" style="max-height:400px;overflow:auto">
+                <table class="table table-sm" id="weights-table">
+                    <thead><tr><th>Carrier</th><th>Modality</th><th>Name</th><th>Date</th><th>Mod</th><th>Accept</th><th>Review</th><th>N</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-people me-2"></i>Name Aliases</div>
+            <div class="card-body table-responsive" style="max-height:400px;overflow:auto">
+                <table class="table table-sm" id="aliases-table">
+                    <thead><tr><th>Name A</th><th>Name B</th><th>Count</th><th>Status</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Denial Patterns + Payment Patterns -->
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-exclamation-triangle me-2"></i>Denial Patterns Detected</div>
+            <div class="card-body table-responsive" style="max-height:400px;overflow:auto">
+                <table class="table table-sm" id="denial-patterns-table">
+                    <thead><tr><th>Carrier</th><th>Reason</th><th>Modality</th><th>Count</th><th>Recovery</th><th>Suggestion</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-cash-stack me-2"></i>Fee Schedule Suggestions</div>
+            <div class="card-body table-responsive" style="max-height:400px;overflow:auto">
+                <table class="table table-sm" id="fee-suggestions-table">
+                    <thead><tr><th>Carrier</th><th>Modality</th><th>Current</th><th>Suggested</th><th>Diff</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Calibration + Normalization -->
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-bullseye me-2"></i>Confidence Calibration</div>
+            <div class="card-body">
+                <canvas id="calibrationChart" height="250"></canvas>
+                <div id="calibration-status" class="text-muted small mt-2"></div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-tag me-2"></i>Pending Normalizations</div>
+            <div class="card-body table-responsive" style="max-height:400px;overflow:auto">
+                <table class="table table-sm" id="normalization-table">
+                    <thead><tr><th>Category</th><th>Raw Value</th><th>Suggestion</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart.js already loaded by base.html -->
+<script>
+let accuracyChart, calibrationChart;
+
+async function loadDashboard() {
+    try {
+        const [analytics, aliases, normPending] = await Promise.all([
+            fetch('/api/smart/analytics').then(r => r.json()),
+            fetch('/api/smart/aliases').then(r => r.json()),
+            fetch('/api/smart/normalization/pending').then(r => r.json()),
+        ]);
+
+        // KPIs
+        const stats = analytics.outcome_stats || {};
+        document.getElementById('total-outcomes').textContent = (stats.total_outcomes || 0).toLocaleString();
+        const ba = stats.by_action || {};
+        const confirmed = ba.CONFIRMED || 0;
+        const total = stats.total_outcomes || 0;
+        document.getElementById('confirm-rate').textContent = total > 0 ? (confirmed / total * 100).toFixed(1) + '%' : '--';
+        document.getElementById('active-aliases').textContent = (analytics.aliases?.active || 0).toLocaleString();
+        document.getElementById('learned-weights').textContent = (analytics.learned_weights?.length || 0).toLocaleString();
+
+        // Features
+        const featDiv = document.getElementById('features-list');
+        const features = [
+            {name: 'Adaptive Weights', active: analytics.learned_weights?.some(w => w.sample_size >= 50), icon: 'sliders2'},
+            {name: 'Name Aliases', active: (analytics.aliases?.active || 0) > 0, icon: 'people'},
+            {name: 'Denial Learning', active: (analytics.recovery_rates?.length || 0) > 0, icon: 'shield-check'},
+            {name: 'Payment Patterns', active: (analytics.payment_patterns?.length || 0) > 0, icon: 'cash-stack'},
+            {name: 'Denial Patterns', active: (analytics.denial_patterns?.length || 0) > 0, icon: 'exclamation-triangle'},
+        ];
+        featDiv.innerHTML = features.map(f =>
+            `<div class="d-flex align-items-center gap-2">
+                <i class="bi bi-${f.active ? 'check-circle-fill text-success' : 'circle text-muted'}"></i>
+                <i class="bi bi-${f.icon} ${f.active ? 'text-primary' : 'text-muted'}"></i>
+                <span class="${f.active ? '' : 'text-muted'}">${f.name}</span>
+            </div>`
+        ).join('');
+
+        // Accuracy Trend
+        renderAccuracyChart(analytics.accuracy_trend || []);
+
+        // Weights Table
+        const wBody = document.querySelector('#weights-table tbody');
+        wBody.innerHTML = (analytics.learned_weights || []).map(w =>
+            `<tr><td>${w.carrier||'Global'}</td><td>${w.modality||'All'}</td>
+            <td>${w.name_weight?.toFixed(2)}</td><td>${w.date_weight?.toFixed(2)}</td><td>${w.modality_weight?.toFixed(2)}</td>
+            <td>${w.auto_accept_threshold?.toFixed(2)}</td><td>${w.review_threshold?.toFixed(2)}</td><td>${w.sample_size}</td></tr>`
+        ).join('') || '<tr><td colspan="8" class="text-muted">No learned weights yet — confirm/reject matches to start learning</td></tr>';
+
+        // Aliases Table
+        const aBody = document.querySelector('#aliases-table tbody');
+        aBody.innerHTML = (aliases.aliases || []).map(a =>
+            `<tr><td>${a.name_a}</td><td>${a.name_b}</td><td>${a.match_count}</td>
+            <td><span class="badge ${a.active ? 'bg-success' : 'bg-secondary'}">${a.active ? 'Active' : 'Pending'}</span></td>
+            <td><button class="btn btn-sm btn-outline-danger" onclick="deleteAlias(${a.id})"><i class="bi bi-trash"></i></button></td></tr>`
+        ).join('') || '<tr><td colspan="5" class="text-muted">No aliases learned yet</td></tr>';
+
+        // Denial Patterns
+        const dpBody = document.querySelector('#denial-patterns-table tbody');
+        dpBody.innerHTML = (analytics.denial_patterns || []).map(p =>
+            `<tr><td>${p.carrier}</td><td>${p.denial_reason||'N/A'}</td><td>${p.modality}</td>
+            <td><span class="badge bg-danger">${p.count}</span></td>
+            <td>${p.recovery_rate != null ? (p.recovery_rate * 100).toFixed(0) + '%' : '--'}</td>
+            <td class="small">${p.suggestion}</td></tr>`
+        ).join('') || '<tr><td colspan="6" class="text-muted">No recurring patterns detected</td></tr>';
+
+        // Fee Suggestions
+        const fsBody = document.querySelector('#fee-suggestions-table tbody');
+        fsBody.innerHTML = (analytics.fee_suggestions || []).map(s =>
+            `<tr><td>${s.carrier}</td><td>${s.modality}</td>
+            <td>${s.current_rate ? '$' + s.current_rate.toFixed(0) : 'N/A'}</td>
+            <td>$${s.suggested_rate.toFixed(0)}</td>
+            <td><span class="badge ${s.direction === 'UP' ? 'bg-success' : s.direction === 'DOWN' ? 'bg-warning' : 'bg-info'}">${s.direction} ${s.diff_pct ? s.diff_pct + '%' : ''}</span></td>
+            <td><button class="btn btn-sm btn-outline-primary" onclick="applyFee('${s.carrier}','${s.modality}',${s.suggested_rate})">Apply</button></td></tr>`
+        ).join('') || '<tr><td colspan="6" class="text-muted">No fee schedule updates suggested</td></tr>';
+
+        // Calibration
+        renderCalibrationChart(analytics.calibration || {});
+
+        // Normalization
+        const nBody = document.querySelector('#normalization-table tbody');
+        nBody.innerHTML = (normPending.pending || []).map(n =>
+            `<tr><td><span class="badge bg-secondary">${n.category}</span></td><td>${n.raw_value}</td>
+            <td>${n.normalized_value}</td>
+            <td><button class="btn btn-sm btn-success me-1" onclick="approveNorm(${n.id})"><i class="bi bi-check"></i></button>
+            <button class="btn btn-sm btn-outline-danger" onclick="rejectNorm(${n.id})"><i class="bi bi-x"></i></button></td></tr>`
+        ).join('') || '<tr><td colspan="4" class="text-muted">No pending normalizations</td></tr>';
+
+    } catch (err) { console.error('Dashboard load error:', err); }
+}
+
+function renderAccuracyChart(data) {
+    const ctx = document.getElementById('accuracyChart');
+    if (accuracyChart) accuracyChart.destroy();
+    if (!data.length) { ctx.parentElement.innerHTML += '<div class="text-muted text-center mt-3">Accuracy data will appear after match confirmations</div>'; return; }
+    accuracyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: data.map(d => 'Batch ' + d.batch),
+            datasets: [{
+                label: 'Accuracy', data: data.map(d => d.accuracy * 100),
+                borderColor: '#63b3ed', backgroundColor: 'rgba(99,179,237,0.1)', fill: true, tension: 0.3
+            }]
+        },
+        options: { scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } }, plugins: { legend: { display: false } } }
+    });
+}
+
+function renderCalibrationChart(cal) {
+    const ctx = document.getElementById('calibrationChart');
+    if (calibrationChart) calibrationChart.destroy();
+    const statusDiv = document.getElementById('calibration-status');
+    if (cal.status !== 'calibrated' || !cal.bins?.length) {
+        statusDiv.textContent = 'Insufficient data for calibration — need 50+ match outcomes';
+        return;
+    }
+    statusDiv.textContent = `Calibrated on ${cal.sample_size} outcomes (A=${cal.params.A}, B=${cal.params.B})`;
+    calibrationChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { label: 'Actual Accuracy', data: cal.bins.map(b => ({x: b.predicted_probability, y: b.actual_accuracy})), backgroundColor: '#63b3ed', pointRadius: 6 },
+                { label: 'Perfect Calibration', data: [{x:0,y:0},{x:1,y:1}], type: 'line', borderColor: '#666', borderDash: [5,5], pointRadius: 0 }
+            ]
+        },
+        options: { scales: { x: { min: 0, max: 1, title: { display: true, text: 'Predicted' } }, y: { min: 0, max: 1, title: { display: true, text: 'Actual' } } } }
+    });
+}
+
+async function deleteAlias(id) {
+    await fetch(`/api/smart/aliases/${id}`, {method: 'DELETE'});
+    loadDashboard();
+}
+
+async function resetAllWeights() {
+    if (!confirm('Reset all learned weights to defaults?')) return;
+    await fetch('/api/smart/weights/reset', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    loadDashboard();
+}
+
+async function applyFee(carrier, modality, rate) {
+    await fetch('/api/smart/fee-update', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({carrier, modality, rate})});
+    loadDashboard();
+}
+
+async function approveNorm(id) {
+    await fetch('/api/smart/normalization/approve', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id})});
+    loadDashboard();
+}
+
+async function rejectNorm(id) {
+    await fetch('/api/smart/normalization/reject', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id})});
+    loadDashboard();
+}
+
+loadDashboard();
+setInterval(loadDashboard, 60000);
+</script>
+{% endblock %}

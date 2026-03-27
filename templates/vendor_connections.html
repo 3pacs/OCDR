@@ -1,0 +1,603 @@
+{% extends "base.html" %}
+{% block title %}Vendor Connections{% endblock %}
+{% block page_title %}Vendor Connections{% endblock %}
+
+{% block content %}
+<!-- Sync Status Banner -->
+<div class="data-card padded mb-4" id="sync-banner">
+    <div class="d-flex align-items-center justify-content-between">
+        <div class="d-flex align-items-center gap-3">
+            <div class="fs-4" id="sync-icon"><i class="bi bi-arrow-repeat"></i></div>
+            <div>
+                <h6 class="fw-semibold mb-0">Background Sync</h6>
+                <small class="text-muted" id="sync-status-text">Checking status...</small>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge" id="sync-badge">--</span>
+            <button class="btn btn-sm btn-primary" id="btn-start-sync" onclick="toggleSync()" style="display:none;">
+                <i class="bi bi-play-fill me-1"></i>Start Sync
+            </button>
+        </div>
+    </div>
+    <!-- Progress details -->
+    <div id="sync-details" class="mt-3" style="display:none;">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <div class="text-muted small">Last Sync</div>
+                <div class="fw-semibold" id="sync-last-time">--</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted small">Files Downloaded</div>
+                <div class="fw-semibold" id="sync-total-files">0</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted small">Current</div>
+                <div class="fw-semibold" id="sync-current">Idle</div>
+            </div>
+            <div class="col-md-3">
+                <div class="text-muted small">Errors</div>
+                <div class="fw-semibold" id="sync-error-count">0</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Master Password (needed for all operations) -->
+<div class="data-card padded mb-4" id="master-key-card">
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <i class="bi bi-shield-lock-fill text-accent-purple fs-4"></i>
+        <div>
+            <h6 class="fw-semibold mb-0">Master Password</h6>
+            <small class="text-muted">Encrypts your vendor credentials locally. Never transmitted.</small>
+        </div>
+    </div>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+            <div class="input-group">
+                <input type="password" class="form-control form-control-sm" id="master-password"
+                       placeholder="Enter master password to unlock">
+                <button class="btn btn-sm btn-outline-light" onclick="unlockStore()">
+                    <i class="bi bi-unlock-fill me-1"></i>Unlock
+                </button>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <span class="text-muted small" id="store-status">
+                <i class="bi bi-lock-fill me-1"></i>Locked — enter master password to manage credentials
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- Vendor Cards -->
+<div class="row g-4 mb-4">
+    <!-- Candelis -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100" id="card-candelis">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-hospital text-accent-blue fs-4"></i>
+                    <div>
+                        <h6 class="fw-semibold mb-0">Candelis RadSuite</h6>
+                        <small class="text-muted">RIS / PACS — Billing &amp; Schedule Data</small>
+                    </div>
+                </div>
+                <span class="badge" id="badge-candelis">Not configured</span>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small text-muted">Portal URL</label>
+                <input type="text" class="form-control form-control-sm" id="candelis-url"
+                       value="http://10.254.111.108" placeholder="http://10.254.111.108">
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="candelis-username"
+                           placeholder="Candelis username">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Password</label>
+                    <input type="password" class="form-control form-control-sm" id="candelis-password"
+                           placeholder="Candelis password">
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-primary" onclick="saveVendorCreds('candelis')" id="btn-save-candelis">
+                    <i class="bi bi-save me-1"></i>Save Credentials
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="syncNow('candelis')" id="btn-sync-candelis" style="display:none;">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Sync Now
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeCreds('candelis')" id="btn-remove-candelis" style="display:none;">
+                    <i class="bi bi-trash me-1"></i>Remove
+                </button>
+            </div>
+
+            <!-- Vendor sync status -->
+            <div class="mt-3 small" id="status-candelis" style="display:none;">
+                <div class="d-flex justify-content-between text-muted">
+                    <span>Last sync: <span id="candelis-last-sync">--</span></span>
+                    <span>Files: <span id="candelis-files">0</span></span>
+                </div>
+                <div id="candelis-error" class="text-accent-red mt-1" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Purview -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100" id="card-purview">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-image text-accent-green fs-4"></i>
+                    <div>
+                        <h6 class="fw-semibold mb-0">Purview PACS</h6>
+                        <small class="text-muted">Cloud PACS — Study List &amp; Reports</small>
+                    </div>
+                </div>
+                <span class="badge" id="badge-purview">Not configured</span>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label small text-muted">Portal URL</label>
+                <input type="text" class="form-control form-control-sm" id="purview-url"
+                       value="https://image-us-east1.purview.net/login" placeholder="https://image-us-east1.purview.net/login">
+            </div>
+            <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Username</label>
+                    <input type="text" class="form-control form-control-sm" id="purview-username"
+                           placeholder="Purview username">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small text-muted">Password</label>
+                    <input type="password" class="form-control form-control-sm" id="purview-password"
+                           placeholder="Purview password">
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-primary" onclick="saveVendorCreds('purview')" id="btn-save-purview">
+                    <i class="bi bi-save me-1"></i>Save Credentials
+                </button>
+                <button class="btn btn-sm btn-outline-info" onclick="syncNow('purview')" id="btn-sync-purview" style="display:none;">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Sync Now
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeCreds('purview')" id="btn-remove-purview" style="display:none;">
+                    <i class="bi bi-trash me-1"></i>Remove
+                </button>
+            </div>
+
+            <!-- Vendor sync status -->
+            <div class="mt-3 small" id="status-purview" style="display:none;">
+                <div class="d-flex justify-content-between text-muted">
+                    <span>Last sync: <span id="purview-last-sync">--</span></span>
+                    <span>Files: <span id="purview-files">0</span></span>
+                </div>
+                <div id="purview-error" class="text-accent-red mt-1" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- How It Works -->
+<div class="data-card padded mb-4">
+    <h6 class="fw-semibold mb-3"><i class="bi bi-info-circle me-2"></i>How Vendor Sync Works</h6>
+    <div class="row g-4">
+        <div class="col-md-4">
+            <div class="d-flex align-items-start gap-2">
+                <span class="badge bg-primary rounded-circle" style="width:24px;height:24px;line-height:24px;padding:0;text-align:center;">1</span>
+                <div>
+                    <strong class="small">Credentials Stored Locally</strong>
+                    <p class="text-muted small mb-0">Your login is encrypted with AES-256 and stays on this machine. Never sent anywhere except to the vendor portal itself.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="d-flex align-items-start gap-2">
+                <span class="badge bg-primary rounded-circle" style="width:24px;height:24px;line-height:24px;padding:0;text-align:center;">2</span>
+                <div>
+                    <strong class="small">Background Download</strong>
+                    <p class="text-muted small mb-0">A background task logs into each vendor portal, downloads billing/schedule data, then logs out. Runs every 5 minutes.</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="d-flex align-items-start gap-2">
+                <span class="badge bg-primary rounded-circle" style="width:24px;height:24px;line-height:24px;padding:0;text-align:center;">3</span>
+                <div>
+                    <strong class="small">Auto-Import</strong>
+                    <p class="text-muted small mb-0">Downloaded files are automatically imported through the standard pipeline. Duplicates are skipped. Smart matching runs on new records.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync Error Log -->
+<div class="data-card padded" id="error-log-card" style="display:none;">
+    <h6 class="fw-semibold mb-3"><i class="bi bi-exclamation-triangle me-2 text-accent-yellow"></i>Sync Log</h6>
+    <div id="sync-error-log" style="max-height:300px; overflow-y:auto;">
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatDate(isoStr) {
+    if (!isoStr) return '--';
+    var d = new Date(isoStr);
+    return d.toLocaleDateString();
+}
+
+var masterPassword = null;
+var storeUnlocked = false;
+var syncPollInterval = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    pollSyncStatus();
+    // Auto-poll sync status every 5 seconds
+    syncPollInterval = setInterval(pollSyncStatus, 5000);
+});
+
+// ── Master Password / Store ────────────────────────────────────
+
+function unlockStore() {
+    var pw = document.getElementById('master-password').value.trim();
+    if (!pw) { showToast('Enter a master password first', 'warning'); return; }
+
+    masterPassword = pw;
+
+    // Try to list credentials to verify the password works
+    fetch('/api/vendor/credentials?master_password=' + encodeURIComponent(pw))
+        .then(function(r) {
+            return r.json().then(function(data) { return { status: r.status, data: data }; });
+        })
+        .then(function(result) {
+            var data = result.data;
+
+            if (result.status === 401) {
+                showToast(data.error || 'Wrong master password', 'error');
+                masterPassword = null;
+                return;
+            }
+
+            if (result.status >= 400) {
+                showToast(data.error || 'Failed to unlock store', 'error');
+                masterPassword = null;
+                return;
+            }
+
+            storeUnlocked = true;
+            document.getElementById('store-status').innerHTML =
+                '<i class="bi bi-unlock-fill me-1 text-accent-green"></i>Unlocked — credentials are accessible';
+            document.getElementById('master-password').type = 'text';
+            document.getElementById('master-password').value = '';
+            document.getElementById('master-password').type = 'password';
+
+            // Show stored vendors
+            if (data.vendors) {
+                data.vendors.forEach(function(v) {
+                    markVendorConfigured(v.vendor, v.username);
+                });
+            }
+
+            document.getElementById('btn-start-sync').style.display = '';
+            showToast('Credential store unlocked', 'success');
+        })
+        .catch(function() {
+            // Store doesn't exist yet — first time, just set the master key
+            storeUnlocked = true;
+            document.getElementById('store-status').innerHTML =
+                '<i class="bi bi-unlock-fill me-1 text-accent-green"></i>New store — save your first credentials';
+            document.getElementById('btn-start-sync').style.display = '';
+            showToast('New credential store created', 'success');
+        });
+}
+
+function markVendorConfigured(vendor, username) {
+    var badge = document.getElementById('badge-' + vendor);
+    if (badge) {
+        badge.textContent = 'Connected (' + username + ')';
+        badge.className = 'badge bg-success-subtle text-success-emphasis';
+    }
+    var syncBtn = document.getElementById('btn-sync-' + vendor);
+    if (syncBtn) syncBtn.style.display = '';
+    var removeBtn = document.getElementById('btn-remove-' + vendor);
+    if (removeBtn) removeBtn.style.display = '';
+    var statusDiv = document.getElementById('status-' + vendor);
+    if (statusDiv) statusDiv.style.display = '';
+}
+
+// ── Save / Remove Credentials ─────────────────────────────────
+
+function saveVendorCreds(vendor) {
+    if (!masterPassword) {
+        showToast('Unlock the credential store first', 'warning');
+        return;
+    }
+
+    var username = document.getElementById(vendor + '-username').value.trim();
+    var password = document.getElementById(vendor + '-password').value.trim();
+    var portalUrl = document.getElementById(vendor + '-url').value.trim();
+
+    if (!username || !password) {
+        showToast('Enter username and password', 'warning');
+        return;
+    }
+
+    var btn = document.getElementById('btn-save-' + vendor);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
+
+    fetch('/api/vendor/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            vendor: vendor,
+            username: username,
+            password: password,
+            master_password: masterPassword,
+            portal_url: portalUrl,
+        }),
+    })
+    .then(function(r) {
+        return r.json().then(function(data) { return { status: r.status, data: data }; });
+    })
+    .then(function(result) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save me-1"></i>Save Credentials';
+
+        if (result.data.stored) {
+            showToast(vendor + ' credentials saved (encrypted)', 'success');
+            document.getElementById(vendor + '-password').value = '';
+            markVendorConfigured(vendor, username);
+        } else {
+            showToast(result.data.error || 'Failed to save', 'error');
+        }
+    })
+    .catch(function(e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save me-1"></i>Save Credentials';
+        showToast('Error: ' + e.message, 'error');
+    });
+}
+
+function removeCreds(vendor) {
+    if (!masterPassword) { showToast('Unlock first', 'warning'); return; }
+    if (!confirm('Remove ' + vendor + ' credentials?')) return;
+
+    fetch('/api/vendor/credentials/' + vendor, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ master_password: masterPassword }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.deleted) {
+            showToast(vendor + ' credentials removed', 'success');
+            var badge = document.getElementById('badge-' + vendor);
+            badge.textContent = 'Not configured';
+            badge.className = 'badge bg-secondary';
+            document.getElementById('btn-sync-' + vendor).style.display = 'none';
+            document.getElementById('btn-remove-' + vendor).style.display = 'none';
+            document.getElementById('status-' + vendor).style.display = 'none';
+        } else {
+            showToast(data.error || 'Failed', 'error');
+        }
+    });
+}
+
+// ── Sync Controls ──────────────────────────────────────────────
+
+function toggleSync() {
+    if (!masterPassword) { showToast('Unlock first', 'warning'); return; }
+
+    var btn = document.getElementById('btn-start-sync');
+    var isRunning = btn.dataset.running === 'true';
+
+    if (isRunning) {
+        // Stop
+        fetch('/api/vendor/sync/stop', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                showToast('Background sync stopping...', 'info');
+                pollSyncStatus();
+            });
+    } else {
+        // Start
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Starting...';
+
+        fetch('/api/vendor/sync/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ master_password: masterPassword, interval: 300 }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            btn.disabled = false;
+            if (data.status === 'started' || data.status === 'already_running') {
+                showToast('Background sync started — pulling all data', 'success');
+            } else {
+                showToast(data.error || 'Failed to start sync', 'error');
+            }
+            pollSyncStatus();
+        })
+        .catch(function(e) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Start Sync';
+            showToast('Error: ' + e.message, 'error');
+        });
+    }
+}
+
+function syncNow(vendor) {
+    if (!masterPassword) { showToast('Unlock first', 'warning'); return; }
+
+    var btn = document.getElementById('btn-sync-' + vendor);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Syncing...';
+
+    fetch('/api/vendor/sync/' + vendor, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ master_password: masterPassword }),
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Sync Now';
+
+        var files = data.files ? data.files.length : 0;
+        var errors = data.errors ? data.errors.length : 0;
+
+        if (errors > 0 && files === 0) {
+            showToast(vendor + ' sync failed: ' + data.errors[0], 'error');
+        } else if (files > 0) {
+            showToast(vendor + ': downloaded ' + files + ' files' + (errors > 0 ? ' (' + errors + ' errors)' : ''), 'success');
+        } else {
+            showToast(vendor + ': no new files found', 'info');
+        }
+        pollSyncStatus();
+    })
+    .catch(function(e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Sync Now';
+        showToast('Sync error: ' + e.message, 'error');
+    });
+}
+
+// ── Poll Sync Status ──────────────────────────────────────────
+
+function pollSyncStatus() {
+    fetch('/api/vendor/sync/status')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateSyncUI(data);
+        })
+        .catch(function() {
+            // API not available yet
+        });
+}
+
+function updateSyncUI(data) {
+    var syncBadge = document.getElementById('sync-badge');
+    var syncText = document.getElementById('sync-status-text');
+    var syncIcon = document.getElementById('sync-icon');
+    var btn = document.getElementById('btn-start-sync');
+    var details = document.getElementById('sync-details');
+
+    if (data.state === 'running') {
+        syncBadge.textContent = 'Running';
+        syncBadge.className = 'badge bg-success-subtle text-success-emphasis';
+        syncText.textContent = data.current_vendor
+            ? 'Syncing ' + data.current_vendor + '...'
+            : 'Background sync active';
+        syncIcon.innerHTML = '<i class="bi bi-arrow-repeat spin-animation text-accent-green"></i>';
+
+        if (btn) {
+            btn.dataset.running = 'true';
+            btn.innerHTML = '<i class="bi bi-stop-fill me-1"></i>Stop Sync';
+            btn.className = 'btn btn-sm btn-outline-danger';
+        }
+        details.style.display = '';
+    } else {
+        syncBadge.textContent = 'Stopped';
+        syncBadge.className = 'badge bg-secondary';
+        syncText.textContent = 'Sync is not running — start it to pull data automatically';
+        syncIcon.innerHTML = '<i class="bi bi-arrow-repeat text-muted"></i>';
+
+        if (btn) {
+            btn.dataset.running = 'false';
+            btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Start Sync';
+            btn.className = 'btn btn-sm btn-primary';
+        }
+    }
+
+    // Update detail fields
+    if (data.last_sync) {
+        document.getElementById('sync-last-time').textContent = formatDate(data.last_sync.split('T')[0]);
+    }
+    document.getElementById('sync-total-files').textContent = data.total_files_synced || 0;
+    document.getElementById('sync-current').textContent = data.current_vendor || 'Idle';
+    document.getElementById('sync-error-count').textContent = data.errors ? data.errors.length : 0;
+
+    // Update per-vendor statuses
+    if (data.vendors) {
+        ['candelis', 'purview'].forEach(function(v) {
+            var vs = data.vendors[v];
+            if (!vs) return;
+
+            var lastSync = document.getElementById(v + '-last-sync');
+            var filesEl = document.getElementById(v + '-files');
+            var errorEl = document.getElementById(v + '-error');
+
+            if (lastSync && vs.last_sync) {
+                lastSync.textContent = new Date(vs.last_sync).toLocaleString();
+            }
+            if (filesEl) {
+                filesEl.textContent = vs.files_downloaded || 0;
+            }
+            if (errorEl && vs.last_error) {
+                errorEl.style.display = '';
+                errorEl.textContent = vs.last_error;
+            } else if (errorEl) {
+                errorEl.style.display = 'none';
+            }
+        });
+    }
+
+    // Show error log if there are errors
+    if (data.errors && data.errors.length > 0) {
+        var logCard = document.getElementById('error-log-card');
+        logCard.style.display = '';
+        var logDiv = document.getElementById('sync-error-log');
+        logDiv.innerHTML = '';
+        data.errors.forEach(function(e) {
+            var row = document.createElement('div');
+            row.className = 'd-flex gap-2 py-1 border-bottom border-secondary small';
+            var icon = document.createElement('i');
+            icon.className = 'bi bi-exclamation-circle text-accent-yellow';
+            var span = document.createElement('span');
+            span.textContent = e;
+            row.appendChild(icon);
+            row.appendChild(span);
+            logDiv.appendChild(row);
+        });
+    }
+}
+
+function showToast(message, type) {
+    type = type || 'info';
+    var container = document.querySelector('.toast-container');
+    if (!container) { container = document.createElement('div'); container.className = 'toast-container'; document.body.appendChild(container); }
+    var icons = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-circle-fill', info: 'bi-info-circle-fill' };
+    var toast = document.createElement('div');
+    toast.className = 'toast-msg toast-' + (type === 'warning' ? 'info' : type);
+    toast.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> ' + message;
+    container.appendChild(toast);
+    setTimeout(function() { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; toast.style.transition = 'all 0.3s ease'; setTimeout(function() { toast.remove(); }, 300); }, 4000);
+}
+</script>
+
+<style>
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+.spin-animation {
+    animation: spin 1.5s linear infinite;
+    display: inline-block;
+}
+</style>
+{% endblock %}

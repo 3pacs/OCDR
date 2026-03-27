@@ -1,0 +1,870 @@
+{% extends "base.html" %}
+{% block title %}Import Data{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Import Data</h1>
+
+<div class="row g-4">
+    <!-- Drag & Drop Upload -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">Smart Upload
+                    <span class="badge bg-info ms-2">AI-Assisted</span>
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="drop-zone" class="border border-2 border-dashed rounded p-5 text-center"
+                     style="cursor:pointer; background:#f8f9fa; transition: background 0.2s;">
+                    <h4>Drag &amp; Drop Any File Here</h4>
+                    <p class="text-muted mb-3">or click to browse</p>
+                    <p class="small text-muted">
+                        Auto-detected: <strong>.xlsx</strong> (Excel), <strong>.835 / .edi / .txt</strong> (ERA),
+                        <strong>.csv</strong> (Delimited), <strong>.pdf</strong> (EOB or Schedule),
+                        <strong>.png / .jpg / .tiff</strong> (Scanned — OCR)
+                    </p>
+                    <input type="file" id="file-input" multiple
+                           accept=".xlsx,.xls,.835,.edi,.csv,.pdf,.txt,.png,.jpg,.jpeg,.tiff,.tif,.bmp"
+                           class="d-none">
+                </div>
+
+                <!-- Upload Queue -->
+                <div id="upload-queue" class="mt-3"></div>
+
+                <!-- Upload Results -->
+                <div id="upload-results" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- Schedule Import -->
+        <div class="card mt-4">
+            <div class="card-header"><h5 class="mb-0">Schedule Import
+                <span class="badge bg-success ms-2">OCR Enabled</span>
+            </h5></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Import schedule files to match appointments against billing records.
+                    Supports PDFs, scanned images (OCR), and text files.
+                    View results on the <a href="/schedules">Schedule Calendars</a> (editable).
+                </p>
+                <!-- Single file upload -->
+                <div class="input-group mb-2">
+                    <input type="file" class="form-control form-control-sm" id="schedule-file-input"
+                           accept=".pdf,.csv,.xlsx,.txt,.png,.jpg,.jpeg,.tiff,.tif,.bmp">
+                    <button class="btn btn-sm btn-primary" onclick="uploadSchedule()">
+                        Import File
+                    </button>
+                </div>
+                <!-- Folder scan -->
+                <div class="input-group mb-2">
+                    <input type="text" class="form-control form-control-sm" id="schedule-folder-path"
+                           placeholder="C:\Schedules or /path/to/schedules">
+                    <button class="btn btn-sm btn-outline-primary" onclick="scanScheduleFolder()">
+                        Scan Folder
+                    </button>
+                </div>
+                <small class="text-muted d-block mb-2">
+                    Folder scan recursively finds all PDFs and images, OCRs scanned pages, and imports all entries.
+                </small>
+                <div id="schedule-result" class="mt-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions & Status -->
+    <div class="col-md-4">
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Import Status</h5></div>
+            <div class="card-body">
+                <div id="import-status">
+                    <p class="text-muted">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">EOB Directory Scan</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Point to your EOB directory. Recursively scans all subfolders for
+                    <strong>all file types</strong> (.835, .edi, .txt, .pdf, .csv, images).
+                    Duplicates are automatically skipped at both file and claim level.
+                </p>
+                <div class="input-group mb-2">
+                    <input type="text" id="eob-folder-path" class="form-control form-control-sm"
+                           placeholder="X:\EOBS">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="openFolderBrowser()">
+                        Browse
+                    </button>
+                </div>
+                <div class="d-flex gap-2 mb-2">
+                    <button class="btn btn-sm btn-primary flex-fill" id="eob-scan-btn" onclick="scanEobDirectory()">
+                        Scan &amp; Import
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary flex-fill" id="smart-scan-btn" onclick="smartScanDirectory()">
+                        Smart Scan (All Types)
+                    </button>
+                </div>
+                <div id="eob-scan-result"></div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">Format Detection</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">
+                    Drop a file to detect its format without importing:
+                </p>
+                <div class="input-group">
+                    <input type="file" class="form-control form-control-sm" id="detect-file-input">
+                    <button class="btn btn-sm btn-outline-info" onclick="detectFormat()">Detect</button>
+                </div>
+                <div id="detect-result" class="mt-2"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0">Vendor Downloads</h5></div>
+            <div class="card-body">
+                <p class="small text-muted">Download ERA files from vendor portals:</p>
+                <a href="/api/vendor/connectors" class="btn btn-sm btn-outline-secondary w-100 mb-2">
+                    View Available Connectors
+                </a>
+                <p class="small text-muted mt-2">
+                    Set up credentials via API, then trigger downloads.
+                    See <code>/api/vendor/</code> endpoints.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI Assistant Section -->
+<div class="row g-4 mt-2">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">AI Assistant
+                    <span class="badge bg-info ms-2">PHI-Safe</span>
+                </h5>
+                <span id="ai-status-badge" class="badge bg-secondary">Checking...</span>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-3">
+                    AI analysis sends <strong>only structural metadata</strong> (column headers, data type patterns,
+                    aggregate counts). Patient names, dates, IDs, and all other PHI are stripped before transmission.
+                </p>
+
+                <!-- API Key Configuration -->
+                <div id="ai-config-section" class="mb-3 d-none">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">API Key</span>
+                        <input type="password" class="form-control" id="ai-api-key-input"
+                               placeholder="sk-ant-...">
+                        <button class="btn btn-outline-primary" onclick="configureAiKey()">Save (Encrypted)</button>
+                    </div>
+                    <small class="text-muted">Key is encrypted with AES-256 and stored locally. Never sent anywhere except Anthropic API.</small>
+                </div>
+
+                <!-- AI Actions -->
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <div class="d-grid">
+                            <button class="btn btn-sm btn-outline-primary" onclick="aiAnalyzeDb()">
+                                Analyze Database Health
+                            </button>
+                        </div>
+                        <small class="text-muted d-block mt-1">Sends aggregate stats only</small>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <input type="file" class="form-control" id="ai-analyze-file-input">
+                            <button class="btn btn-outline-primary" onclick="aiAnalyzeFile()">Analyze</button>
+                        </div>
+                        <small class="text-muted d-block mt-1">AI file structure analysis</small>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <input type="file" class="form-control" id="ai-mapping-file-input"
+                                   accept=".csv,.xlsx,.xls,.txt">
+                            <button class="btn btn-outline-primary" onclick="aiSuggestMapping()">Map Columns</button>
+                        </div>
+                        <small class="text-muted d-block mt-1">AI column mapping suggestion</small>
+                    </div>
+                </div>
+
+                <!-- AI Results -->
+                <div id="ai-results" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Analysis Section (appears after import) -->
+<div id="analysis-section" class="mt-4 d-none">
+    <div class="card">
+        <div class="card-header"><h5 class="mb-0">Post-Import Analysis</h5></div>
+        <div class="card-body" id="analysis-results"></div>
+    </div>
+</div>
+
+<!-- Folder Browser Modal -->
+<div class="modal fade" id="folderBrowserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title">Select EOB Folder</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-2">
+                <div class="d-flex align-items-center mb-2 px-1">
+                    <small class="text-muted text-truncate flex-grow-1" id="browser-current-path">/</small>
+                    <button class="btn btn-sm btn-outline-secondary ms-2" id="browser-up-btn" onclick="browserGoUp()">
+                        Up
+                    </button>
+                </div>
+                <div id="browser-folder-list" style="max-height:300px; overflow-y:auto; border:1px solid #dee2e6; border-radius:4px;">
+                    <p class="text-muted small p-2">Loading...</p>
+                </div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="selectCurrentFolder()">
+                    Select This Folder
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const uploadQueue = document.getElementById('upload-queue');
+const uploadResults = document.getElementById('upload-results');
+
+// Load import status on page load
+fetch('/api/import/status')
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('import-status').innerHTML = `
+            <p><strong>Total Records:</strong> ${(data.total_records || 0).toLocaleString()}</p>
+            <p><strong>Last Import:</strong> ${data.last_import || 'Never'}</p>
+            <p><strong>Source:</strong> ${data.source || 'N/A'}</p>
+        `;
+    })
+    .catch(() => {
+        document.getElementById('import-status').innerHTML = '<p class="text-danger">Could not load status</p>';
+    });
+
+// Drag & drop handlers
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.style.background = '#e3f2fd';
+});
+dropZone.addEventListener('dragleave', () => {
+    dropZone.style.background = '#f8f9fa';
+});
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.background = '#f8f9fa';
+    handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+function handleFiles(files) {
+    for (const file of files) {
+        uploadFile(file);
+    }
+}
+
+function uploadFile(file) {
+    // Route ALL files through the smart import endpoint
+    const id = 'upload-' + Math.random().toString(36).substr(2, 9);
+    uploadQueue.innerHTML += `
+        <div id="${id}" class="alert alert-info py-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            Detecting format &amp; importing <strong>${file.name}</strong>...
+        </div>
+    `;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/smart', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+
+            if (data.error) {
+                showResult(file.name, 'error', data.error);
+                return;
+            }
+
+            let msg = `<strong>Format:</strong> ${data.detected_format || 'unknown'}`;
+            msg += ` (${(data.detection_confidence * 100).toFixed(0)}% confidence)`;
+
+            if (data.status === 'skipped') {
+                msg += `<br>${data.reason || 'Skipped'}`;
+                showResult(file.name, 'warning', msg);
+            } else if (data.status === 'error') {
+                msg += `<br>Error: ${data.reason || 'Unknown error'}`;
+                showResult(file.name, 'error', msg);
+            } else {
+                // Build result details based on format
+                if (data.imported !== undefined) {
+                    msg += `<br>Imported: ${data.imported}, Skipped: ${data.skipped || 0}`;
+                    if (data.columns_detected) {
+                        const cols = Object.keys(data.columns_detected).length;
+                        msg += `, Columns matched: ${cols}`;
+                    }
+                }
+                if (data.claims_found !== undefined) {
+                    msg += `<br>Claims: ${data.claims_found}`;
+                    if (data.claims_new !== undefined) msg += ` (${data.claims_new} new, ${data.claims_duplicate} duplicate)`;
+                }
+                if (data.entries_found !== undefined) {
+                    msg += `<br>Schedule entries: ${data.entries_found}`;
+                    if (data.entries_matched !== undefined) msg += ` (${data.entries_matched} matched to billing)`;
+                }
+                if (data.payment_amount) {
+                    msg += `<br>Payment total: $${data.payment_amount.toLocaleString()}`;
+                }
+                if (data.needs_ocr) {
+                    msg += `<br><em>Note: Scanned document — OCR was used for text extraction</em>`;
+                }
+                showResult(file.name, 'success', msg);
+            }
+
+            refreshStatus();
+            runAnalysis();
+        })
+        .catch(err => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            showResult(file.name, 'error', err.message);
+        });
+}
+
+function showResult(filename, type, message) {
+    const clsMap = { error: 'alert-danger', warning: 'alert-warning', success: 'alert-success' };
+    const cls = clsMap[type] || 'alert-info';
+    uploadResults.innerHTML += `
+        <div class="alert ${cls} py-2 alert-dismissible fade show">
+            <strong>${filename}:</strong> ${message}
+            <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+}
+
+// ---- Schedule Upload ----
+function uploadSchedule() {
+    const input = document.getElementById('schedule-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    const resultDiv = document.getElementById('schedule-result');
+    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing schedule...';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/schedule', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${data.error}</div>`;
+                return;
+            }
+            let html = '<div class="alert alert-success py-1 small">';
+            html += `<strong>${file.name}:</strong> `;
+            html += `${data.entries_found || 0} entries found, `;
+            html += `${data.entries_stored || 0} stored, `;
+            html += `${data.entries_matched || 0} matched to billing`;
+            if (data.entries_skipped) html += `, ${data.entries_skipped} duplicates skipped`;
+            html += `<br><a href="/schedules">View on Calendar &rarr;</a>`;
+            html += '</div>';
+            resultDiv.innerHTML = html;
+        })
+        .catch(err => {
+            resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${err.message}</div>`;
+        });
+}
+
+// ---- Schedule Folder Scan ----
+function scanScheduleFolder() {
+    const path = document.getElementById('schedule-folder-path').value.trim();
+    if (!path) return;
+
+    const resultDiv = document.getElementById('schedule-result');
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Scanning folder for schedules (OCR may take a moment)...</span>
+        </div>`;
+
+    fetch('/api/import/schedule/scan-folder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${data.error}</div>`;
+            return;
+        }
+        let html = '<div class="alert alert-success py-2 small">';
+        html += '<strong>Schedule Folder Scan Complete</strong>';
+        html += '<table class="table table-sm table-bordered small mb-1 mt-2">';
+        html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
+        html += `<tr class="table-success"><td>Files with new entries</td><td class="text-end fw-bold">${data.files_with_new_entries}</td></tr>`;
+        html += `<tr><td>Total entries found</td><td class="text-end">${data.total_entries_found}</td></tr>`;
+        html += `<tr><td>Matched to billing</td><td class="text-end">${data.total_entries_matched}</td></tr>`;
+        html += `<tr><td>Duplicates skipped</td><td class="text-end">${data.total_entries_skipped}</td></tr>`;
+        if (data.files_using_ocr > 0)
+            html += `<tr><td>Files using OCR</td><td class="text-end">${data.files_using_ocr}</td></tr>`;
+        if (data.files_errored > 0)
+            html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
+        html += '</table>';
+
+        if (data.details) {
+            const errored = data.details.filter(d => d.status === 'error');
+            if (errored.length > 0) {
+                html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
+                for (const e of errored) {
+                    html += `<li>${e.filename}: ${e.reason}</li>`;
+                }
+                html += '</ul></details>';
+            }
+        }
+
+        html += `<a href="/schedules">View on Calendar &rarr;</a>`;
+        html += '</div>';
+        resultDiv.innerHTML = html;
+    })
+    .catch(err => {
+        resultDiv.innerHTML = `<div class="alert alert-danger py-1 small">${err.message}</div>`;
+    });
+}
+
+// ---- Format Detection ----
+function detectFormat() {
+    const input = document.getElementById('detect-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    const resultDiv = document.getElementById('detect-result');
+    resultDiv.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/detect', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            const pct = ((data.confidence || 0) * 100).toFixed(0);
+            const color = data.confidence >= 0.8 ? 'success' : data.confidence >= 0.5 ? 'warning' : 'danger';
+            resultDiv.innerHTML = `
+                <div class="small">
+                    <span class="badge bg-${color}">${pct}%</span>
+                    <strong>${data.format || 'unknown'}</strong><br>
+                    <span class="text-muted">${data.details || ''}</span>
+                </div>
+            `;
+        })
+        .catch(err => {
+            resultDiv.innerHTML = `<span class="text-danger small">${err.message}</span>`;
+        });
+}
+
+// ---- Folder Browser ----
+let browserModal = null;
+let browserCurrentPath = '';
+let browserParentPath = null;
+
+function openFolderBrowser() {
+    if (!browserModal) {
+        browserModal = new bootstrap.Modal(document.getElementById('folderBrowserModal'));
+    }
+    const typed = document.getElementById('eob-folder-path').value.trim();
+    browserModal.show();
+    loadFolderList(typed || '');
+}
+
+function loadFolderList(path) {
+    const listDiv = document.getElementById('browser-folder-list');
+    listDiv.innerHTML = '<p class="text-muted small p-2">Loading...</p>';
+
+    const url = path ? `/api/import/browse?path=${encodeURIComponent(path)}` : '/api/import/browse';
+
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error && !data.folders) {
+                listDiv.innerHTML = `<p class="text-danger small p-2">${data.error}</p>`;
+                return;
+            }
+
+            browserCurrentPath = data.current || '';
+            browserParentPath = data.parent;
+
+            document.getElementById('browser-current-path').textContent = browserCurrentPath || 'Computer';
+            document.getElementById('browser-up-btn').disabled = (browserParentPath === null && !browserCurrentPath);
+
+            if (data.folders.length === 0) {
+                let msg = 'No subfolders found.';
+                if (data.error) msg += ` (${data.error})`;
+                listDiv.innerHTML = `<p class="text-muted small p-2">${msg}</p>`;
+                return;
+            }
+
+            let html = '<div class="list-group list-group-flush">';
+            for (const f of data.folders) {
+                html += `<a href="#" class="list-group-item list-group-item-action py-1 px-2 small"
+                             onclick="event.preventDefault(); loadFolderList('${f.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')">
+                    <span class="me-1">&#128193;</span> ${f.name}
+                </a>`;
+            }
+            html += '</div>';
+            listDiv.innerHTML = html;
+        })
+        .catch(err => {
+            listDiv.innerHTML = `<p class="text-danger small p-2">${err.message}</p>`;
+        });
+}
+
+function browserGoUp() {
+    if (browserParentPath !== null) {
+        loadFolderList(browserParentPath);
+    } else {
+        loadFolderList('');
+    }
+}
+
+function selectCurrentFolder() {
+    if (browserCurrentPath) {
+        document.getElementById('eob-folder-path').value = browserCurrentPath;
+    }
+    if (browserModal) browserModal.hide();
+}
+
+// ---- EOB Scan (835 only) ----
+function scanEobDirectory() {
+    const path = document.getElementById('eob-folder-path').value.trim();
+    if (!path) return;
+    const resultDiv = document.getElementById('eob-scan-result');
+    const btn = document.getElementById('eob-scan-btn');
+    btn.disabled = true;
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center mt-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Scanning for 835/EDI files...</span>
+        </div>`;
+
+    fetch('/api/import/eob-scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        if (data.error) {
+            resultDiv.innerHTML = `<p class="text-danger small mt-2">${data.error}</p>`;
+            return;
+        }
+        resultDiv.innerHTML = buildScanResultTable(data, false);
+        if (data.files_imported > 0) { refreshStatus(); runAnalysis(); }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        resultDiv.innerHTML = `<p class="text-danger small mt-2">${err.message}</p>`;
+    });
+}
+
+// ---- Smart Scan (all file types) ----
+function smartScanDirectory() {
+    const path = document.getElementById('eob-folder-path').value.trim();
+    if (!path) return;
+    const resultDiv = document.getElementById('eob-scan-result');
+    const btn = document.getElementById('smart-scan-btn');
+    btn.disabled = true;
+    resultDiv.innerHTML = `
+        <div class="d-flex align-items-center mt-2">
+            <span class="spinner-border spinner-border-sm me-2"></span>
+            <span class="small">Smart scanning all file types...</span>
+        </div>`;
+
+    fetch('/api/import/smart-scan', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ folder_path: path })
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        if (data.error) {
+            resultDiv.innerHTML = `<p class="text-danger small mt-2">${data.error}</p>`;
+            return;
+        }
+        resultDiv.innerHTML = buildScanResultTable(data, true);
+        if (data.files_imported > 0) { refreshStatus(); runAnalysis(); }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        resultDiv.innerHTML = `<p class="text-danger small mt-2">${err.message}</p>`;
+    });
+}
+
+function buildScanResultTable(data, showFormats) {
+    let html = '<div class="mt-2">';
+    html += `<p class="small mb-1"><strong>Scan Complete</strong></p>`;
+    html += '<table class="table table-sm table-bordered small mb-2">';
+    html += `<tr><td>Files found</td><td class="text-end fw-bold">${data.total_files_found}</td></tr>`;
+    html += `<tr class="table-success"><td>Imported</td><td class="text-end fw-bold">${data.files_imported}</td></tr>`;
+    html += `<tr><td>Skipped</td><td class="text-end">${data.files_skipped}</td></tr>`;
+
+    if (data.skip_reasons) {
+        const sr = data.skip_reasons;
+        for (const [reason, count] of Object.entries(sr)) {
+            if (count > 0) {
+                html += `<tr><td class="ps-3 text-muted">${reason.replace(/_/g, ' ')}</td><td class="text-end text-muted">${count}</td></tr>`;
+            }
+        }
+    }
+
+    if (data.files_errored > 0)
+        html += `<tr class="table-danger"><td>Errors</td><td class="text-end">${data.files_errored}</td></tr>`;
+
+    if (data.claims_found !== undefined)
+        html += `<tr><td>Claims found</td><td class="text-end">${data.claims_found}</td></tr>`;
+    if (data.claims_new !== undefined)
+        html += `<tr><td class="ps-3 text-muted">New claims</td><td class="text-end text-muted">${data.claims_new}</td></tr>`;
+    if (data.claims_duplicate !== undefined && data.claims_duplicate > 0)
+        html += `<tr><td class="ps-3 text-muted">Duplicate claims</td><td class="text-end text-muted">${data.claims_duplicate}</td></tr>`;
+    if (data.payments_total !== undefined)
+        html += `<tr><td>Total payments</td><td class="text-end">$${(data.payments_total || 0).toLocaleString()}</td></tr>`;
+
+    // Show format breakdown for smart scan
+    if (showFormats && data.format_breakdown) {
+        html += '<tr><td colspan="2" class="fw-bold pt-2">Format Breakdown</td></tr>';
+        for (const [fmt, count] of Object.entries(data.format_breakdown)) {
+            html += `<tr><td class="ps-3">${fmt}</td><td class="text-end">${count}</td></tr>`;
+        }
+    }
+
+    html += '</table>';
+
+    // Error details
+    if (data.details) {
+        const errored = data.details.filter(d => d.status === 'error');
+        if (errored.length > 0) {
+            html += '<details class="small"><summary class="text-danger">Error details</summary><ul class="mt-1">';
+            for (const e of errored) {
+                html += `<li>${e.filename}: ${e.reason}</li>`;
+            }
+            html += '</ul></details>';
+        }
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function refreshStatus() {
+    fetch('/api/import/status')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('import-status').innerHTML = `
+                <p><strong>Total Records:</strong> ${(data.total_records || 0).toLocaleString()}</p>
+                <p><strong>Last Import:</strong> ${data.last_import || 'Never'}</p>
+                <p><strong>Source:</strong> ${data.source || 'N/A'}</p>
+            `;
+        });
+}
+
+// ---- AI Assistant ----
+function checkAiStatus() {
+    fetch('/api/import/ai/status')
+        .then(r => r.json())
+        .then(data => {
+            const badge = document.getElementById('ai-status-badge');
+            const configSection = document.getElementById('ai-config-section');
+            if (data.configured) {
+                badge.className = 'badge bg-success';
+                badge.textContent = 'Connected (' + data.key_source + ')';
+                configSection.classList.add('d-none');
+            } else {
+                badge.className = 'badge bg-warning text-dark';
+                badge.textContent = 'Not configured';
+                configSection.classList.remove('d-none');
+            }
+        })
+        .catch(() => {
+            const badge = document.getElementById('ai-status-badge');
+            badge.className = 'badge bg-danger';
+            badge.textContent = 'Error';
+        });
+}
+checkAiStatus();
+
+function configureAiKey() {
+    const key = document.getElementById('ai-api-key-input').value.trim();
+    if (!key) return;
+
+    fetch('/api/import/ai/configure', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ api_key: key })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            showAiResult('error', data.error);
+        } else {
+            showAiResult('success', 'API key encrypted and stored locally.');
+            document.getElementById('ai-api-key-input').value = '';
+            checkAiStatus();
+        }
+    })
+    .catch(err => showAiResult('error', err.message));
+}
+
+function aiAnalyzeDb() {
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing database (sending aggregate stats only)...');
+    fetch('/api/import/ai/analyze-db')
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            const response = data.response || 'No response';
+            showAiResult('success', '<strong>Database Analysis:</strong><br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(response) + '</pre>');
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function aiAnalyzeFile() {
+    const input = document.getElementById('ai-analyze-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Analyzing <strong>' + escapeHtml(file.name) + '</strong> (structural metadata only)...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/ai/analyze-file', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            const response = data.response || 'No response';
+            showAiResult('success', '<strong>File Analysis — ' + escapeHtml(file.name) + ':</strong><br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(response) + '</pre>');
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function aiSuggestMapping() {
+    const input = document.getElementById('ai-mapping-file-input');
+    if (!input.files.length) return;
+
+    const file = input.files[0];
+    showAiResult('info', '<span class="spinner-border spinner-border-sm me-2"></span>Suggesting column mappings for <strong>' + escapeHtml(file.name) + '</strong>...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    fetch('/api/import/ai/suggest-mapping', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showAiResult('error', data.error);
+                return;
+            }
+            let html = '<strong>Column Mapping — ' + escapeHtml(file.name) + ':</strong>';
+            if (data.detected_headers) {
+                html += '<br><small class="text-muted">Headers: ' + escapeHtml(data.detected_headers.join(', ')) + '</small>';
+            }
+            html += '<br><pre class="small mb-0 mt-2" style="white-space:pre-wrap;">' + escapeHtml(data.response || 'No response') + '</pre>';
+            showAiResult('success', html);
+        })
+        .catch(err => showAiResult('error', err.message));
+}
+
+function showAiResult(type, message) {
+    const clsMap = { error: 'alert-danger', warning: 'alert-warning', success: 'alert-success', info: 'alert-info' };
+    document.getElementById('ai-results').innerHTML = `
+        <div class="alert ${clsMap[type] || 'alert-info'} py-2 small">${message}</div>
+    `;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function runAnalysis() {
+    const section = document.getElementById('analysis-section');
+    const results = document.getElementById('analysis-results');
+    section.classList.remove('d-none');
+    results.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Analyzing imported data...';
+
+    fetch('/api/analysis/post-import')
+        .then(r => r.json())
+        .then(data => {
+            let html = '<div class="row g-3">';
+            const kpis = [
+                { label: 'Total Records', value: (data.total_records || 0).toLocaleString(), color: 'primary' },
+                { label: 'Unpaid Claims', value: (data.unpaid_claims || 0).toLocaleString(), color: 'danger' },
+                { label: 'Underpaid Claims', value: (data.underpaid_claims || 0).toLocaleString(), color: 'warning' },
+                { label: 'Filing Alerts', value: (data.filing_alerts || 0).toLocaleString(), color: 'danger' },
+                { label: 'Total Revenue', value: '$' + (data.total_revenue || 0).toLocaleString(), color: 'success' },
+                { label: 'ERA Payments', value: (data.era_payments || 0).toLocaleString(), color: 'info' },
+            ];
+            for (const kpi of kpis) {
+                html += `<div class="col-md-2"><div class="card text-bg-${kpi.color}">
+                    <div class="card-body p-2 text-center">
+                        <small>${kpi.label}</small><h4 class="mb-0">${kpi.value}</h4>
+                    </div></div></div>`;
+            }
+            html += '</div>';
+
+            if (data.recommendations && data.recommendations.length > 0) {
+                html += '<h6 class="mt-3">Recommended Next Steps:</h6><ul>';
+                for (const rec of data.recommendations) {
+                    html += `<li>${rec}</li>`;
+                }
+                html += '</ul>';
+            }
+
+            if (data.by_carrier && data.by_carrier.length > 0) {
+                html += '<h6 class="mt-3">Revenue by Carrier (Top 10):</h6>';
+                html += '<table class="table table-sm table-striped"><thead><tr>';
+                html += '<th>Carrier</th><th>Claims</th><th>Revenue</th><th>Avg Payment</th>';
+                html += '</tr></thead><tbody>';
+                for (const c of data.by_carrier.slice(0, 10)) {
+                    html += `<tr><td>${c.carrier}</td><td>${c.count}</td>
+                        <td>$${c.revenue.toLocaleString()}</td>
+                        <td>$${c.avg_payment.toFixed(2)}</td></tr>`;
+                }
+                html += '</tbody></table>';
+            }
+
+            results.innerHTML = html;
+        })
+        .catch(err => {
+            results.innerHTML = `<p class="text-danger">Analysis failed: ${err.message}</p>`;
+        });
+}
+</script>
+{% endblock %}

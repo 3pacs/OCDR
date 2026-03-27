@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Chat with Your Data{% endblock %}
+{% block page_title %}Chat with Your Data{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="data-card padded h-100">
+            <div id="chat-messages" style="height: 500px; overflow-y: auto; margin-bottom: 16px;">
+                <div class="empty-state" id="chat-empty">
+                    <i class="bi bi-chat-dots"></i>
+                    <p>Ask questions about your billing data in natural language</p>
+                    <div class="text-muted small mt-2">
+                        Examples: "How much did Medicare pay us last month?"<br>
+                        "Which carriers are underpaying on MRI?"<br>
+                        "What's our top denial reason this quarter?"
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <input type="text" class="form-control" id="chat-input" placeholder="Ask a question about your billing data..." autocomplete="off">
+                <button class="btn btn-primary" id="chat-send" onclick="sendMessage()">
+                    <i class="bi bi-send"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="data-card padded">
+            <h6 class="fw-semibold mb-3"><i class="bi bi-lightning-charge-fill text-accent-yellow me-1"></i>Quick Questions</h6>
+            <div class="d-grid gap-2">
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What is our total revenue this month?')"><i class="bi bi-currency-dollar me-1 text-accent-green"></i>Total revenue this month</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which carrier pays the most?')"><i class="bi bi-building me-1 text-accent-blue"></i>Top paying carrier</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('How many denials do we have?')"><i class="bi bi-x-octagon me-1 text-accent-red"></i>Denial count</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('What are the top denial reason codes?')"><i class="bi bi-bar-chart me-1 text-accent-yellow"></i>Top denial codes</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show revenue by modality')"><i class="bi bi-pie-chart me-1 text-accent-purple"></i>Revenue by modality</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Which physicians refer the most?')"><i class="bi bi-person-badge me-1 text-accent-blue"></i>Top referring physicians</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show upcoming schedule for this week')"><i class="bi bi-calendar3 me-1 text-accent-green"></i>This week's schedule</button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="askQuick('Show underpayment summary')"><i class="bi bi-arrow-down-circle me-1 text-accent-yellow"></i>Underpayment check</button>
+            </div>
+        </div>
+        <div class="data-card padded mt-3">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-robot me-1"></i>LLM Status</h6>
+            <div id="llm-status" class="text-muted small">Checking...</div>
+        </div>
+        <div class="data-card padded mt-3">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-info-circle me-1"></i>Tips</h6>
+            <ul class="text-muted small mb-0 ps-3">
+                <li class="mb-1">Ask about billing, payments, schedules, denials, or carriers</li>
+                <li class="mb-1">Claude translates your question into a structured database query</li>
+                <li class="mb-1">No patient data is sent to the API — only query structure</li>
+                <li>Results come from your local database only</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    checkLLMStatus();
+    document.getElementById('chat-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') sendMessage();
+    });
+});
+
+async function checkLLMStatus() {
+    try {
+        const data = await fetchJSON('/api/llm/status');
+        var el = document.getElementById('llm-status');
+        if (data.ollama) {
+            el.innerHTML = '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Local LLM (Ollama) connected</span>';
+        } else if (data.anthropic) {
+            el.innerHTML = '<span class="text-accent-green"><i class="bi bi-check-circle-fill"></i> Claude API connected</span>';
+        } else {
+            el.innerHTML = '<span class="text-accent-yellow"><i class="bi bi-info-circle"></i> Template matching mode (no LLM configured)</span>';
+        }
+    } catch (e) {
+        document.getElementById('llm-status').innerHTML = '<span class="text-muted">Template matching mode</span>';
+    }
+}
+
+function askQuick(question) {
+    document.getElementById('chat-input').value = question;
+    sendMessage();
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+    input.value = '';
+
+    const container = document.getElementById('chat-messages');
+    const empty = document.getElementById('chat-empty');
+    if (empty) empty.style.display = 'none';
+
+    // Add user message
+    container.insertAdjacentHTML('beforeend',
+        '<div class="d-flex justify-content-end mb-3"><div class="bg-primary text-white rounded-3 px-3 py-2" style="max-width:70%">' + escapeHtml(message) + '</div></div>');
+    container.scrollTop = container.scrollHeight;
+
+    // Add loading indicator
+    const loadingId = 'loading-' + Date.now();
+    container.insertAdjacentHTML('beforeend',
+        '<div id="' + loadingId + '" class="d-flex mb-3"><div class="bg-dark rounded-3 px-3 py-2 text-muted"><i class="bi bi-three-dots"></i> Thinking...</div></div>');
+    container.scrollTop = container.scrollHeight;
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: message}),
+        });
+        const data = await resp.json();
+        document.getElementById(loadingId).remove();
+
+        const source = data.source ? ' <span class="badge bg-secondary">' + data.source + '</span>' : '';
+        container.insertAdjacentHTML('beforeend',
+            '<div class="d-flex mb-3"><div class="bg-dark rounded-3 px-3 py-2" style="max-width:80%">' +
+            (data.response || data.error || 'No response') + source + '</div></div>');
+    } catch (e) {
+        document.getElementById(loadingId).remove();
+        container.insertAdjacentHTML('beforeend',
+            '<div class="d-flex mb-3"><div class="bg-danger bg-opacity-25 rounded-3 px-3 py-2">Error: ' + e.message + '</div></div>');
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

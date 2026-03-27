@@ -1,0 +1,1280 @@
+{% extends "base.html" %}
+{% block title %}Import Data{% endblock %}
+{% block page_title %}Import Data{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Billing Records</div>
+            <div class="kpi-value" id="kpi-billing">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Schedule Records</div>
+            <div class="kpi-value" id="kpi-schedule">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-purple">
+            <div class="kpi-label">ERA Payments</div>
+            <div class="kpi-value" id="kpi-era">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-amber">
+            <div class="kpi-label">Import Sources</div>
+            <div class="kpi-value" id="kpi-sources">--</div>
+        </div>
+    </div>
+</div>
+
+<!-- Guide for first-time users -->
+<div class="welcome-banner" id="import-guide" style="display:none;">
+    <h2>Upload Your Data</h2>
+    <p>Drop your files below to get started. We accept billing spreadsheets, schedule files, PDF reports, and 835 ERA remittance files.</p>
+    <div class="step-indicator">
+        <div class="step-dot active">1</div>
+        <div class="step-connector"></div>
+        <div class="step-dot">2</div>
+        <div class="step-connector"></div>
+        <div class="step-dot">3</div>
+    </div>
+    <div class="d-flex justify-content-center gap-4 text-muted small">
+        <span><strong class="text-accent-blue">1</strong> Upload files</span>
+        <span><strong class="text-accent-blue">2</strong> We auto-detect columns</span>
+        <span><strong class="text-accent-blue">3</strong> View your dashboard</span>
+    </div>
+</div>
+
+<!-- Interactive Prompt Banner (shown when app needs user input) -->
+<div class="data-card padded mb-4" id="prompt-banner" style="display:none;">
+    <div class="d-flex align-items-start gap-3">
+        <div class="text-accent-yellow fs-4"><i class="bi bi-chat-dots-fill"></i></div>
+        <div class="flex-grow-1">
+            <h6 class="fw-semibold mb-1" id="prompt-title">Action Needed</h6>
+            <p class="text-muted small mb-2" id="prompt-message" style="white-space:pre-wrap"></p>
+            <div id="prompt-actions"></div>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" onclick="dismissPrompt()"><i class="bi bi-x"></i></button>
+    </div>
+</div>
+
+<!-- Upload Cards -->
+<div class="row g-4 mb-4">
+    <!-- Smart Upload (any file) -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-magic me-2 text-accent-purple"></i>Smart Upload
+                <span class="badge bg-info-subtle text-info-emphasis ms-2 small">Auto-Detect</span>
+            </h6>
+            <p class="text-muted small mb-3">Drop any file and we'll figure out what it is. Works with billing spreadsheets, schedules, 835 ERA files, PDFs, and scanned images.</p>
+            <div class="upload-zone" id="smart-zone">
+                <i class="bi bi-cloud-arrow-up upload-icon text-accent-purple"></i>
+                <div class="upload-title">Drop any file here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.xlsx</span>
+                    <span class="format-tag">.csv</span>
+                    <span class="format-tag">.835</span>
+                    <span class="format-tag">.pdf</span>
+                    <span class="format-tag">.txt</span>
+                    <span class="format-tag">.png/.jpg</span>
+                </div>
+                <input type="file" class="d-none" id="smart-input"
+                       accept=".xlsx,.xls,.csv,.835,.edi,.txt,.pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp" multiple>
+            </div>
+            <div class="upload-progress" id="smart-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Detecting format and importing...</div>
+            </div>
+            <div class="upload-result" id="smart-result"></div>
+        </div>
+    </div>
+
+    <!-- Schedule Upload -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-calendar-week me-2 text-accent-green"></i>Schedule Import
+            </h6>
+            <p class="text-muted small mb-3">Upload a single file or scan an entire folder of schedule PDFs. OCR handles scanned documents automatically.</p>
+            <div class="upload-zone" id="schedule-zone">
+                <i class="bi bi-calendar-week upload-icon text-accent-green"></i>
+                <div class="upload-title">Drop your schedule here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.xlsx</span>
+                    <span class="format-tag">.csv</span>
+                    <span class="format-tag">.pdf</span>
+                </div>
+                <input type="file" class="d-none" id="schedule-input" accept=".xlsx,.xls,.csv,.pdf">
+            </div>
+            <div class="upload-progress" id="schedule-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Importing schedule...</div>
+            </div>
+            <div class="upload-result" id="schedule-result"></div>
+
+            <!-- Folder Scan -->
+            <hr class="my-3 border-secondary">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-folder2-open me-2 text-accent-green"></i>Scan Schedule Folder</h6>
+            <p class="text-muted small mb-2">Point to a folder and we'll recursively find all PDFs, images, and text files, OCR scanned pages, and import all schedule entries.</p>
+            <div class="input-group mb-2">
+                <input type="text" class="form-control form-control-sm" id="schedule-folder-path"
+                       value="{{ config.get('SCHEDULE_FOLDER', '') }}" placeholder="R:\Schedule or /path/to/schedules">
+                <button class="btn btn-sm btn-primary" id="btn-scan-folder" onclick="scanScheduleFolder()">
+                    <i class="bi bi-search me-1"></i>Scan Folder
+                </button>
+            </div>
+            <div class="upload-progress" id="folder-scan-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Scanning folder...</div>
+            </div>
+            <div class="upload-result" id="folder-scan-result"></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Excel/CSV Billing -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-spreadsheet me-2 text-accent-blue"></i>Billing Spreadsheet</h6>
+            <p class="text-muted small mb-3">Upload billing spreadsheets. Auto-detects columns and normalizes modality codes, carrier names, and dates.</p>
+            <div class="upload-zone" id="spreadsheet-zone">
+                <i class="bi bi-file-earmark-spreadsheet upload-icon text-accent-blue"></i>
+                <div class="upload-title">Drop your spreadsheet here</div>
+                <div class="upload-subtitle">or click to browse files</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.xlsx</span>
+                    <span class="format-tag">.xls</span>
+                    <span class="format-tag">.csv</span>
+                </div>
+                <input type="file" class="d-none" id="spreadsheet-input" accept=".xlsx,.xls,.csv">
+            </div>
+            <div class="upload-progress" id="spreadsheet-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Processing your file...</div>
+            </div>
+            <div class="upload-result" id="spreadsheet-result"></div>
+        </div>
+    </div>
+
+    <!-- 835 ERA / PDF -->
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-file-earmark-medical me-2 text-accent-amber"></i>835 ERA / PDF Import</h6>
+            <p class="text-muted small mb-3">Upload 835 remittance files or PDF billing reports. Parses payments, claim lines, and adjustment codes.</p>
+            <div class="upload-zone" id="era-pdf-zone">
+                <i class="bi bi-file-earmark-medical upload-icon text-accent-amber"></i>
+                <div class="upload-title">Drop your 835 or PDF here</div>
+                <div class="upload-subtitle">or click to browse (multiple files OK)</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.835</span>
+                    <span class="format-tag">.edi</span>
+                    <span class="format-tag">.pdf</span>
+                    <span class="format-tag">.txt</span>
+                </div>
+                <input type="file" class="d-none" id="era-pdf-input" accept=".835,.edi,.txt,.pdf" multiple>
+            </div>
+            <div class="upload-progress" id="era-pdf-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Processing your files...</div>
+            </div>
+            <div class="upload-result" id="era-pdf-result"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Purview PACS CSV Import -->
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-image me-2 text-accent-purple"></i>Purview PACS Import
+                <span class="badge bg-info-subtle text-info-emphasis ms-2 small">CSV</span>
+            </h6>
+            <p class="text-muted small mb-3">Export a study list CSV from Purview and upload it here. Auto-maps patient names, dates, modalities, and referring physicians to your schedule.</p>
+            <div class="upload-zone" id="purview-zone">
+                <i class="bi bi-image upload-icon text-accent-purple"></i>
+                <div class="upload-title">Drop your Purview CSV export here</div>
+                <div class="upload-subtitle">or click to browse</div>
+                <div class="upload-formats">
+                    <span class="format-tag">.csv</span>
+                </div>
+                <input type="file" class="d-none" id="purview-input" accept=".csv">
+            </div>
+            <div class="upload-progress" id="purview-progress">
+                <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+                <div class="progress-text">Importing Purview data...</div>
+            </div>
+            <div class="upload-result" id="purview-result"></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="data-card padded h-100">
+            <h6 class="fw-semibold mb-2"><i class="bi bi-info-circle me-2 text-accent-blue"></i>Purview CSV Columns</h6>
+            <p class="text-muted small mb-2">The importer auto-detects these common Purview/Ambra Health CSV columns:</p>
+            <div class="small" style="columns:2;column-gap:1rem;">
+                <div class="mb-1"><code>Patient Name</code></div>
+                <div class="mb-1"><code>Study Date</code></div>
+                <div class="mb-1"><code>Modality</code></div>
+                <div class="mb-1"><code>Study Description</code></div>
+                <div class="mb-1"><code>Referring Physician</code></div>
+                <div class="mb-1"><code>Accession Number</code></div>
+                <div class="mb-1"><code>Status</code></div>
+                <div class="mb-1"><code>Patient ID / MRN</code></div>
+                <div class="mb-1"><code>Insurance</code></div>
+                <div class="mb-1"><code>Location / Facility</code></div>
+            </div>
+            <p class="text-muted small mt-2 mb-0">Column headers are fuzzy-matched, so slight variations in naming will still be detected.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Records Server (Read-Only X: Drive) -->
+<div class="data-card padded mb-4" id="records-server-section">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="fw-semibold mb-0">
+            <i class="bi bi-hdd-network me-2 text-accent-blue"></i>Records Server
+            <span class="badge ms-2 small" id="rs-status-badge">Checking...</span>
+        </h6>
+        <span class="text-muted small"><i class="bi bi-shield-lock me-1"></i>Read-Only Access</span>
+    </div>
+    <p class="text-muted small mb-3">
+        Connect to your records server drive to automatically discover and import billing, ERA, schedule, and PACS data.
+        The app will <strong>never write, move, or delete</strong> files on the server — all operations are read-only.
+    </p>
+
+    <!-- Path Configuration -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-8">
+            <label class="form-label small text-muted">Server Drive Path</label>
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-hdd-network"></i></span>
+                <input type="text" class="form-control form-control-sm" id="rs-path-input"
+                       value="{{ config.get('RECORDS_SERVER_PATH', '') }}"
+                       placeholder="X:\ or /mnt/records-server">
+                <button class="btn btn-sm btn-primary" id="btn-rs-connect" onclick="rsConnect()">
+                    <i class="bi bi-plug me-1"></i>Connect
+                </button>
+            </div>
+            <small class="text-muted d-block mt-1">Or set <code>RECORDS_SERVER_PATH</code> environment variable.</small>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <button class="btn btn-sm btn-outline-info w-100" id="btn-rs-discover" onclick="rsDiscover()" disabled>
+                <i class="bi bi-search me-1"></i>Discover Files
+            </button>
+        </div>
+    </div>
+
+    <!-- Discovery Progress -->
+    <div class="upload-progress" id="rs-discover-progress">
+        <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+        <div class="progress-text">Scanning records server...</div>
+    </div>
+
+    <!-- Summary Cards (shown after discovery) -->
+    <div class="row g-3 mb-3" id="rs-summary" style="display:none;">
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-blue" style="padding:.75rem;">
+                <div class="kpi-label small">Total Files</div>
+                <div class="kpi-value fs-5" id="rs-total-files">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-green" style="padding:.75rem;">
+                <div class="kpi-label small">Imported</div>
+                <div class="kpi-value fs-5" id="rs-imported">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-purple" style="padding:.75rem;">
+                <div class="kpi-label small">Ready</div>
+                <div class="kpi-value fs-5" id="rs-ready">0</div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="kpi-card kpi-card-amber" style="padding:.75rem;">
+                <div class="kpi-label small">Total Size</div>
+                <div class="kpi-value fs-5" id="rs-total-size">0</div>
+            </div>
+        </div>
+        <div class="col-md-4 d-flex align-items-center">
+            <div class="d-flex gap-2 w-100">
+                <button class="btn btn-sm btn-success flex-fill" id="btn-rs-extract-all" onclick="rsExtractAll()" disabled>
+                    <i class="bi bi-download me-1"></i>Extract All
+                </button>
+                <button class="btn btn-sm btn-outline-light flex-fill" onclick="rsReset()" title="Re-scan">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Re-scan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Format Breakdown -->
+    <div id="rs-breakdown" style="display:none;">
+        <h6 class="fw-semibold small mb-2">Files by Type</h6>
+        <div class="d-flex flex-wrap gap-2 mb-3" id="rs-format-tags"></div>
+    </div>
+
+    <!-- File Browser -->
+    <div id="rs-file-browser" style="display:none;">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="fw-semibold small mb-0">Discovered Files</h6>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" id="rs-filter-category" onchange="rsLoadFiles()" style="width:auto">
+                    <option value="">All Categories</option>
+                    <option value="era">ERA/EOB</option>
+                    <option value="billing">Billing</option>
+                    <option value="schedule">Schedule</option>
+                    <option value="unknown">Unknown</option>
+                </select>
+                <select class="form-select form-select-sm" id="rs-filter-status" onchange="rsLoadFiles()" style="width:auto">
+                    <option value="">All Status</option>
+                    <option value="DISCOVERED">Discovered</option>
+                    <option value="IMPORTED">Imported</option>
+                    <option value="SKIPPED">Skipped</option>
+                    <option value="ERROR">Error</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-wrapper" style="max-height:400px;overflow-y:auto;">
+            <table class="data-table" id="rs-files-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="rs-select-all" onchange="rsToggleSelectAll()"></th>
+                        <th data-sort="filename">File</th>
+                        <th data-sort="extension">Type</th>
+                        <th data-sort="detected_category">Category</th>
+                        <th data-sort="file_size">Size</th>
+                        <th data-sort="file_modified">Modified</th>
+                        <th data-sort="import_status">Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="rs-files-body"></tbody>
+            </table>
+        </div>
+        <div class="d-flex align-items-center justify-content-between mt-2">
+            <span class="text-muted small" id="rs-files-info">--</span>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-light" id="rs-prev-page" onclick="rsChangePage(-1)" disabled>&laquo; Prev</button>
+                <button class="btn btn-sm btn-outline-light" id="rs-next-page" onclick="rsChangePage(1)" disabled>Next &raquo;</button>
+            </div>
+            <button class="btn btn-sm btn-primary" id="btn-rs-extract-selected" onclick="rsExtractSelected()" disabled>
+                <i class="bi bi-download me-1"></i>Extract Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Extract Progress & Results -->
+    <div class="upload-progress" id="rs-extract-progress">
+        <div class="progress-bar-wrapper"><div class="progress-bar-fill" style="width:100%"></div></div>
+        <div class="progress-text">Extracting data from records server...</div>
+    </div>
+    <div class="upload-result" id="rs-extract-result"></div>
+</div>
+
+<!-- AI Assistant Config -->
+<div class="data-card padded mb-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="fw-semibold mb-0"><i class="bi bi-robot me-2 text-accent-purple"></i>AI Assistant</h6>
+        <span class="badge" id="ai-status-badge">Checking...</span>
+    </div>
+    <p class="text-muted small mb-3">
+        Connect to Claude API for smart file analysis, column mapping suggestions, and database health checks.
+        Only structural metadata is sent (column names, patterns, counts) — never patient data.
+    </p>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+            <label class="form-label small text-muted">Anthropic API Key</label>
+            <div class="input-group">
+                <input type="password" class="form-control form-control-sm" id="api-key-input"
+                       placeholder="sk-ant-api03-...">
+                <button class="btn btn-sm btn-outline-light" onclick="saveApiKey()">
+                    <i class="bi bi-key me-1"></i>Save Key
+                </button>
+            </div>
+            <small class="text-muted d-block mt-1">Or set <code>ANTHROPIC_API_KEY</code> env variable.</small>
+        </div>
+        <div class="col-md-6">
+            <button class="btn btn-sm btn-outline-info" onclick="analyzeDb()" id="btn-analyze-db" disabled>
+                <i class="bi bi-database-check me-1"></i>Analyze Database
+            </button>
+        </div>
+    </div>
+    <div id="ai-result" class="mt-3" style="display:none;"></div>
+</div>
+
+<!-- Import History + Source Chart -->
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="chart-card">
+            <div class="chart-header">
+                <h6 class="fw-semibold mb-0">Records by Source</h6>
+            </div>
+            <div class="chart-body chart-body-doughnut" id="chart-container">
+                <div class="empty-state" id="chart-empty">
+                    <i class="bi bi-pie-chart"></i>
+                    <p>Upload some data to see the breakdown</p>
+                </div>
+                <canvas id="sourceChart" style="display:none"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="data-card padded">
+            <h6 class="fw-semibold mb-3">Import Log</h6>
+            <div id="import-log" style="max-height: 320px; overflow-y: auto;">
+                <div class="empty-state" id="log-empty">
+                    <i class="bi bi-clock-history"></i>
+                    <p>Imports you make will appear here</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Navigation -->
+<div class="data-card padded mt-4">
+    <h6 class="fw-semibold mb-3"><i class="bi bi-signpost-2 me-2"></i>After Importing</h6>
+    <div class="quick-nav">
+        <a href="/" class="quick-nav-item">
+            <i class="bi bi-grid-1x2-fill text-accent-blue"></i>
+            <span>Dashboard</span>
+        </a>
+        <a href="/schedule" class="quick-nav-item">
+            <i class="bi bi-calendar-week text-accent-green"></i>
+            <span>Schedule Viewer</span>
+        </a>
+        <a href="/schedules" class="quick-nav-item">
+            <i class="bi bi-calendar3 text-accent-purple"></i>
+            <span>Schedule Calendar</span>
+        </a>
+        <a href="/match-review" class="quick-nav-item">
+            <i class="bi bi-link-45deg text-accent-purple"></i>
+            <span>Match ERA to Billing</span>
+        </a>
+        <a href="/era-payments" class="quick-nav-item">
+            <i class="bi bi-file-earmark-medical-fill text-accent-green"></i>
+            <span>View ERA Payments</span>
+        </a>
+        <a href="/denials" class="quick-nav-item">
+            <i class="bi bi-x-octagon-fill text-accent-red"></i>
+            <span>Check Denials</span>
+        </a>
+        <a href="/underpayments" class="quick-nav-item">
+            <i class="bi bi-arrow-down-circle-fill text-accent-yellow"></i>
+            <span>Underpayments</span>
+        </a>
+        <a href="/admin" class="quick-nav-item">
+            <i class="bi bi-gear-fill text-accent-orange"></i>
+            <span>System Settings</span>
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadImportStatus();
+    checkAiStatus();
+    setupUploads();
+    rsCheckStatus();
+});
+
+// ── Interactive Prompt System ─────────────────────────────────
+function showPrompt(title, message, actions) {
+    var banner = document.getElementById('prompt-banner');
+    document.getElementById('prompt-title').textContent = title;
+    document.getElementById('prompt-message').textContent = message;
+    var actionsDiv = document.getElementById('prompt-actions');
+    actionsDiv.innerHTML = '';
+    if (actions && actions.length) {
+        actions.forEach(function(action) {
+            var btn = document.createElement('button');
+            btn.className = 'btn btn-sm ' + (action.primary ? 'btn-primary' : 'btn-outline-light') + ' me-2';
+            btn.innerHTML = action.icon ? '<i class="bi ' + action.icon + ' me-1"></i>' + action.label : action.label;
+            btn.onclick = action.handler;
+            actionsDiv.appendChild(btn);
+        });
+    }
+    banner.style.display = 'block';
+    banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function dismissPrompt() {
+    document.getElementById('prompt-banner').style.display = 'none';
+}
+
+// ── AI Assistant ──────────────────────────────────────────────
+async function checkAiStatus() {
+    try {
+        var data = await fetchJSON('/api/import/ai/status');
+        var badge = document.getElementById('ai-status-badge');
+        if (data.configured) {
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis';
+            document.getElementById('btn-analyze-db').disabled = false;
+        } else {
+            badge.textContent = 'Not configured';
+            badge.className = 'badge bg-warning-subtle text-warning-emphasis';
+        }
+    } catch (e) {
+        var badge = document.getElementById('ai-status-badge');
+        badge.textContent = 'Unavailable';
+        badge.className = 'badge bg-secondary';
+    }
+}
+
+async function saveApiKey() {
+    var key = document.getElementById('api-key-input').value.trim();
+    if (!key) { showToast('Enter an API key first', 'warning'); return; }
+    try {
+        var resp = await fetch('/api/import/ai/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key }),
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            showToast('API key saved and encrypted', 'success');
+            document.getElementById('api-key-input').value = '';
+            checkAiStatus();
+        } else {
+            showToast(data.error || 'Failed to save key', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving key: ' + e.message, 'error');
+    }
+}
+
+async function analyzeDb() {
+    var btn = document.getElementById('btn-analyze-db');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analyzing...';
+    var resultDiv = document.getElementById('ai-result');
+    try {
+        var data = await fetchJSON('/api/import/ai/analyze-db');
+        resultDiv.style.display = 'block';
+        if (data.response) {
+            resultDiv.innerHTML = '<div class="data-card padded"><pre class="text-light small mb-0" style="white-space:pre-wrap">' +
+                escapeHtml(data.response) + '</pre></div>';
+        } else if (data.error) {
+            resultDiv.innerHTML = '<div class="alert alert-warning small">' + escapeHtml(data.error) + '</div>';
+        }
+    } catch (e) {
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="alert alert-danger small">Error: ' + escapeHtml(e.message) + '</div>';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-database-check me-1"></i>Analyze Database';
+}
+
+// ── Load current counts ──────────────────────────────────────
+async function loadImportStatus() {
+    try {
+        var data = await fetchJSON('/api/import/status');
+        var billing = data.total_billing_records || 0;
+        var schedule = data.total_schedule_records || 0;
+        var era = data.total_era_payments || 0;
+
+        document.getElementById('kpi-billing').textContent = formatNumber(billing);
+        document.getElementById('kpi-schedule').textContent = formatNumber(schedule);
+        document.getElementById('kpi-era').textContent = formatNumber(era);
+        document.getElementById('kpi-sources').textContent = data.by_source.length;
+
+        if (billing + schedule + era === 0) {
+            document.getElementById('import-guide').style.display = 'block';
+        }
+
+        if (data.by_source.length > 0) {
+            document.getElementById('chart-empty').style.display = 'none';
+            var canvas = document.getElementById('sourceChart');
+            canvas.style.display = 'block';
+            new Chart(canvas, {
+                type: 'doughnut',
+                data: {
+                    labels: data.by_source.map(function(s) { return s.source; }),
+                    datasets: [{
+                        data: data.by_source.map(function(s) { return s.count; }),
+                        backgroundColor: ['#63b3ed', '#34d399', '#a78bfa', '#f472b6', '#fbbf24', '#fb923c'],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 16, usePointStyle: true } } }
+                }
+            });
+        }
+    } catch (e) {
+        console.error('Failed to load import status', e);
+    }
+}
+
+// ── Setup upload zones ───────────────────────────────────────
+function setupUploads() {
+    setupZone({
+        zoneId: 'smart-zone', inputId: 'smart-input', progressId: 'smart-progress', resultId: 'smart-result',
+        getUrl: function() { return '/api/import/smart'; },
+        fieldName: 'file', multi: true, processIndividually: true,
+    });
+    setupZone({
+        zoneId: 'schedule-zone', inputId: 'schedule-input', progressId: 'schedule-progress', resultId: 'schedule-result',
+        getUrl: function() { return '/api/import/schedule/upload'; },
+        fieldName: 'file', multi: false,
+    });
+    setupZone({
+        zoneId: 'spreadsheet-zone', inputId: 'spreadsheet-input', progressId: 'spreadsheet-progress', resultId: 'spreadsheet-result',
+        getUrl: function(file) {
+            var ext = file.name.split('.').pop().toLowerCase();
+            return ext === 'csv' ? '/api/import/csv' : '/api/import/excel';
+        },
+        fieldName: 'file', multi: false,
+    });
+    setupZone({
+        zoneId: 'era-pdf-zone', inputId: 'era-pdf-input', progressId: 'era-pdf-progress', resultId: 'era-pdf-result',
+        getUrl: function(file) {
+            var ext = file.name.split('.').pop().toLowerCase();
+            return ext === 'pdf' ? '/api/import/pdf' : '/api/era/upload';
+        },
+        fieldName: function(file) {
+            var ext = file.name.split('.').pop().toLowerCase();
+            return ext === 'pdf' ? 'file' : 'files';
+        },
+        multi: true,
+    });
+    setupZone({
+        zoneId: 'purview-zone', inputId: 'purview-input', progressId: 'purview-progress', resultId: 'purview-result',
+        getUrl: function() { return '/api/import/purview-csv'; },
+        fieldName: 'file', multi: false,
+    });
+}
+
+function setupZone(cfg) {
+    var zone = document.getElementById(cfg.zoneId);
+    var input = document.getElementById(cfg.inputId);
+
+    zone.addEventListener('click', function(e) { if (e.target.tagName !== 'INPUT') input.click(); });
+    zone.addEventListener('dragover', function(e) { e.preventDefault(); e.stopPropagation(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', function(e) { e.preventDefault(); zone.classList.remove('drag-over'); });
+    zone.addEventListener('drop', function(e) {
+        e.preventDefault(); e.stopPropagation(); zone.classList.remove('drag-over');
+        processFiles(Array.from(e.dataTransfer.files), cfg);
+    });
+    input.addEventListener('change', function() { processFiles(Array.from(input.files), cfg); input.value = ''; });
+}
+
+async function processFiles(files, cfg) {
+    if (!files.length) return;
+    var zone = document.getElementById(cfg.zoneId);
+    var progress = document.getElementById(cfg.progressId);
+    var resultDiv = document.getElementById(cfg.resultId);
+    zone.classList.add('uploading');
+    progress.classList.add('active');
+    resultDiv.classList.remove('show');
+
+    var totalImported = 0, totalErrors = 0, allMessages = [], prompts = [];
+
+    if (cfg.processIndividually) {
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var url = typeof cfg.getUrl === 'function' ? cfg.getUrl(file) : cfg.getUrl;
+            progress.querySelector('.progress-text').textContent = 'Processing ' + file.name + '...';
+            var formData = new FormData();
+            formData.append('file', file);
+            try {
+                var resp = await fetch(url, { method: 'POST', body: formData });
+                var data = await resp.json();
+                if (resp.ok) {
+                    var count = data.imported || data.entries_stored || data.entries_found || data.total_payments || data.total_claims || 0;
+                    totalImported += count;
+                    var msg = '<strong>' + escapeHtml(file.name) + '</strong>: ';
+                    if (data.detected_format) msg += '<span class="badge bg-info-subtle text-info-emphasis me-1">' + data.detected_format + '</span>';
+                    msg += count > 0 ? count + ' records imported' : (data.status || 'Processed');
+                    if (data.errors && data.errors.length) { totalErrors += data.errors.length; msg += ' <span class="text-accent-yellow">(' + data.errors.length + ' errors)</span>'; }
+                    allMessages.push(msg);
+                    addImportLog(file.name, count, data.errors ? data.errors.length : 0);
+                    if (data.needs_input && data.prompt) prompts.push({ filename: file.name, prompt: data.prompt });
+                } else {
+                    totalErrors++;
+                    allMessages.push('<strong>' + escapeHtml(file.name) + '</strong>: <span class="text-accent-red">' + escapeHtml(data.error || 'Upload failed') + '</span>');
+                    if (data.needs_input && data.prompt) prompts.push({ filename: file.name, prompt: data.prompt });
+                }
+            } catch (e) {
+                totalErrors++;
+                allMessages.push('<strong>' + escapeHtml(file.name) + '</strong>: <span class="text-accent-red">Network error</span>');
+            }
+        }
+    } else {
+        var groups = {};
+        for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var url = typeof cfg.getUrl === 'function' ? cfg.getUrl(file) : cfg.getUrl;
+            var field = typeof cfg.fieldName === 'function' ? cfg.fieldName(file) : cfg.fieldName;
+            var key = url + '|' + field;
+            if (!groups[key]) groups[key] = { url: url, field: field, files: [] };
+            groups[key].files.push(file);
+        }
+        var keys = Object.keys(groups);
+        for (var k = 0; k < keys.length; k++) {
+            var g = groups[keys[k]];
+            var formData = new FormData();
+            if (g.field === 'files') { for (var j = 0; j < g.files.length; j++) formData.append('files', g.files[j]); }
+            else { formData.append(g.field, g.files[0]); }
+            try {
+                progress.querySelector('.progress-text').textContent = 'Uploading ' + g.files.map(function(f){return f.name}).join(', ') + '...';
+                var resp = await fetch(g.url, { method: 'POST', body: formData });
+                var data = await resp.json();
+                if (resp.ok) {
+                    var count = data.imported || data.entries_stored || data.total_payments || data.total_claims || 0;
+                    totalImported += count;
+                    var errs = data.errors ? data.errors.length : 0;
+                    totalErrors += errs;
+                    var msg = '<strong>' + g.files.map(function(f){return escapeHtml(f.name)}).join(', ') + '</strong>: ';
+                    msg += count > 0 ? count + ' records imported' : 'Processed';
+                    if (data.skipped) msg += ', ' + data.skipped + ' skipped';
+                    if (errs) msg += ' <span class="text-accent-yellow">(' + errs + ' errors)</span>';
+                    allMessages.push(msg);
+                    for (var j = 0; j < g.files.length; j++) addImportLog(g.files[j].name, count, errs);
+                    if (data.needs_input && data.prompt) prompts.push({ filename: g.files[0].name, prompt: data.prompt });
+                } else {
+                    totalErrors++;
+                    allMessages.push('<strong>' + escapeHtml(g.files[0].name) + '</strong>: <span class="text-accent-red">' + escapeHtml(data.error || 'Failed') + '</span>');
+                    if (data.needs_input && data.prompt) prompts.push({ filename: g.files[0].name, prompt: data.prompt });
+                }
+            } catch (e) {
+                totalErrors++;
+                allMessages.push('<strong>' + escapeHtml(g.files[0].name) + '</strong>: <span class="text-accent-red">Network error</span>');
+            }
+        }
+    }
+
+    zone.classList.remove('uploading');
+    progress.classList.remove('active');
+    resultDiv.className = 'upload-result show ' + (totalErrors > 0 && totalImported === 0 ? 'result-error' : totalErrors > 0 ? 'result-warning' : 'result-success');
+    zone.classList.add(totalErrors > 0 && totalImported === 0 ? 'upload-error' : 'upload-success');
+    resultDiv.innerHTML = allMessages.join('<br>');
+
+    if (prompts.length > 0) {
+        var combinedMsg = prompts.map(function(p) { return p.filename + ': ' + p.prompt; }).join('\n\n');
+        showPrompt('Import needs your attention', combinedMsg, [
+            { label: 'Try Smart Upload', icon: 'bi-magic', primary: true, handler: function() { document.getElementById('smart-input').click(); dismissPrompt(); }},
+            { label: 'View Schedule', icon: 'bi-calendar-week', handler: function() { window.location.href = '/schedule'; }},
+        ]);
+    }
+
+    setTimeout(function() { zone.classList.remove('upload-success', 'upload-error'); }, 5000);
+    loadImportStatus();
+    showToast(totalImported > 0 ? totalImported + ' records imported!' : 'Upload complete' + (totalErrors > 0 ? ' with errors' : ''), totalErrors > 0 ? 'warning' : 'success');
+}
+
+function addImportLog(filename, count, errors) {
+    var log = document.getElementById('import-log');
+    var empty = document.getElementById('log-empty');
+    if (empty) empty.style.display = 'none';
+    var time = new Date().toLocaleTimeString();
+    var icon = errors > 0 ? 'text-accent-yellow' : 'text-accent-green';
+    var biIcon = errors > 0 ? 'bi-exclamation-circle-fill' : 'bi-check-circle-fill';
+    log.insertAdjacentHTML('afterbegin',
+        '<div class="d-flex align-items-center gap-2 py-2 border-bottom border-secondary">' +
+        '<i class="bi ' + biIcon + ' ' + icon + '"></i>' +
+        '<div class="flex-grow-1"><strong>' + escapeHtml(filename) + '</strong>' +
+        '<span class="text-muted ms-2">' + count + ' imported' + (errors ? ', ' + errors + ' errors' : '') + '</span></div>' +
+        '<span class="text-muted small">' + time + '</span></div>'
+    );
+}
+
+// ── Schedule Folder Scan ──────────────────────────────────────
+async function scanScheduleFolder() {
+    var folderPath = document.getElementById('schedule-folder-path').value.trim();
+    if (!folderPath) {
+        showPrompt('Folder path required', 'Enter the full path to your schedule folder (e.g., R:\\Schedule or /path/to/schedules).', [
+            { label: 'OK', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }}
+        ]);
+        return;
+    }
+
+    var btn = document.getElementById('btn-scan-folder');
+    var progress = document.getElementById('folder-scan-progress');
+    var resultDiv = document.getElementById('folder-scan-result');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+    progress.classList.add('active');
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/import/schedule/scan-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_path: folderPath }),
+        });
+        var data = await resp.json();
+
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Scan Folder';
+
+        if (resp.ok) {
+            var found = data.total_files_found || 0;
+            var imported = data.files_with_new_entries || 0;
+            var entries = data.total_entries_found || 0;
+            var matched = data.total_entries_matched || 0;
+            var errored = data.files_errored || 0;
+            var ocr = data.files_using_ocr || 0;
+
+            var msg = '<strong>' + found + ' files found</strong>';
+            if (entries > 0) msg += ' &mdash; ' + entries + ' schedule entries extracted';
+            if (matched > 0) msg += ', ' + matched + ' matched to billing';
+            if (ocr > 0) msg += ' <span class="badge bg-info-subtle text-info-emphasis ms-1">' + ocr + ' OCR\'d</span>';
+            if (errored > 0) msg += ' <span class="text-accent-yellow">(' + errored + ' errors)</span>';
+
+            if (found === 0) {
+                resultDiv.className = 'upload-result show result-warning';
+                msg = '<strong>No schedule files found</strong> in <code>' + escapeHtml(folderPath) + '</code>.'
+                    + '<br><span class="text-muted small">Make sure the folder exists and contains .pdf, .csv, .xlsx, .png, .jpg, or .txt files.</span>';
+                showPrompt(
+                    'No files found in folder',
+                    'The folder "' + folderPath + '" either does not exist or contains no recognizable schedule files. Check the path and try again.',
+                    [
+                        { label: 'Edit path', icon: 'bi-pencil', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }},
+                        { label: 'Upload file instead', icon: 'bi-upload', handler: function() { document.getElementById('schedule-input').click(); dismissPrompt(); }},
+                    ]
+                );
+            } else if (entries === 0) {
+                resultDiv.className = 'upload-result show result-warning';
+                msg += '<br><span class="text-muted small">Files were found but no schedule entries could be extracted. The files may need OCR or be in an unrecognized format.</span>';
+            } else {
+                resultDiv.className = 'upload-result show result-success';
+            }
+            resultDiv.innerHTML = msg;
+
+            // Show detail breakdown if there are files
+            if (data.details && data.details.length > 0 && data.details.length <= 20) {
+                var detailHtml = '<div class="mt-2 small" style="max-height:200px;overflow-y:auto;">';
+                for (var i = 0; i < data.details.length; i++) {
+                    var d = data.details[i];
+                    var icon = d.status === 'imported' ? 'bi-check-circle text-accent-green' : d.status === 'error' ? 'bi-x-circle text-accent-red' : 'bi-dash-circle text-muted';
+                    detailHtml += '<div class="d-flex gap-2 align-items-center py-1">'
+                        + '<i class="bi ' + icon + '"></i>'
+                        + '<span>' + escapeHtml(d.filename) + '</span>'
+                        + '<span class="text-muted ms-auto">' + (d.entries_found || 0) + ' entries</span>';
+                    if (d.used_ocr) detailHtml += '<span class="badge bg-info-subtle text-info-emphasis">OCR</span>';
+                    detailHtml += '</div>';
+                }
+                detailHtml += '</div>';
+                resultDiv.innerHTML += detailHtml;
+            } else if (data.details && data.details.length > 20) {
+                resultDiv.innerHTML += '<div class="text-muted small mt-1">(' + data.details.length + ' files processed — showing summary only)</div>';
+            }
+
+            if (entries > 0) {
+                addImportLog('Folder: ' + folderPath, entries, errored);
+                loadImportStatus();
+                showToast(entries + ' schedule entries imported from ' + found + ' files', 'success');
+            }
+        } else {
+            resultDiv.className = 'upload-result show result-error';
+            resultDiv.innerHTML = '<span class="text-accent-red">' + escapeHtml(data.error || 'Scan failed') + '</span>';
+
+            if (data.error && data.error.includes('not found')) {
+                showPrompt(
+                    'Folder not found',
+                    'The path "' + folderPath + '" does not exist on this machine. If this is a network drive (like R:\\), make sure it\'s mapped and accessible.',
+                    [
+                        { label: 'Edit path', icon: 'bi-pencil', primary: true, handler: function() { document.getElementById('schedule-folder-path').focus(); dismissPrompt(); }},
+                        { label: 'Upload files instead', icon: 'bi-upload', handler: function() { document.getElementById('schedule-input').click(); dismissPrompt(); }},
+                    ]
+                );
+            }
+        }
+    } catch (e) {
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Scan Folder';
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Network error: ' + escapeHtml(e.message) + '</span>';
+    }
+}
+
+function showToast(message, type) {
+    type = type || 'info';
+    var container = document.querySelector('.toast-container');
+    if (!container) { container = document.createElement('div'); container.className = 'toast-container'; document.body.appendChild(container); }
+    var icons = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-circle-fill', info: 'bi-info-circle-fill' };
+    var toast = document.createElement('div');
+    toast.className = 'toast-msg toast-' + (type === 'warning' ? 'info' : type);
+    toast.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> ' + message;
+    container.appendChild(toast);
+    setTimeout(function() { toast.style.opacity = '0'; toast.style.transform = 'translateY(10px)'; toast.style.transition = 'all 0.3s ease'; setTimeout(function() { toast.remove(); }, 300); }, 4000);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  Records Server (Read-Only X: Drive)
+// ══════════════════════════════════════════════════════════════
+
+var rsCurrentPage = 1;
+var rsTotalPages = 1;
+var rsConnected = false;
+
+async function rsCheckStatus() {
+    try {
+        var data = await fetchJSON('/api/records-server/status');
+        var badge = document.getElementById('rs-status-badge');
+        var pathInput = document.getElementById('rs-path-input');
+
+        if (data.connection && data.connection.valid) {
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis ms-2 small';
+            rsConnected = true;
+            document.getElementById('btn-rs-discover').disabled = false;
+            if (data.configured_path) pathInput.value = data.configured_path;
+
+            // If we already have indexed files, show the summary
+            if (data.summary && data.summary.total_files > 0) {
+                rsShowSummary(data.summary);
+                rsLoadFiles();
+            }
+        } else if (data.configured_path) {
+            badge.textContent = 'Disconnected';
+            badge.className = 'badge bg-danger-subtle text-danger-emphasis ms-2 small';
+            pathInput.value = data.configured_path;
+        } else {
+            badge.textContent = 'Not configured';
+            badge.className = 'badge bg-warning-subtle text-warning-emphasis ms-2 small';
+        }
+    } catch (e) {
+        var badge = document.getElementById('rs-status-badge');
+        badge.textContent = 'Unavailable';
+        badge.className = 'badge bg-secondary ms-2 small';
+    }
+}
+
+async function rsConnect() {
+    var path = document.getElementById('rs-path-input').value.trim();
+    if (!path) { showToast('Enter a server drive path', 'warning'); return; }
+
+    var btn = document.getElementById('btn-rs-connect');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Connecting...';
+
+    try {
+        var resp = await fetch('/api/records-server/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path }),
+        });
+        var data = await resp.json();
+        if (resp.ok) {
+            showToast('Connected to records server', 'success');
+            rsConnected = true;
+            document.getElementById('btn-rs-discover').disabled = false;
+            var badge = document.getElementById('rs-status-badge');
+            badge.textContent = 'Connected';
+            badge.className = 'badge bg-success-subtle text-success-emphasis ms-2 small';
+            if (data.connection && data.connection.writable_warning) {
+                showToast('Drive is writable — app will only READ, never modify files', 'warning');
+            }
+        } else {
+            showToast(data.error || 'Failed to connect', 'error');
+        }
+    } catch (e) {
+        showToast('Connection error: ' + e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-plug me-1"></i>Connect';
+}
+
+async function rsDiscover() {
+    if (!rsConnected) { showToast('Connect to the server first', 'warning'); return; }
+
+    var btn = document.getElementById('btn-rs-discover');
+    var progress = document.getElementById('rs-discover-progress');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+    progress.classList.add('active');
+
+    try {
+        var resp = await fetch('/api/records-server/discover', { method: 'POST' });
+        var data = await resp.json();
+
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Discover Files';
+
+        if (resp.ok) {
+            var disc = data.discovery || {};
+            var det = data.detection || {};
+            var totalNew = disc.new_files || 0;
+            var totalUpdated = disc.updated_files || 0;
+            var totalUnchanged = disc.unchanged_files || 0;
+
+            showToast(
+                'Found ' + (totalNew + totalUpdated + totalUnchanged) + ' files (' +
+                totalNew + ' new, ' + det.detected + ' classified)',
+                'success'
+            );
+
+            // Refresh summary
+            await rsRefreshSummary();
+            rsLoadFiles();
+        } else {
+            showToast(data.error || 'Discovery failed', 'error');
+        }
+    } catch (e) {
+        progress.classList.remove('active');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-search me-1"></i>Discover Files';
+        showToast('Discovery error: ' + e.message, 'error');
+    }
+}
+
+async function rsRefreshSummary() {
+    try {
+        var data = await fetchJSON('/api/records-server/status');
+        if (data.summary) rsShowSummary(data.summary);
+    } catch (e) {}
+}
+
+function rsShowSummary(summary) {
+    document.getElementById('rs-summary').style.display = 'flex';
+    document.getElementById('rs-breakdown').style.display = 'block';
+    document.getElementById('rs-file-browser').style.display = 'block';
+
+    document.getElementById('rs-total-files').textContent = formatNumber(summary.total_files || 0);
+    document.getElementById('rs-total-size').textContent = (summary.total_size_mb || 0) + ' MB';
+
+    var byStatus = summary.by_status || {};
+    document.getElementById('rs-imported').textContent = formatNumber(byStatus['IMPORTED'] || 0);
+    document.getElementById('rs-ready').textContent = formatNumber(byStatus['DISCOVERED'] || 0);
+
+    var extractBtn = document.getElementById('btn-rs-extract-all');
+    extractBtn.disabled = !(byStatus['DISCOVERED'] > 0);
+
+    // Format tags
+    var tagsDiv = document.getElementById('rs-format-tags');
+    tagsDiv.innerHTML = '';
+    var byFormat = summary.by_format || {};
+    var catColors = { '835': 'bg-success-subtle text-success-emphasis', 'csv': 'bg-info-subtle text-info-emphasis',
+        'xlsx': 'bg-primary-subtle text-primary-emphasis', 'pdf': 'bg-warning-subtle text-warning-emphasis',
+        'eob_pdf': 'bg-success-subtle text-success-emphasis', 'schedule_pdf': 'bg-info-subtle text-info-emphasis',
+        'image': 'bg-secondary', 'unknown': 'bg-dark' };
+    var fmtKeys = Object.keys(byFormat);
+    for (var i = 0; i < fmtKeys.length; i++) {
+        var fmt = fmtKeys[i];
+        var cls = catColors[fmt] || 'bg-secondary';
+        tagsDiv.innerHTML += '<span class="badge ' + cls + ' me-1" style="cursor:pointer" onclick="rsFilterByFormat(\'' +
+            escapeHtml(fmt) + '\')">' + escapeHtml(fmt) + ' <strong>' + byFormat[fmt] + '</strong></span>';
+    }
+}
+
+function rsFilterByFormat(fmt) {
+    var catSel = document.getElementById('rs-filter-category');
+    var statusSel = document.getElementById('rs-filter-status');
+    catSel.value = '';
+    statusSel.value = '';
+    rsCurrentPage = 1;
+    rsLoadFiles(fmt);
+}
+
+async function rsLoadFiles(formatOverride) {
+    var category = document.getElementById('rs-filter-category').value;
+    var status = document.getElementById('rs-filter-status').value;
+    var params = 'page=' + rsCurrentPage + '&per_page=25';
+    if (category) params += '&category=' + encodeURIComponent(category);
+    if (status) params += '&status=' + encodeURIComponent(status);
+    if (formatOverride) params += '&format=' + encodeURIComponent(formatOverride);
+
+    try {
+        var data = await fetchJSON('/api/records-server/files?' + params);
+        var tbody = document.getElementById('rs-files-body');
+        tbody.innerHTML = '';
+        rsTotalPages = data.pages || 1;
+
+        var statusColors = { 'DISCOVERED': 'badge-warning', 'IMPORTED': 'badge-safe', 'SKIPPED': 'badge-written-off', 'ERROR': 'badge-past-deadline' };
+
+        for (var i = 0; i < data.items.length; i++) {
+            var f = data.items[i];
+            var size = f.file_size ? (f.file_size < 1024 ? f.file_size + ' B' : f.file_size < 1048576 ? Math.round(f.file_size/1024) + ' KB' : (f.file_size/1048576).toFixed(1) + ' MB') : '--';
+            var modified = f.file_modified ? formatDate(f.file_modified.split('T')[0]) : '--';
+            var statusCls = statusColors[f.import_status] || 'badge-warning';
+            var actionBtn = f.import_status === 'DISCOVERED'
+                ? '<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="rsExtractOne(' + f.id + ',this)"><i class="bi bi-download"></i></button>'
+                : f.import_status === 'IMPORTED'
+                ? '<span class="text-muted small">' + (f.records_imported || 0) + ' rec</span>'
+                : '<button class="btn btn-sm btn-outline-warning py-0 px-2" onclick="rsExtractOne(' + f.id + ',this)" title="Retry"><i class="bi bi-arrow-clockwise"></i></button>';
+
+            tbody.innerHTML += '<tr data-id="' + f.id + '">' +
+                '<td><input type="checkbox" class="rs-file-check" value="' + f.id + '"></td>' +
+                '<td class="small" title="' + escapeHtml(f.relative_path) + '">' + escapeHtml(f.filename) + '</td>' +
+                '<td><span class="badge bg-secondary">' + escapeHtml(f.extension || '?') + '</span></td>' +
+                '<td>' + escapeHtml(f.detected_category || '--') + '</td>' +
+                '<td class="small">' + size + '</td>' +
+                '<td class="small">' + modified + '</td>' +
+                '<td><span class="badge-status ' + statusCls + '">' + escapeHtml(f.import_status) + '</span></td>' +
+                '<td>' + actionBtn + '</td>' +
+                '</tr>';
+        }
+
+        if (data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No files found matching filters</td></tr>';
+        }
+
+        document.getElementById('rs-files-info').textContent = 'Page ' + rsCurrentPage + ' of ' + rsTotalPages + ' (' + data.total + ' files)';
+        document.getElementById('rs-prev-page').disabled = rsCurrentPage <= 1;
+        document.getElementById('rs-next-page').disabled = rsCurrentPage >= rsTotalPages;
+
+        rsUpdateSelectedCount();
+    } catch (e) {
+        console.error('Failed to load RS files', e);
+    }
+}
+
+function rsChangePage(delta) {
+    rsCurrentPage = Math.max(1, Math.min(rsTotalPages, rsCurrentPage + delta));
+    rsLoadFiles();
+}
+
+function rsToggleSelectAll() {
+    var checked = document.getElementById('rs-select-all').checked;
+    var boxes = document.querySelectorAll('.rs-file-check');
+    boxes.forEach(function(cb) { cb.checked = checked; });
+    rsUpdateSelectedCount();
+}
+
+function rsUpdateSelectedCount() {
+    var checked = document.querySelectorAll('.rs-file-check:checked');
+    var btn = document.getElementById('btn-rs-extract-selected');
+    btn.disabled = checked.length === 0;
+    btn.innerHTML = '<i class="bi bi-download me-1"></i>Extract Selected' + (checked.length > 0 ? ' (' + checked.length + ')' : '');
+}
+
+// Attach change listener for checkboxes (delegated)
+document.addEventListener('change', function(e) {
+    if (e.target.classList.contains('rs-file-check')) rsUpdateSelectedCount();
+});
+
+async function rsExtractOne(fileId, btn) {
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+    try {
+        var resp = await fetch('/api/records-server/extract/' + fileId, { method: 'POST' });
+        var data = await resp.json();
+        if (resp.ok && data.status === 'IMPORTED') {
+            showToast(data.filename + ': ' + (data.records_imported || 0) + ' records imported', 'success');
+        } else {
+            showToast(data.detail || data.error || 'Import failed', 'error');
+        }
+    } catch (e) {
+        showToast('Extract error: ' + e.message, 'error');
+    }
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsExtractSelected() {
+    var checked = document.querySelectorAll('.rs-file-check:checked');
+    if (checked.length === 0) return;
+    var ids = Array.from(checked).map(function(cb) { return parseInt(cb.value); });
+
+    var progress = document.getElementById('rs-extract-progress');
+    var resultDiv = document.getElementById('rs-extract-result');
+    progress.classList.add('active');
+    progress.querySelector('.progress-text').textContent = 'Extracting ' + ids.length + ' files...';
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/records-server/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_ids: ids }),
+        });
+        var data = await resp.json();
+        progress.classList.remove('active');
+
+        var msg = '<strong>' + (data.imported || 0) + '</strong> files imported, ' +
+            '<strong>' + (data.records_imported || 0) + '</strong> total records';
+        if (data.errors > 0) msg += ' <span class="text-accent-yellow">(' + data.errors + ' errors)</span>';
+
+        resultDiv.className = 'upload-result show ' + (data.errors > 0 && data.imported === 0 ? 'result-error' : data.errors > 0 ? 'result-warning' : 'result-success');
+        resultDiv.innerHTML = msg;
+
+        showToast((data.records_imported || 0) + ' records extracted from ' + ids.length + ' files', data.errors > 0 ? 'warning' : 'success');
+    } catch (e) {
+        progress.classList.remove('active');
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Error: ' + escapeHtml(e.message) + '</span>';
+    }
+
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsExtractAll() {
+    var progress = document.getElementById('rs-extract-progress');
+    var resultDiv = document.getElementById('rs-extract-result');
+    progress.classList.add('active');
+    progress.querySelector('.progress-text').textContent = 'Extracting all discovered files...';
+    resultDiv.classList.remove('show');
+
+    try {
+        var resp = await fetch('/api/records-server/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 200 }),
+        });
+        var data = await resp.json();
+        progress.classList.remove('active');
+
+        var msg = '<strong>' + (data.imported || 0) + '</strong> files imported, ' +
+            '<strong>' + (data.records_imported || 0) + '</strong> total records';
+        if (data.skipped > 0) msg += ', ' + data.skipped + ' skipped';
+        if (data.errors > 0) msg += ' <span class="text-accent-yellow">(' + data.errors + ' errors)</span>';
+
+        resultDiv.className = 'upload-result show ' + (data.errors > 0 && data.imported === 0 ? 'result-error' : data.errors > 0 ? 'result-warning' : 'result-success');
+        resultDiv.innerHTML = msg;
+
+        showToast((data.records_imported || 0) + ' records extracted from server', data.errors > 0 ? 'warning' : 'success');
+    } catch (e) {
+        progress.classList.remove('active');
+        resultDiv.className = 'upload-result show result-error';
+        resultDiv.innerHTML = '<span class="text-accent-red">Error: ' + escapeHtml(e.message) + '</span>';
+    }
+
+    rsLoadFiles();
+    rsRefreshSummary();
+    loadImportStatus();
+}
+
+async function rsReset() {
+    if (!confirm('This will re-scan the records server from scratch. Existing import history will be cleared. Continue?')) return;
+    try {
+        var resp = await fetch('/api/records-server/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        var data = await resp.json();
+        showToast('Index cleared (' + (data.reset || 0) + ' entries removed)', 'info');
+        document.getElementById('rs-summary').style.display = 'none';
+        document.getElementById('rs-breakdown').style.display = 'none';
+        document.getElementById('rs-file-browser').style.display = 'none';
+        document.getElementById('rs-extract-result').classList.remove('show');
+    } catch (e) {
+        showToast('Reset error: ' + e.message, 'error');
+    }
+}
+</script>
+{% endblock %}

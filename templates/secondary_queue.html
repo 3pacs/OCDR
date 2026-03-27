@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Secondary Follow-Up{% endblock %}
+{% block page_title %}Secondary Insurance Follow-Up{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-layers-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Claims Missing Secondary</div>
+                <div class="kpi-value" id="stat-count">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-cash-coin"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Estimated Recovery</div>
+                <div class="kpi-value" id="stat-recovery">—</div>
+                <div class="kpi-sub">Based on ~20% secondary rate</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="kpi-card kpi-payer">
+            <div class="kpi-icon"><i class="bi bi-info-circle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Affected Carriers</div>
+                <div class="kpi-value">M/M, CalOptima</div>
+                <div class="kpi-sub">Payers with expected secondary</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Claims Needing Secondary Billing</h6>
+        <span class="text-muted small" id="table-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Carrier</th>
+                    <th>Modality</th>
+                    <th>Primary Paid</th>
+                    <th>Secondary</th>
+                    <th>Doctor</th>
+                </tr>
+            </thead>
+            <tbody id="secondary-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const data = await fetchJSON('/api/secondary-followup');
+
+    document.getElementById('stat-count').textContent = formatNumber(data.total);
+    document.getElementById('stat-recovery').textContent = formatCurrency(data.estimated_recovery);
+    document.getElementById('table-count').textContent = data.total + ' records';
+
+    const tbody = document.getElementById('secondary-table');
+    if (!data.items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5"><div class="empty-state"><i class="bi bi-layers"></i><p>No secondary billing claims found yet. Import billing data to get started.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = data.items.slice(0, 200).map(r => `
+        <tr>
+            <td class="fw-medium">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.insurance_carrier}</td>
+            <td><span class="badge bg-primary-subtle text-primary-emphasis">${r.modality}</span></td>
+            <td class="text-accent-green">$${r.primary_payment.toFixed(2)}</td>
+            <td class="text-accent-red fw-semibold">$0.00</td>
+            <td>${r.referring_doctor}</td>
+        </tr>
+    `).join('');
+});
+</script>
+{% endblock %}

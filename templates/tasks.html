@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Business Tasks{% endblock %}
+{% block page_title %}Business Tasks{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <p class="text-muted mb-0">Recurring operational tasks and daily checklists. Task completion is tracked and synced to TASKS.md.</p>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-primary btn-sm" onclick="generateTasks()">
+            <i class="bi bi-plus-circle"></i> Generate Today's Tasks
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadAll()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+</div>
+
+<!-- Summary KPIs -->
+<div class="row g-3 mb-4" id="task-kpis">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Today's Tasks</div>
+            <div class="kpi-value" id="kpi-total">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-green">
+            <div class="kpi-label">Completed</div>
+            <div class="kpi-value" id="kpi-completed">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-red">
+            <div class="kpi-label">Pending</div>
+            <div class="kpi-value" id="kpi-pending">--</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-card-blue">
+            <div class="kpi-label">Est. Minutes Left</div>
+            <div class="kpi-value" id="kpi-minutes">--</div>
+        </div>
+    </div>
+</div>
+
+<!-- Today's Checklist -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header"><h6 class="mb-0">Today's Checklist</h6></div>
+    <div class="card-body" id="today-checklist">
+        <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
+    </div>
+</div>
+
+<!-- Open Insights -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Open Insights</h6>
+        <a href="/insights" class="btn btn-sm btn-outline-primary">View All</a>
+    </div>
+    <div class="card-body" id="open-insights">
+        <div class="text-muted">Loading...</div>
+    </div>
+</div>
+
+<!-- Daily Review -->
+<div class="card border-0 shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Daily System Review</h6>
+        <button class="btn btn-sm btn-outline-primary" onclick="runDailyReview()">Run Review</button>
+    </div>
+    <div class="card-body" id="daily-review">
+        <div class="text-muted">Click "Run Review" to analyze system health.</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CAT_COLORS = {DATA_IMPORT:"primary", POSTING:"success", RECONCILIATION:"info", DENIALS:"warning", ANALYTICS:"secondary", BANKING:"success", PAYROLL:"dark", BILLS:"danger", RESEARCH_BILLING:"info"};
+
+async function loadChecklist() {
+    const el = document.getElementById("today-checklist");
+    try {
+        const data = await fetchJSON("/api/tasks/today");
+        const s = data.summary;
+        document.getElementById("kpi-total").textContent = s.total;
+        document.getElementById("kpi-completed").textContent = s.completed;
+        document.getElementById("kpi-pending").textContent = s.pending;
+        document.getElementById("kpi-minutes").textContent = s.estimated_minutes_remaining;
+
+        if (data.tasks.length === 0) {
+            el.innerHTML = '<div class="text-muted">No tasks scheduled for today. Click "Generate Today\'s Tasks" to create them.</div>';
+            return;
+        }
+
+        el.innerHTML = data.tasks.map(t => {
+            const catColor = CAT_COLORS[t.category] || "secondary";
+            const checked = t.status === "COMPLETED" ? "checked" : "";
+            const skipped = t.status === "SKIPPED";
+            const textCls = t.status === "COMPLETED" ? "text-decoration-line-through text-muted" : skipped ? "text-muted" : "";
+            return `<div class="d-flex align-items-start gap-3 border-bottom py-2">
+                <div class="pt-1">
+                    <input type="checkbox" class="form-check-input" ${checked} onchange="toggleTask(${t.instance_id}, this.checked)" ${skipped ? "disabled" : ""}>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-${catColor}">${t.category.replace("_"," ")}</span>
+                        <span class="badge bg-dark">${t.frequency}</span>
+                        <span class="${textCls}">${escapeHtml(t.title)}</span>
+                        ${t.estimated_minutes ? `<span class="text-muted small">(${t.estimated_minutes}m)</span>` : ""}
+                    </div>
+                    <div class="small text-muted">${escapeHtml(t.description || "")}</div>
+                    ${t.notes ? `<div class="small mt-1"><em>${escapeHtml(t.notes)}</em></div>` : ""}
+                </div>
+                <div class="d-flex gap-1">
+                    ${t.action_steps ? `<button class="btn btn-outline-secondary btn-sm" onclick="showSteps(${t.instance_id})" title="View steps"><i class="bi bi-list-check"></i></button>` : ""}
+                    ${!skipped && t.status !== "COMPLETED" ? `<button class="btn btn-outline-warning btn-sm" onclick="skipTask(${t.instance_id})" title="Skip"><i class="bi bi-skip-forward"></i></button>` : ""}
+                </div>
+            </div>
+            ${t.action_steps ? `<div id="steps-${t.instance_id}" class="d-none bg-dark bg-opacity-25 rounded p-3 mb-2 ms-4"><pre class="small mb-0" style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(t.action_steps)}</pre></div>` : ""}`;
+        }).join("");
+    } catch (err) {
+        el.innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+    }
+}
+
+function showSteps(id) {
+    const el = document.getElementById("steps-" + id);
+    if (el) el.classList.toggle("d-none");
+}
+
+async function toggleTask(instanceId, completed) {
+    try {
+        await fetchJSON(`/api/tasks/instances/${instanceId}`, {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({status: completed ? "COMPLETED" : "PENDING"}),
+        });
+        loadChecklist();
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+async function skipTask(instanceId) {
+    try {
+        await fetchJSON(`/api/tasks/instances/${instanceId}`, {
+            method: "PATCH",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({status: "SKIPPED"}),
+        });
+        loadChecklist();
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+async function generateTasks() {
+    try {
+        const data = await fetchJSON("/api/tasks/generate", {method: "POST"});
+        if (data.generated > 0) {
+            loadChecklist();
+        } else {
+            alert("All tasks for today are already generated.");
+        }
+    } catch (err) {
+        alert("Error: " + err.message);
+    }
+}
+
+async function loadInsights() {
+    try {
+        const insights = await fetchJSON("/api/insights?status=OPEN");
+        const el = document.getElementById("open-insights");
+        if (insights.length === 0) {
+            el.innerHTML = '<div class="text-muted">No open insights.</div>';
+        } else {
+            el.innerHTML = insights.slice(0, 10).map(i => `
+                <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                    <div>
+                        <span class="badge bg-${i.severity === 'CRITICAL' ? 'danger' : i.severity === 'HIGH' ? 'warning' : 'info'} me-2">${i.severity}</span>
+                        <span class="small">${i.title}</span>
+                    </div>
+                    <div class="text-end">
+                        ${i.estimated_impact ? `<span class="text-success fw-bold">$${(i.estimated_impact/1000).toFixed(0)}K</span>` : ""}
+                    </div>
+                </div>
+            `).join("");
+        }
+    } catch (err) {
+        document.getElementById("open-insights").innerHTML = `<div class="alert alert-warning">${err.message}</div>`;
+    }
+}
+
+async function runDailyReview() {
+    const el = document.getElementById("daily-review");
+    el.innerHTML = '<div class="spinner-border spinner-border-sm"></div> Running review...';
+    try {
+        const data = await fetchJSON("/api/daily-review");
+        let html = `<div class="alert ${data.critical_alerts?.length ? 'alert-warning' : 'alert-success'} mb-3"><strong>${data.summary}</strong></div>`;
+        (data.sections || []).forEach(sec => {
+            html += `<h6 class="mt-3">${sec.title}</h6><ul class="small">`;
+            sec.items.forEach(item => {
+                const cls = item.includes("WARNING") || item.includes("ATTENTION") ? "text-warning fw-bold" : "";
+                html += `<li class="${cls}">${item}</li>`;
+            });
+            html += `</ul>`;
+        });
+        el.innerHTML = html;
+    } catch (err) {
+        el.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+    }
+}
+
+function loadAll() {
+    loadChecklist();
+    loadInsights();
+}
+
+loadAll();
+</script>
+{% endblock %}

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Underpayments{% endblock %}
+{% block page_title %}Underpayment Detector{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Total Gap</div>
+                <div class="kpi-value" id="stat-variance">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-danger">
+            <div class="kpi-icon"><i class="bi bi-flag-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Flagged Claims</div>
+                <div class="kpi-value" id="stat-flagged">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-building"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Worst Carrier</div>
+                <div class="kpi-value" id="stat-worst-carrier">—</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="kpi-card kpi-payer">
+            <div class="kpi-icon"><i class="bi bi-cpu"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Worst Modality</div>
+                <div class="kpi-value" id="stat-worst-modality">—</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3 mb-4">
+    <div class="col-lg-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Gap by Carrier</h6></div>
+            <div class="chart-body"><canvas id="underpayCarrierChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Gap by Modality</h6></div>
+            <div class="chart-body"><canvas id="underpayModalityChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<!-- Table -->
+<div class="data-card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-semibold">Underpaid Claims</h6>
+        <span class="text-muted small" id="table-count"></span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Patient</th>
+                    <th>Date</th>
+                    <th>Carrier</th>
+                    <th>Modality</th>
+                    <th>Paid</th>
+                    <th>Expected</th>
+                    <th>Variance</th>
+                    <th>% of Expected</th>
+                </tr>
+            </thead>
+            <tbody id="underpay-table"></tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+    const [summary, detail] = await Promise.all([
+        fetchJSON('/api/underpayments/summary'),
+        fetchJSON('/api/underpayments?per_page=100'),
+    ]);
+
+    document.getElementById('stat-variance').textContent = formatCurrency(summary.total_variance);
+    document.getElementById('stat-flagged').textContent = formatNumber(summary.total_flagged);
+
+    if (summary.by_carrier.length) {
+        document.getElementById('stat-worst-carrier').textContent = summary.by_carrier[0].carrier;
+    }
+    if (summary.by_modality.length) {
+        document.getElementById('stat-worst-modality').textContent = summary.by_modality[0].modality;
+    }
+
+    // Carrier chart
+    const colors = ['#f87171','#fb923c','#fbbf24','#34d399','#63b3ed','#a78bfa','#f472b6','#38bdf8','#c084fc','#4ade80'];
+    new Chart(document.getElementById('underpayCarrierChart'), {
+        type: 'bar',
+        data: {
+            labels: summary.by_carrier.map(c => c.carrier),
+            datasets: [{ data: summary.by_carrier.map(c => c.variance), backgroundColor: colors, borderRadius: 6 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => formatCurrency(ctx.raw) } } }, scales: { y: { ticks: { callback: v => '$'+(v/1000)+'K' } } } }
+    });
+
+    // Modality chart
+    new Chart(document.getElementById('underpayModalityChart'), {
+        type: 'doughnut',
+        data: {
+            labels: summary.by_modality.map(m => m.modality),
+            datasets: [{ data: summary.by_modality.map(m => m.variance), backgroundColor: colors, borderWidth: 0 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', padding: 16, usePointStyle: true } }, tooltip: { callbacks: { label: ctx => ctx.label + ': ' + formatCurrency(ctx.raw) } } } }
+    });
+
+    // Table
+    document.getElementById('table-count').textContent = detail.total + ' records';
+    const tbody = document.getElementById('underpay-table');
+    if (!detail.items.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5"><div class="empty-state"><i class="bi bi-check-circle"></i><p>No underpayments detected. This means your fee schedule is matching or you need to <a href="/admin">set up fee schedules</a> first.</p><a href="/import" class="btn btn-sm btn-outline-primary">Import Data</a></div></td></tr>';
+        return;
+    }
+    tbody.innerHTML = detail.items.map(r => `
+        <tr>
+            <td class="fw-medium">${r.patient_name}</td>
+            <td>${formatDate(r.service_date)}</td>
+            <td>${r.insurance_carrier}</td>
+            <td><span class="badge bg-primary-subtle text-primary-emphasis">${r.modality}</span></td>
+            <td>$${r.total_payment.toFixed(2)}</td>
+            <td>$${r.expected_rate.toFixed(2)}</td>
+            <td class="text-accent-red fw-semibold">-$${Math.abs(r.variance).toFixed(2)}</td>
+            <td>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress-thin flex-grow-1" style="width:60px">
+                        <div class="bar bg-gradient-red" style="width:${r.pct_of_expected}%"></div>
+                    </div>
+                    <span class="small">${r.pct_of_expected}%</span>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+});
+</script>
+{% endblock %}

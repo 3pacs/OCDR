@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Gado Contrast Tracking{% endblock %}
+{% block page_title %}Gadolinium Contrast Cost Tracking{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-droplet-fill"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Gado Claims</div>
+                <div class="kpi-value" id="kpi-count">—</div>
+                <div class="kpi-sub">total doses administered</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-revenue">
+            <div class="kpi-icon"><i class="bi bi-currency-dollar"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Gado Revenue</div>
+                <div class="kpi-value" id="kpi-revenue">—</div>
+                <div class="kpi-sub" id="kpi-cost-sub">total gado cost</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-warning">
+            <div class="kpi-icon"><i class="bi bi-graph-up"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Revenue per $1 Cost</div>
+                <div class="kpi-value" id="kpi-margin">—</div>
+                <div class="kpi-sub">margin ratio</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6">
+        <div class="kpi-card kpi-info">
+            <div class="kpi-icon"><i class="bi bi-sliders2"></i></div>
+            <div class="kpi-body">
+                <div class="kpi-label">Cost/Dose</div>
+                <div class="kpi-value">$<input id="cost-input" type="number" value="50" min="1" max="500" style="width:60px;background:transparent;border:none;color:inherit;font:inherit" onchange="loadAll()"></div>
+                <div class="kpi-sub">configurable</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-xl-7">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">Gado Usage by Year</h6></div>
+            <div class="chart-body"><canvas id="yearChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="chart-card">
+            <div class="chart-header"><h6 class="mb-0 fw-semibold">By Modality</h6></div>
+            <div class="chart-body chart-body-doughnut"><canvas id="modChart"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-xl-6">
+        <div class="data-card">
+            <div class="card-header"><h6 class="mb-0 fw-semibold">Top Physicians (Gado)</h6></div>
+            <div class="table-responsive" style="max-height:350px;overflow-y:auto">
+                <table class="table table-dark table-striped table-hover mb-0">
+                    <thead><tr><th>Physician</th><th>Count</th><th>Revenue</th></tr></thead>
+                    <tbody id="phys-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-6">
+        <div class="data-card">
+            <div class="card-header"><h6 class="mb-0 fw-semibold">Margin by Carrier</h6></div>
+            <div class="table-responsive" style="max-height:350px;overflow-y:auto">
+                <table class="table table-dark table-striped table-hover mb-0">
+                    <thead><tr><th>Carrier</th><th>Count</th><th>Revenue</th><th>Gado Cost</th><th>Net Margin</th></tr></thead>
+                    <tbody id="margin-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let yearChartInst, modChartInst;
+document.addEventListener('DOMContentLoaded', loadAll);
+
+async function loadAll() {
+    const cost = document.getElementById('cost-input').value;
+    const [summary, byYear, byPhys, margin] = await Promise.all([
+        fetchJSON(`/api/gado?cost_per_dose=${cost}`), fetchJSON(`/api/gado/by-year?cost_per_dose=${cost}`),
+        fetchJSON('/api/gado/by-physician'), fetchJSON(`/api/gado/margin?cost_per_dose=${cost}`),
+    ]);
+
+    document.getElementById('kpi-count').textContent = formatNumber(summary.total_gado_claims);
+    document.getElementById('kpi-revenue').textContent = formatCurrency(summary.total_revenue);
+    document.getElementById('kpi-cost-sub').textContent = formatCurrency(summary.total_gado_cost) + ' cost';
+    document.getElementById('kpi-margin').textContent = '$' + summary.revenue_per_dollar.toFixed(2);
+
+    // Year chart
+    if (yearChartInst) yearChartInst.destroy();
+    if (byYear.length) {
+        yearChartInst = new Chart(document.getElementById('yearChart'), {
+            type: 'bar',
+            data: { labels: byYear.map(d => d.year), datasets: [
+                { label: 'Revenue', data: byYear.map(d => d.revenue), backgroundColor: '#34d399', borderRadius: 6 },
+                { label: 'Gado Cost', data: byYear.map(d => d.gado_cost), backgroundColor: '#f87171', borderRadius: 6 },
+            ]},
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#94a3b8' } } },
+                scales: { x: { ticks: { color: '#64748b' } }, y: { ticks: { color: '#64748b', callback: v => '$' + (v/1000).toFixed(0) + 'K' } } }
+            }
+        });
+    }
+
+    // Modality doughnut
+    if (modChartInst) modChartInst.destroy();
+    const mods = summary.by_modality || [];
+    if (mods.length) {
+        modChartInst = new Chart(document.getElementById('modChart'), {
+            type: 'doughnut',
+            data: { labels: mods.map(m => m.modality), datasets: [{ data: mods.map(m => m.count), backgroundColor: ['#63b3ed','#a78bfa','#f472b6','#fbbf24'], borderWidth: 0 }] },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', usePointStyle: true } } } }
+        });
+    }
+
+    // Tables
+    document.getElementById('phys-tbody').innerHTML = byPhys.map(p => `<tr><td>${p.physician}</td><td>${p.count}</td><td class="text-accent-green">${formatCurrency(p.revenue)}</td></tr>`).join('');
+    document.getElementById('margin-tbody').innerHTML = margin.map(m => `<tr><td>${m.carrier}</td><td>${m.count}</td><td class="text-accent-green">${formatCurrency(m.revenue)}</td><td class="text-accent-red">${formatCurrency(m.gado_cost)}</td><td class="fw-semibold ${m.net_margin >= 0 ? 'text-accent-green':'text-accent-red'}">${formatCurrency(m.net_margin)}</td></tr>`).join('');
+}
+</script>
+{% endblock %}
