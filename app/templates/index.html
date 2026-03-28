@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h3 class="mb-4"><i class="bi bi-speedometer2"></i> Dashboard</h3>
+
+<!-- Stats Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card text-bg-primary">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-people"></i> Patients</h6>
+                <h2>{{ total_patients }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-bg-info">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-file-earmark"></i> Total Documents</h6>
+                <h2>{{ total_docs }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-bg-warning">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-hourglass-split"></i> Pending</h6>
+                <h2>{{ pending_docs }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-bg-success">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-check-circle"></i> Filed</h6>
+                <h2>{{ matched_docs + filed_docs }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center py-4">
+                <i class="bi bi-upc-scan display-4 text-primary"></i>
+                <h5 class="mt-3">Scan Document</h5>
+                <p class="text-muted">Upload or scan a document to parse and file</p>
+                <a href="{{ url_for('main.scan_page') }}" class="btn btn-primary">
+                    <i class="bi bi-camera"></i> Open Scanner
+                </a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body text-center py-4">
+                <i class="bi bi-person-plus display-4 text-success"></i>
+                <h5 class="mt-3">Add Patient</h5>
+                <p class="text-muted">Register a new patient in the system</p>
+                <a href="{{ url_for('main.new_patient') }}" class="btn btn-success">
+                    <i class="bi bi-plus-lg"></i> New Patient
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Documents -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Documents</h5>
+        <a href="{{ url_for('main.documents_page') }}" class="btn btn-sm btn-outline-primary">View All</a>
+    </div>
+    <div class="card-body p-0">
+        {% if recent_docs %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Type</th>
+                        <th>Parsed Name</th>
+                        <th>Patient</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for doc in recent_docs %}
+                    <tr onclick="window.location='{{ url_for('main.document_detail', doc_id=doc.id) }}'" style="cursor:pointer">
+                        <td>{{ doc.original_filename }}</td>
+                        <td>{{ doc.document_type or doc.file_type }}</td>
+                        <td>{{ doc.parsed_name or '-' }}</td>
+                        <td>
+                            {% if doc.patient %}
+                                <a href="{{ url_for('main.patient_detail', patient_id=doc.patient.id) }}">
+                                    {{ doc.patient.full_name }}
+                                </a>
+                            {% else %}
+                                <span class="text-muted">Unassigned</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if doc.status == 'filed' or doc.status == 'matched' %}
+                                <span class="badge bg-success status-badge">{{ doc.status }}</span>
+                            {% elif doc.status == 'error' %}
+                                <span class="badge bg-danger status-badge">{{ doc.status }}</span>
+                            {% elif doc.status == 'processing' %}
+                                <span class="badge bg-info status-badge">{{ doc.status }}</span>
+                            {% else %}
+                                <span class="badge bg-warning status-badge">{{ doc.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ doc.created_at.strftime('%m/%d/%Y %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-inbox display-4"></i>
+            <p class="mt-2">No documents yet. <a href="{{ url_for('main.scan_page') }}">Scan your first document</a>.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

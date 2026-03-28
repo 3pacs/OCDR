@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}OCDR{% endblock %} - Patient Document Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body { min-height: 100vh; }
+        .sidebar {
+            width: 250px;
+            min-height: 100vh;
+            background: var(--bs-dark-bg-subtle);
+            border-right: 1px solid var(--bs-border-color);
+        }
+        .sidebar .nav-link {
+            color: var(--bs-body-color);
+            padding: 0.75rem 1.25rem;
+            border-radius: 0;
+        }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            background: var(--bs-primary);
+            color: white;
+        }
+        .sidebar .nav-link i { margin-right: 0.5rem; width: 1.25rem; text-align: center; }
+        .main-content { flex: 1; }
+        .status-badge { font-size: 0.75rem; }
+        .patient-photo {
+            width: 120px; height: 120px;
+            object-fit: cover;
+            border-radius: 50%;
+            border: 3px solid var(--bs-primary);
+        }
+        .patient-photo-placeholder {
+            width: 120px; height: 120px;
+            border-radius: 50%;
+            background: var(--bs-secondary-bg);
+            display: flex; align-items: center; justify-content: center;
+            border: 3px dashed var(--bs-border-color);
+            font-size: 2.5rem; color: var(--bs-secondary-color);
+        }
+        .drop-zone {
+            border: 3px dashed var(--bs-primary);
+            border-radius: 1rem;
+            padding: 3rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            background: rgba(var(--bs-primary-rgb), 0.1);
+            border-color: var(--bs-success);
+        }
+        .doc-preview { max-height: 400px; object-fit: contain; }
+        .encrypt-badge { font-size: 0.65rem; }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="d-flex">
+        <!-- Sidebar -->
+        <nav class="sidebar d-flex flex-column">
+            <div class="p-3 border-bottom">
+                <h5 class="mb-0"><i class="bi bi-shield-lock-fill text-primary"></i> OCDR</h5>
+                <small class="text-muted">Patient Document Scanner</small>
+            </div>
+            <ul class="nav flex-column mt-2">
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">
+                        <i class="bi bi-speedometer2"></i> Dashboard
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint == 'main.scan_page' %}active{% endif %}" href="{{ url_for('main.scan_page') }}">
+                        <i class="bi bi-upc-scan"></i> Scan Document
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint and 'document' in request.endpoint %}active{% endif %}" href="{{ url_for('main.documents_page') }}">
+                        <i class="bi bi-file-earmark-medical"></i> Documents
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint and 'patient' in request.endpoint %}active{% endif %}" href="{{ url_for('main.patients_page') }}">
+                        <i class="bi bi-people"></i> Patients
+                    </a>
+                </li>
+            </ul>
+            <div class="mt-auto p-3 border-top">
+                <small class="text-muted">
+                    <i class="bi bi-lock-fill text-success"></i> Encrypted &amp; Local
+                </small>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            <div class="px-4 pt-3">
+                {% for category, message in messages %}
+                <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <div class="p-4">
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

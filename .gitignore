@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.so
+.env
+instance/
+*.db
+app/static/uploads/documents/*
+app/static/uploads/photos/*
+!app/static/uploads/documents/.gitkeep
+!app/static/uploads/photos/.gitkeep
+.encryption_key
+venv/
+.venv/
+dist/
+build/
+*.egg-info/

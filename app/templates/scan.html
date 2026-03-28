@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Scan Document{% endblock %}
+
+{% block content %}
+<h3 class="mb-4"><i class="bi bi-upc-scan"></i> Scan Document</h3>
+
+<div class="row g-4">
+    <!-- Upload Zone -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-body">
+                <div id="dropZone" class="drop-zone" onclick="document.getElementById('fileInput').click()">
+                    <i class="bi bi-cloud-arrow-up display-3 text-primary"></i>
+                    <h4 class="mt-3">Drop document here or click to upload</h4>
+                    <p class="text-muted mb-0">Supports: PDF, PNG, JPG, TIFF, BMP</p>
+                    <p class="text-muted"><small><i class="bi bi-lock-fill"></i> Files are encrypted and stored locally</small></p>
+                </div>
+                <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp" style="display:none" multiple>
+
+                <!-- Camera capture for mobile/tablet -->
+                <div class="text-center mt-3">
+                    <button class="btn btn-outline-primary" onclick="document.getElementById('cameraInput').click()">
+                        <i class="bi bi-camera"></i> Use Camera
+                    </button>
+                    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+                </div>
+
+                <!-- Upload progress -->
+                <div id="uploadProgress" class="mt-3" style="display:none">
+                    <div class="progress" style="height: 24px;">
+                        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+                    </div>
+                    <small id="progressText" class="text-muted mt-1 d-block"></small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div id="previewCard" class="card mt-3" style="display:none">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-eye"></i> Document Preview</h6>
+            </div>
+            <div class="card-body text-center">
+                <img id="previewImage" class="doc-preview img-fluid rounded" style="display:none">
+                <div id="previewPdf" style="display:none">
+                    <i class="bi bi-file-earmark-pdf display-1 text-danger"></i>
+                    <p id="previewPdfName" class="mt-2"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="col-lg-5">
+        <!-- Ollama Status -->
+        <div id="ollamaStatus" class="card mb-3">
+            <div class="card-body py-2">
+                <small><i class="bi bi-robot"></i> LLM Status: <span id="ollamaStatusText">Checking...</span></small>
+            </div>
+        </div>
+
+        <!-- Extracted Data -->
+        <div id="resultsCard" class="card" style="display:none">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-cpu"></i> Extracted Data</h6>
+            </div>
+            <div class="card-body">
+                <div id="extractedData">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Patient Match -->
+        <div id="matchCard" class="card mt-3" style="display:none">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-person-check"></i> Patient Match</h6>
+            </div>
+            <div class="card-body">
+                <div id="matchResult">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing Queue -->
+        <div id="queueCard" class="card mt-3" style="display:none">
+            <div class="card-header d-flex justify-content-between">
+                <h6 class="mb-0"><i class="bi bi-list-check"></i> Processing Queue</h6>
+                <span id="queueCount" class="badge bg-primary">0</span>
+            </div>
+            <div class="card-body p-0">
+                <div id="queueList" class="list-group list-group-flush">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const cameraInput = document.getElementById('cameraInput');
+
+// Check Ollama status
+fetch('/api/ollama/status')
+    .then(r => r.json())
+    .then(data => {
+        const el = document.getElementById('ollamaStatusText');
+        if (data.status === 'connected') {
+            el.innerHTML = `<span class="text-success">Connected</span> - Model: ${data.configured_model}`;
+            if (data.available_models.length > 0) {
+                el.innerHTML += ` <small class="text-muted">(${data.available_models.length} models available)</small>`;
+            }
+        } else {
+            el.innerHTML = `<span class="text-danger">Disconnected</span> - <small>${data.error || 'Start Ollama'}</small>`;
+        }
+    })
+    .catch(() => {
+        document.getElementById('ollamaStatusText').innerHTML = '<span class="text-danger">Cannot reach server</span>';
+    });
+
+// Drag and drop
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+});
+
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+cameraInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+    for (const file of files) {
+        processFile(file);
+    }
+}
+
+function processFile(file) {
+    // Show preview
+    showPreview(file);
+
+    // Show progress
+    const progress = document.getElementById('uploadProgress');
+    const bar = document.getElementById('progressBar');
+    const text = document.getElementById('progressText');
+    progress.style.display = 'block';
+    bar.style.width = '10%';
+    text.textContent = `Uploading ${file.name}...`;
+
+    // Upload and process
+    const formData = new FormData();
+    formData.append('file', file);
+
+    bar.style.width = '30%';
+    text.textContent = 'Uploading and scanning...';
+
+    fetch('/api/scan', {
+        method: 'POST',
+        body: formData,
+    })
+    .then(r => r.json())
+    .then(data => {
+        bar.style.width = '100%';
+        bar.classList.remove('progress-bar-animated');
+
+        if (data.document) {
+            text.textContent = 'Processing complete!';
+            bar.classList.add('bg-success');
+            showResults(data.document, data.match);
+        } else {
+            text.textContent = data.error || 'Error processing document';
+            bar.classList.add('bg-danger');
+        }
+    })
+    .catch(err => {
+        bar.style.width = '100%';
+        bar.classList.add('bg-danger');
+        text.textContent = `Error: ${err.message}`;
+    });
+}
+
+function showPreview(file) {
+    const card = document.getElementById('previewCard');
+    card.style.display = 'block';
+
+    if (file.type.startsWith('image/')) {
+        const img = document.getElementById('previewImage');
+        img.style.display = 'block';
+        document.getElementById('previewPdf').style.display = 'none';
+        const reader = new FileReader();
+        reader.onload = e => { img.src = e.target.result; };
+        reader.readAsDataURL(file);
+    } else {
+        document.getElementById('previewImage').style.display = 'none';
+        document.getElementById('previewPdf').style.display = 'block';
+        document.getElementById('previewPdfName').textContent = file.name;
+    }
+}
+
+function showResults(doc, match) {
+    const card = document.getElementById('resultsCard');
+    card.style.display = 'block';
+
+    let parsed = {};
+    try { parsed = JSON.parse(doc.extracted_data || '{}'); } catch(e) {}
+
+    const fields = [
+        ['Document Type', parsed.document_type || doc.document_type],
+        ['Name', parsed.patient_name || doc.parsed_name],
+        ['Date of Birth', parsed.date_of_birth || doc.parsed_dob],
+        ['Address', parsed.address || doc.parsed_address],
+        ['Phone', parsed.phone],
+        ['Insurance', parsed.insurance_carrier],
+        ['Policy #', parsed.policy_number],
+        ['Summary', parsed.summary || doc.llm_summary],
+    ];
+
+    let html = '<dl class="row mb-0">';
+    for (const [label, value] of fields) {
+        if (value) {
+            html += `<dt class="col-sm-5">${label}</dt><dd class="col-sm-7">${value}</dd>`;
+        }
+    }
+    html += '</dl>';
+
+    if (doc.status === 'error') {
+        html += `<div class="alert alert-danger mt-2 mb-0"><small>${doc.error_message}</small></div>`;
+    }
+
+    document.getElementById('extractedData').innerHTML = html;
+
+    // Show match results
+    if (match && !match.error) {
+        const matchCard = document.getElementById('matchCard');
+        matchCard.style.display = 'block';
+
+        let matchHtml = '';
+        if (match.matched_patient_id && match.confidence >= 0.7) {
+            matchHtml = `
+                <div class="alert alert-success">
+                    <strong><i class="bi bi-check-circle"></i> Patient Matched!</strong><br>
+                    Confidence: ${(match.confidence * 100).toFixed(0)}%<br>
+                    <small>${match.reasoning || ''}</small>
+                </div>
+                <a href="/patients/${match.matched_patient_id}" class="btn btn-success btn-sm">
+                    <i class="bi bi-person"></i> View Patient File
+                </a>
+            `;
+        } else if (match.matched_patient_id) {
+            matchHtml = `
+                <div class="alert alert-warning">
+                    <strong><i class="bi bi-question-circle"></i> Possible Match</strong><br>
+                    Confidence: ${(match.confidence * 100).toFixed(0)}%<br>
+                    <small>${match.reasoning || ''}</small>
+                </div>
+                <a href="/documents/${doc.id}" class="btn btn-warning btn-sm">
+                    <i class="bi bi-pencil"></i> Review & Assign
+                </a>
+            `;
+        } else {
+            matchHtml = `
+                <div class="alert alert-info">
+                    <strong>No match found</strong><br>
+                    <small>${match.reasoning || 'Assign manually from the document detail page.'}</small>
+                </div>
+                <a href="/documents/${doc.id}" class="btn btn-info btn-sm">
+                    <i class="bi bi-pencil"></i> Assign Manually
+                </a>
+            `;
+        }
+        document.getElementById('matchResult').innerHTML = matchHtml;
+    } else if (doc.patient_id) {
+        // Already matched
+        const matchCard = document.getElementById('matchCard');
+        matchCard.style.display = 'block';
+        document.getElementById('matchResult').innerHTML = `
+            <div class="alert alert-success">
+                <strong><i class="bi bi-check-circle"></i> Filed to patient</strong>
+            </div>
+            <a href="/patients/${doc.patient_id}" class="btn btn-success btn-sm">View Patient</a>
+        `;
+    } else {
+        // No match attempted (no patients in system)
+        const matchCard = document.getElementById('matchCard');
+        matchCard.style.display = 'block';
+        document.getElementById('matchResult').innerHTML = `
+            <div class="alert alert-info">
+                No patients in the system yet. <a href="/patients/new">Add a patient</a> first.
+            </div>
+        `;
+    }
+}
+</script>
+{% endblock %}

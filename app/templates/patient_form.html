@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{% if patient %}Edit {{ patient.full_name }}{% else %}New Patient{% endif %}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.patients_page') }}">Patients</a></li>
+        <li class="breadcrumb-item active">{% if patient %}Edit{% else %}New Patient{% endif %}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-{% if patient %}pencil{% else %}person-plus{% endif %}"></i>
+                    {% if patient %}Edit Patient{% else %}Add New Patient{% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form id="patientForm">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">First Name *</label>
+                            <input type="text" class="form-control" id="firstName" required
+                                   value="{{ patient.first_name if patient else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Last Name *</label>
+                            <input type="text" class="form-control" id="lastName" required
+                                   value="{{ patient.last_name if patient else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Date of Birth</label>
+                            <input type="date" class="form-control" id="dob"
+                                   value="{{ patient.date_of_birth.isoformat() if patient and patient.date_of_birth else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Insurance Carrier</label>
+                            <input type="text" class="form-control" id="insurance"
+                                   value="{{ patient.insurance_carrier if patient else '' }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Address <span class="badge bg-success encrypt-badge"><i class="bi bi-lock-fill"></i> encrypted</span></label>
+                            <input type="text" class="form-control" id="address"
+                                   value="{{ patient.decrypted_address if patient else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Phone <span class="badge bg-success encrypt-badge"><i class="bi bi-lock-fill"></i> encrypted</span></label>
+                            <input type="text" class="form-control" id="phone"
+                                   value="{{ patient.decrypted_phone if patient else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">External ID</label>
+                            <input type="text" class="form-control" id="externalId"
+                                   value="{{ patient.patient_id_external if patient else '' }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" rows="3">{{ patient.notes if patient else '' }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg"></i> {% if patient %}Save Changes{% else %}Add Patient{% endif %}
+                        </button>
+                        <a href="{{ url_for('main.patients_page') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('patientForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const data = {
+        first_name: document.getElementById('firstName').value,
+        last_name: document.getElementById('lastName').value,
+        date_of_birth: document.getElementById('dob').value || null,
+        insurance_carrier: document.getElementById('insurance').value,
+        address: document.getElementById('address').value,
+        phone: document.getElementById('phone').value,
+        patient_id_external: document.getElementById('externalId').value,
+        notes: document.getElementById('notes').value,
+    };
+
+    {% if patient %}
+    const url = '/api/patients/{{ patient.id }}';
+    const method = 'PUT';
+    {% else %}
+    const url = '/api/patients';
+    const method = 'POST';
+    {% endif %}
+
+    fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.patient) {
+            window.location = '/patients/' + result.patient.id;
+        } else {
+            alert(result.error || 'Error saving patient');
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+});
+</script>
+{% endblock %}

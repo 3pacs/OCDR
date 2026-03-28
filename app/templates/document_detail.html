@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Document #{{ document.id }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.documents_page') }}">Documents</a></li>
+        <li class="breadcrumb-item active">{{ document.original_filename }}</li>
+    </ol>
+</nav>
+
+<div class="row g-4">
+    <!-- Document Preview -->
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between">
+                <h6 class="mb-0"><i class="bi bi-eye"></i> {{ document.original_filename }}</h6>
+                {% if document.status == 'filed' or document.status == 'matched' %}
+                    <span class="badge bg-success">{{ document.status }}</span>
+                {% elif document.status == 'error' %}
+                    <span class="badge bg-danger">{{ document.status }}</span>
+                {% else %}
+                    <span class="badge bg-warning">{{ document.status }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body text-center">
+                {% if document.file_type == 'image' %}
+                    <img src="{{ url_for('static', filename='uploads/documents/' + document.filename) }}"
+                         class="img-fluid rounded" style="max-height: 500px;">
+                {% else %}
+                    <i class="bi bi-file-earmark-pdf display-1 text-danger"></i>
+                    <p>{{ document.original_filename }}</p>
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <small class="text-muted">
+                    Size: {{ (document.file_size / 1024) | round | int }}KB |
+                    Uploaded: {{ document.created_at.strftime('%m/%d/%Y %H:%M') }}
+                    {% if document.processed_at %} | Processed: {{ document.processed_at.strftime('%m/%d/%Y %H:%M') }}{% endif %}
+                </small>
+            </div>
+        </div>
+
+        <!-- OCR Text -->
+        {% if document.raw_ocr_text %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-body-text"></i> OCR Text</h6>
+            </div>
+            <div class="card-body">
+                <pre class="mb-0" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">{{ document.raw_ocr_text }}</pre>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Extracted Data & Actions -->
+    <div class="col-lg-6">
+        <!-- Actions -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex gap-2 flex-wrap">
+                    {% if document.status == 'uploaded' %}
+                    <button class="btn btn-primary" onclick="parseDocument({{ document.id }})">
+                        <i class="bi bi-cpu"></i> Parse with LLM
+                    </button>
+                    {% endif %}
+                    {% if document.status == 'parsed' %}
+                    <button class="btn btn-success" onclick="matchDocument({{ document.id }})">
+                        <i class="bi bi-person-check"></i> Auto-Match Patient
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-outline-danger" onclick="deleteDocument({{ document.id }})">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Extracted Fields -->
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-cpu"></i> Extracted Data</h6>
+            </div>
+            <div class="card-body">
+                {% if document.extracted_data %}
+                <dl class="row mb-0">
+                    <dt class="col-sm-5">Document Type</dt>
+                    <dd class="col-sm-7">{{ document.parsed_doc_type or '-' }}</dd>
+                    <dt class="col-sm-5">Name</dt>
+                    <dd class="col-sm-7">{{ document.parsed_name or '-' }}</dd>
+                    <dt class="col-sm-5">Date of Birth</dt>
+                    <dd class="col-sm-7">{{ document.parsed_dob or '-' }}</dd>
+                    <dt class="col-sm-5">Address</dt>
+                    <dd class="col-sm-7">{{ document.parsed_address or '-' }}</dd>
+                    <dt class="col-sm-5">Summary</dt>
+                    <dd class="col-sm-7">{{ document.llm_summary or '-' }}</dd>
+                </dl>
+                {% if document.match_confidence %}
+                <hr>
+                <p class="mb-0"><strong>Match Confidence:</strong> {{ (document.match_confidence * 100) | round | int }}%</p>
+                {% endif %}
+                {% else %}
+                <p class="text-muted mb-0">Not parsed yet. Click "Parse with LLM" to extract data.</p>
+                {% endif %}
+
+                {% if document.error_message %}
+                <div class="alert alert-danger mt-2 mb-0">
+                    <small>{{ document.error_message }}</small>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Patient Assignment -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-person"></i> Patient Assignment</h6>
+            </div>
+            <div class="card-body">
+                {% if document.patient %}
+                <div class="d-flex align-items-center gap-3">
+                    {% if document.patient.photo_filename %}
+                    <img src="{{ url_for('static', filename='uploads/photos/' + document.patient.photo_filename) }}"
+                         class="patient-photo" style="width:60px;height:60px;">
+                    {% else %}
+                    <div class="patient-photo-placeholder" style="width:60px;height:60px;font-size:1.5rem;">
+                        <i class="bi bi-person"></i>
+                    </div>
+                    {% endif %}
+                    <div>
+                        <h6 class="mb-0">{{ document.patient.full_name }}</h6>
+                        <small class="text-muted">
+                            {% if document.patient.date_of_birth %}DOB: {{ document.patient.date_of_birth.strftime('%m/%d/%Y') }}{% endif %}
+                        </small>
+                        <br>
+                        <a href="{{ url_for('main.patient_detail', patient_id=document.patient.id) }}" class="btn btn-sm btn-outline-primary mt-1">
+                            View Patient File
+                        </a>
+                    </div>
+                </div>
+                {% else %}
+                <form id="assignForm">
+                    <div class="mb-3">
+                        <label class="form-label">Assign to Patient</label>
+                        <select id="patientSelect" class="form-select">
+                            <option value="">-- Select Patient --</option>
+                            {% for p in patients %}
+                            <option value="{{ p.id }}">{{ p.full_name }}{% if p.date_of_birth %} ({{ p.date_of_birth.strftime('%m/%d/%Y') }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="assignDocument()">
+                        <i class="bi bi-link-45deg"></i> Assign
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function parseDocument(docId) {
+    if (!confirm('Parse this document with the LLM? This may take a moment.')) return;
+    fetch(`/api/documents/${docId}/parse`, { method: 'POST' })
+        .then(r => r.json())
+        .then(() => location.reload())
+        .catch(err => alert('Error: ' + err.message));
+}
+
+function matchDocument(docId) {
+    fetch(`/api/documents/${docId}/match`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.match && data.match.matched_patient_id) {
+                alert(`Matched with ${(data.match.confidence * 100).toFixed(0)}% confidence!\n${data.match.reasoning || ''}`);
+            } else {
+                alert('No confident match found. Please assign manually.');
+            }
+            location.reload();
+        })
+        .catch(err => alert('Error: ' + err.message));
+}
+
+function assignDocument() {
+    const patientId = document.getElementById('patientSelect').value;
+    if (!patientId) { alert('Select a patient'); return; }
+
+    fetch(`/api/documents/{{ document.id }}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: parseInt(patientId) }),
+    })
+    .then(r => r.json())
+    .then(() => location.reload())
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function deleteDocument(docId) {
+    if (!confirm('Delete this document? This cannot be undone.')) return;
+    fetch(`/api/documents/${docId}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(() => window.location = '/documents')
+        .catch(err => alert('Error: ' + err.message));
+}
+</script>
+{% endblock %}
