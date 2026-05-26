@@ -26,7 +26,7 @@ rapidfuzz==3.11.0
 # --- PDF / OCR ---
 pdfplumber==0.11.4
 pytesseract==0.3.13
-Pillow==11.1.0
+Pillow==12.1.0
 
 # --- 835 X12 Parsing (custom, but need segment utilities) ---
 # Custom parser built in backend/app/parsing/
