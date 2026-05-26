@@ -51,11 +51,15 @@ class FeeSchedule(Base):
     cpt_code: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     expected_rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     underpayment_threshold: Mapped[float] = mapped_column(Numeric(3, 2), default=0.80)
+    charge_category: Mapped[str | None] = mapped_column(String(50), nullable=True, default="STANDARD")
+    sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    gado_premium: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True, default=0.0)
+    source: Mapped[str | None] = mapped_column(String(50), nullable=True, default="MANUAL")
 
     __table_args__ = (
         # Unique on (payer, modality, cpt) — allows both modality-level and CPT-level rates
         UniqueConstraint("payer_code", "modality", "cpt_code", name="uq_fee_schedule_payer_modality_cpt"),
-        CheckConstraint("expected_rate > 0", name="ck_fee_rate_positive"),
+        CheckConstraint("expected_rate >= 0", name="ck_fee_rate_nonneg"),
         CheckConstraint(
             "underpayment_threshold >= 0.3 AND underpayment_threshold <= 1.0",
             name="ck_fee_threshold_range",

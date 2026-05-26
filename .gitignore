@@ -18,17 +18,26 @@ frontend/build/
 # Data files (PHI - never commit)
 data/excel/*.xlsx
 data/excel/*.csv
+data/excel/*.xls
+data/excel/*.xlsm
+data/excel/**/*.xlsx
+data/excel/**/*.csv
+data/excel/**/*.xls
+data/excel/**/*.xlsm
 data/eobs/*.835
 data/eobs/*.txt
 data/eobs/*.pdf
+data/eobs/**
 data/schedules/*.pdf
 data/payments/*.pdf
 data/payments/*.jpg
 data/payments/*.png
 data/processed/
 data/duckdb/
+data/exports/
 
 # IDE
+.superpowers/
 .vscode/
 .idea/
 *.swp

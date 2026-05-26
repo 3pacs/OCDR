@@ -217,12 +217,17 @@ async def _analyze_denial_prevention(db: AsyncSession) -> list[dict]:
             "best_practice": "HFMA: every 1% reduction in denial rate saves ~$35/claim in rework costs",
         })
 
+    # CARC codes where billed charges are NOT recoverable (per user feedback)
+    NON_RECOVERABLE_CARC = {"29", "18"}  # Filing deadline passed, Duplicate claim
+
     # Specific preventable denial codes
     for row in denial_rows[:10]:
         code = row.cas_reason_code
         if code in PREVENTABLE_CARC:
             label, fix = PREVENTABLE_CARC[code]
             billed = float(row.total_billed or 0)
+            # CARC 29/18: revenue is lost, not recoverable — impact is $0
+            impact = 0 if code in NON_RECOVERABLE_CARC else billed * 0.6
             results.append({
                 "subcategory": "REVENUE_LEAK",
                 "severity": "HIGH" if row.cnt >= 20 else "MEDIUM",
@@ -230,10 +235,11 @@ async def _analyze_denial_prevention(db: AsyncSession) -> list[dict]:
                 "description": (
                     f"{row.cnt} claims denied with CARC {code} ({label}), "
                     f"representing ${billed:,.0f} in billed charges. "
-                    f"This is a preventable denial with a known fix."
+                    + ("This revenue is NOT recoverable — shown for prevention tracking only." if code in NON_RECOVERABLE_CARC
+                       else "This is a preventable denial with a known fix.")
                 ),
                 "recommendation": fix,
-                "estimated_impact": billed * 0.6,  # ~60% recovery rate on appeals
+                "estimated_impact": impact,
                 "affected_count": row.cnt,
                 "entity_type": "DENIAL_CODE",
                 "entity_id": code,
@@ -285,7 +291,7 @@ async def _analyze_timely_filing(db: AsyncSession) -> list[dict]:
             "title": f"{past_count} claims past filing/appeal deadline — revenue lost",
             "description": (
                 f"{past_count} denied claims have passed their appeal deadline. "
-                f"These represent ~${past_count * avg:,.0f} in potentially unrecoverable revenue. "
+                f"This revenue is NOT recoverable — shown as a loss metric. "
                 f"Once a deadline passes, the payer has no obligation to pay."
             ),
             "recommendation": (
@@ -294,7 +300,7 @@ async def _analyze_timely_filing(db: AsyncSession) -> list[dict]:
                 "3. Set up auto-submission for standard appeal letters\n"
                 "4. For future: submit claims within 48 hours of service"
             ),
-            "estimated_impact": past_count * avg * 0.5,
+            "estimated_impact": 0,  # Past deadline = not recoverable
             "affected_count": past_count,
             "effort": "QUICK_WIN",
             "best_practice": "HFMA: automate deadline tracking; submit claims within 72 hours of DOS",
@@ -584,42 +590,84 @@ async def _analyze_payer_contract_compliance(db: AsyncSession) -> list[dict]:
     """Check if payers are paying according to expected rates."""
     results = []
 
-    # Find carriers with significant underpayment patterns
-    carrier_stats = await db.execute(
+    # Exclude payers where low payment is expected/normal
+    # W/C and C2C only refer MRI/CT (no PET/BONE), so lower avg is expected
+    # ONE CALL is no longer under contract
+    SKIP_CARRIERS = {
+        "COMP", "SELF PAY", "SELFPAY", "RESEARCH", "X", "UNKNOWN",
+        "W/C", "ONE CALL", "C2C",
+    }
+
+    # Modality-aware comparison: compare each payer's avg per-modality
+    # against the peer average for that SAME modality, not overall average.
+    carrier_mod_stats = await db.execute(
         select(
             BillingRecord.insurance_carrier,
+            BillingRecord.modality,
             func.count(BillingRecord.id).label("claim_count"),
             func.avg(BillingRecord.total_payment).label("avg_payment"),
         )
-        .where(BillingRecord.total_payment > 0, not_written_off())
-        .group_by(BillingRecord.insurance_carrier)
-        .having(func.count(BillingRecord.id) >= 20)
-        .order_by(func.count(BillingRecord.id).desc())
+        .where(
+            BillingRecord.total_payment > 0, not_written_off(),
+            ~BillingRecord.insurance_carrier.in_(SKIP_CARRIERS),
+            BillingRecord.modality.isnot(None),
+        )
+        .group_by(BillingRecord.insurance_carrier, BillingRecord.modality)
+        .having(func.count(BillingRecord.id) >= 5)
     )
-    carriers = carrier_stats.all()
+    carrier_modality = carrier_mod_stats.all()
 
-    if len(carriers) >= 2:
-        avg_all = sum(float(c.avg_payment) for c in carriers) / len(carriers)
-        for c in carriers:
-            avg_pay = float(c.avg_payment)
-            if avg_pay < avg_all * 0.6:  # Pays 40%+ below average
-                results.append({
-                    "subcategory": "REVENUE_LEAK",
-                    "severity": "HIGH",
-                    "title": f"{c.insurance_carrier}: avg payment ${avg_pay:.0f} — 40%+ below peer average",
-                    "description": (
-                        f"{c.insurance_carrier} pays an average of ${avg_pay:.2f} per claim "
-                        f"across {c.claim_count} claims, while the overall average is ${avg_all:.2f}. "
-                        f"This is {(1 - avg_pay/avg_all)*100:.0f}% below the peer average."
-                    ),
-                    "recommendation": (
-                        "1. Pull the fee schedule for this payer and compare to CMS rates\n"
-                        "2. Review the contract for rate escalation clauses\n"
-                        "3. Check if underpayment is systematic or limited to certain CPT codes\n"
-                        "4. Consider contract renegotiation or termination if persistently low"
-                    ),
-                    "estimated_impact": c.claim_count * (avg_all - avg_pay) * 0.3,
-                    "affected_count": c.claim_count,
+    # Build per-modality peer averages
+    modality_totals = defaultdict(lambda: {"total_pay": 0.0, "count": 0})
+    carrier_data = defaultdict(lambda: {"claims": 0, "weighted_gap": 0.0, "details": []})
+
+    for row in carrier_modality:
+        mod = row.modality
+        avg_pay = float(row.avg_payment)
+        modality_totals[mod]["total_pay"] += avg_pay * row.claim_count
+        modality_totals[mod]["count"] += row.claim_count
+
+    modality_avg = {
+        mod: vals["total_pay"] / vals["count"]
+        for mod, vals in modality_totals.items() if vals["count"] > 0
+    }
+
+    for row in carrier_modality:
+        mod = row.modality
+        avg_pay = float(row.avg_payment)
+        peer_avg = modality_avg.get(mod, avg_pay)
+        if peer_avg > 0:
+            gap = (peer_avg - avg_pay) * row.claim_count
+            carrier_data[row.insurance_carrier]["claims"] += row.claim_count
+            carrier_data[row.insurance_carrier]["weighted_gap"] += gap
+            carrier_data[row.insurance_carrier]["details"].append({
+                "modality": mod, "avg": avg_pay, "peer": peer_avg, "n": row.claim_count
+            })
+
+    # Flag carriers whose weighted avg is 40%+ below modality-adjusted peer avg
+    for carrier, info in carrier_data.items():
+        if info["claims"] < 20:
+            continue
+        weighted_peer = sum(d["peer"] * d["n"] for d in info["details"]) / info["claims"]
+        weighted_avg = sum(d["avg"] * d["n"] for d in info["details"]) / info["claims"]
+        if weighted_avg < weighted_peer * 0.6:
+            results.append({
+                "subcategory": "REVENUE_LEAK",
+                "severity": "HIGH",
+                "title": f"{carrier}: avg payment ${weighted_avg:.0f} — 40%+ below modality-adjusted peer average",
+                "description": (
+                    f"{carrier} pays an average of ${weighted_avg:.2f} per claim "
+                    f"across {info['claims']} claims, while the modality-adjusted peer average is ${weighted_peer:.2f}. "
+                    f"This is {(1 - weighted_avg/weighted_peer)*100:.0f}% below peers for the same modalities."
+                ),
+                "recommendation": (
+                    "1. Pull the fee schedule for this payer and compare to CMS rates\n"
+                    "2. Review the contract for rate escalation clauses\n"
+                    "3. Check if underpayment is systematic or limited to certain CPT codes\n"
+                    "4. Consider contract renegotiation or termination if persistently low"
+                ),
+                "estimated_impact": info["weighted_gap"] * 0.3,
+                "affected_count": info["claims"],
                     "entity_type": "PAYER",
                     "entity_id": c.insurance_carrier,
                     "effort": "MAJOR_PROJECT",

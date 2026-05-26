@@ -28,6 +28,10 @@ TERMINAL_STATUSES = ("WRITTEN_OFF", "RESOLVED", "PAID_ON_APPEAL")
 # Carrier values that indicate write-off (OCMRI convention)
 WRITEOFF_CARRIERS = ("X",)
 
+# Carriers with $0 expected payment — complimentary/free scans
+# These should be excluded from underpayment detection (not underpaid, just free)
+COMP_CARRIERS = ("COMP",)
+
 
 def is_written_off():
     """SQLAlchemy filter: claim IS written off / terminal."""

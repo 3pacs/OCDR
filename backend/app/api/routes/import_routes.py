@@ -8,6 +8,12 @@ from backend.app.db.session import get_db
 from backend.app.ingestion.excel_ingestor import import_excel
 from backend.app.ingestion.flexible_excel_ingestor import import_excel_flexible, inspect_excel_file
 from backend.app.ingestion.eob_scanner import scan_eob_folder
+from backend.app.ingestion.portal_downloads import (
+    portal_checklists,
+    portal_status,
+    promote_staged_downloads,
+    scansnap_status,
+)
 from backend.app.parsing.x12_835_parser import import_835_file, import_835_folder
 from backend.app.revenue.filing_deadlines import update_appeal_deadlines
 from backend.app.core.config import settings
@@ -156,6 +162,42 @@ async def import_history(
             for f in items
         ],
     }
+
+
+@router.get("/portal/status")
+async def portal_download_status():
+    """Return browser-assisted portal download staging status."""
+    return portal_status(
+        settings.OCDR_PORTAL_STAGING_DIR,
+        settings.OCDR_PORTAL_STATE_DIR,
+        settings.EOBS_DIR,
+    )
+
+
+@router.post("/portal/promote")
+async def portal_download_promote(dry_run: bool = False):
+    """Promote staged portal downloads into the EOB import tree."""
+    return promote_staged_downloads(
+        settings.OCDR_PORTAL_STAGING_DIR,
+        settings.OCDR_PORTAL_STATE_DIR,
+        settings.EOBS_DIR,
+        dry_run=dry_run,
+    )
+
+
+@router.get("/portal/checklists")
+async def portal_download_checklists():
+    """Return per-payer portal download checklists."""
+    return {"items": portal_checklists()}
+
+
+@router.get("/scansnap/status")
+async def scansnap_queue_status():
+    """Return best-effort ScanSnap service and queue status."""
+    return scansnap_status(
+        host=settings.OCDR_SCANSNAP_HOST,
+        timeout=settings.OCDR_SCANSNAP_STATUS_TIMEOUT_SECONDS,
+    )
 
 
 @router.post("/scan-eobs")

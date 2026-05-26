@@ -37,6 +37,21 @@ async def lifespan(app: FastAPI):
         ("era_claim_lines", "diagnosis_codes", "TEXT"),
         ("billing_records", "diagnosis_codes", "TEXT"),
         ("fee_schedule", "cpt_code", "VARCHAR(20)"),
+        # CPT-based underpayment detection columns
+        ("billing_records", "cpt_code", "TEXT"),
+        ("billing_records", "charge_category", "VARCHAR(50)"),
+        ("billing_records", "contrast_type", "VARCHAR(50)"),
+        ("billing_records", "billed_amount", "NUMERIC(10,2)"),
+        ("billing_records", "era_paid_amount", "NUMERIC(10,2)"),
+        ("billing_records", "patient_responsibility", "NUMERIC(10,2)"),
+        ("billing_records", "payment_method", "VARCHAR(20)"),
+        ("billing_records", "adjustment_amount", "NUMERIC(10,2)"),
+        ("billing_records", "write_off_amount", "NUMERIC(10,2)"),
+        # Fee schedule enhancements
+        ("fee_schedule", "charge_category", "VARCHAR(50) DEFAULT 'STANDARD'"),
+        ("fee_schedule", "sample_count", "INTEGER DEFAULT 0"),
+        ("fee_schedule", "gado_premium", "NUMERIC(10,2) DEFAULT 0"),
+        ("fee_schedule", "source", "VARCHAR(50) DEFAULT 'MANUAL'"),
     ]
     for table, column, col_type in new_columns:
         try:
@@ -75,6 +90,7 @@ async def lifespan(app: FastAPI):
         ("billing_records", "ck_billing_secondary_nonneg"),
         ("billing_records", "ck_billing_total_nonneg"),
         ("fee_schedule", "uq_fee_schedule_payer_modality"),  # Replaced by uq_fee_schedule_payer_modality_cpt
+        ("fee_schedule", "ck_fee_rate_positive"),  # Replaced by ck_fee_rate_nonneg (allow $0 for COMP)
     ]
     for table, old_ck in old_constraints:
         try:
@@ -92,7 +108,7 @@ async def lifespan(app: FastAPI):
         "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_modality_len CHECK (length(modality) >= 1)",
         "ALTER TABLE billing_records ADD CONSTRAINT ck_billing_date_min CHECK (service_date >= '2010-01-01')",
         "ALTER TABLE payers ADD CONSTRAINT ck_payer_deadline_positive CHECK (filing_deadline_days > 0)",
-        "ALTER TABLE fee_schedule ADD CONSTRAINT ck_fee_rate_positive CHECK (expected_rate > 0)",
+        "ALTER TABLE fee_schedule ADD CONSTRAINT ck_fee_rate_nonneg CHECK (expected_rate >= 0)",
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_claim_status CHECK (claim_status IS NULL OR claim_status IN ('1','2','4','22','23'))",
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_cas_group CHECK (cas_group_code IS NULL OR cas_group_code IN ('CO','CR','OA','PI','PR'))",
         "ALTER TABLE era_claim_lines ADD CONSTRAINT ck_era_confidence_range CHECK (match_confidence IS NULL OR (match_confidence >= 0 AND match_confidence <= 1))",
@@ -148,6 +164,68 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug(f"Paid-status cleanup skipped: {e}")
 
+    # Backfill: CPT codes from matched ERA claims to billing records
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                "UPDATE billing_records SET cpt_code = ecl.cpt_code "
+                "FROM era_claim_lines ecl "
+                "WHERE billing_records.era_claim_id = ecl.claim_id "
+                "AND ecl.cpt_code IS NOT NULL "
+                "AND (billing_records.cpt_code IS NULL OR billing_records.cpt_code = '')"
+            ))
+            if result.rowcount:
+                logger.info(f"Backfill: set cpt_code on {result.rowcount} billing records from ERA")
+    except Exception as e:
+        logger.debug(f"CPT backfill skipped: {e}")
+
+    # Backfill: era_paid_amount from matched ERA claims
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                "UPDATE billing_records SET era_paid_amount = ecl.paid_amount "
+                "FROM era_claim_lines ecl "
+                "WHERE billing_records.era_claim_id = ecl.claim_id "
+                "AND ecl.paid_amount IS NOT NULL "
+                "AND billing_records.era_paid_amount IS NULL"
+            ))
+            if result.rowcount:
+                logger.info(f"Backfill: set era_paid_amount on {result.rowcount} billing records from ERA")
+    except Exception as e:
+        logger.debug(f"ERA paid amount backfill skipped: {e}")
+
+    # Backfill: billed_amount from matched ERA claims
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text(
+                "UPDATE billing_records SET billed_amount = ecl.billed_amount "
+                "FROM era_claim_lines ecl "
+                "WHERE billing_records.era_claim_id = ecl.claim_id "
+                "AND ecl.billed_amount IS NOT NULL "
+                "AND billing_records.billed_amount IS NULL"
+            ))
+            if result.rowcount:
+                logger.info(f"Backfill: set billed_amount on {result.rowcount} billing records from ERA")
+    except Exception as e:
+        logger.debug(f"Billed amount backfill skipped: {e}")
+
+    # Backfill: normalize ERA payer names stored as insurance_carrier
+    # (from Pass 10 auto-created stubs before normalization was added)
+    try:
+        from backend.app.revenue.carrier_normalization import ERA_PAYER_TO_CARRIER
+        async with engine.begin() as conn:
+            total_fixed = 0
+            for era_name, carrier_code in ERA_PAYER_TO_CARRIER.items():
+                result = await conn.execute(text(
+                    "UPDATE billing_records SET insurance_carrier = :carrier "
+                    "WHERE insurance_carrier = :era_name"
+                ), {"carrier": carrier_code, "era_name": era_name})
+                total_fixed += result.rowcount
+            if total_fixed:
+                logger.info(f"Backfill: normalized {total_fixed} billing records with raw ERA payer names")
+    except Exception as e:
+        logger.debug(f"Carrier normalization backfill skipped: {e}")
+
     logger.info("Schema migrations + constraints applied")
 
     # Seed data on startup
@@ -155,6 +233,15 @@ async def lifespan(app: FastAPI):
         from backend.app.db.seed_data import run_all_seeds
         result = await run_all_seeds(session)
         logger.info(f"Seed data: {result}")
+
+    # Build CPT fee schedule from ERA history (after seed data)
+    async with AsyncSessionLocal() as session:
+        try:
+            from backend.app.revenue.underpayment_detector import build_cpt_fee_schedule_from_era
+            cpt_count = await build_cpt_fee_schedule_from_era(session)
+            logger.info(f"CPT fee schedule: {cpt_count} entries built from ERA history")
+        except Exception as e:
+            logger.debug(f"CPT fee schedule build skipped: {e}")
 
     # Start background server sync scheduler
     import asyncio

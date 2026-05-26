@@ -16,7 +16,7 @@ from backend.app.revenue.writeoff_filter import not_written_off
 
 
 # Carriers known to expect secondary insurance
-EXPECTED_SECONDARY_CARRIERS = {"M/M", "CALOPTIMA"}
+EXPECTED_SECONDARY_CARRIERS = {"M/M"}
 
 
 def _serialize_followup(row: BillingRecord, payer_info: dict | None = None) -> dict:

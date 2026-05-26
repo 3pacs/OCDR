@@ -196,7 +196,7 @@ async def _analyze_secondary_gaps(db: AsyncSession) -> list[dict]:
     payer_q = select(Payer).where(Payer.expected_has_secondary == True)
     payer_result = await db.execute(payer_q)
     secondary_carriers = {p.code for p in payer_result.scalars()}
-    secondary_carriers.update({"M/M", "CALOPTIMA"})
+    secondary_carriers.update({"M/M"})
 
     q = (
         select(
@@ -422,7 +422,7 @@ async def _analyze_filing_risks(db: AsyncSession) -> list[dict]:
                 f"For older claims, evaluate write-off vs. appeal cost. "
                 f"CRITICAL: Implement automated deadline alerting to prevent future losses."
             ),
-            "estimated_impact": past_count * 500,  # Conservative estimate
+            "estimated_impact": 0,  # Past deadline = not recoverable per user feedback
             "affected_count": past_count,
             "entity_type": None,
             "entity_id": None,

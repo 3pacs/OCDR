@@ -9,7 +9,7 @@ from backend.app.models.business_task import BusinessTask
 
 PAYERS = [
     {"code": "M/M", "display_name": "Medicare/Medicaid", "filing_deadline_days": 365, "expected_has_secondary": True, "alert_threshold_pct": 0.25},
-    {"code": "CALOPTIMA", "display_name": "CalOptima Managed Medicaid", "filing_deadline_days": 180, "expected_has_secondary": True, "alert_threshold_pct": 0.25},
+    {"code": "CALOPTIMA", "display_name": "CalOptima Managed Medicaid", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
     {"code": "FAMILY", "display_name": "Family Health Plan", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
     {"code": "INS", "display_name": "Commercial Insurance (General)", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
     {"code": "VU PHAN", "display_name": "Vu Phan Physician Group", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
@@ -24,6 +24,9 @@ PAYERS = [
     {"code": "X", "display_name": "Unknown / Unclassified", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
     {"code": "GH", "display_name": "Group Health", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
     {"code": "JHANGIANI", "display_name": "Jhangiani Physician Group", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+    {"code": "C2C", "display_name": "Coast to Coast Medical", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.25},
+    {"code": "RESEARCH", "display_name": "Research / Clinical Trial", "filing_deadline_days": 9999, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
+    {"code": "UNKNOWN", "display_name": "Unknown / Unmapped Payer", "filing_deadline_days": 180, "expected_has_secondary": False, "alert_threshold_pct": 0.50},
 ]
 
 FEE_SCHEDULES = [
@@ -40,6 +43,15 @@ FEE_SCHEDULES = [
     {"payer_code": "DEFAULT", "modality": "FLUORO", "expected_rate": 125.00, "underpayment_threshold": 0.80},
     {"payer_code": "JHANGIANI", "modality": "HMRI", "expected_rate": 950.00, "underpayment_threshold": 0.80},
     {"payer_code": "DEFAULT", "modality": "PET_PSMA", "expected_rate": 8046.00, "underpayment_threshold": 0.80},
+
+    # === COMP (Complimentary) — $0 expected, never flagged as underpaid ===
+    {"payer_code": "COMP", "modality": "CT", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "HMRI", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "PET", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "BONE", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "OPEN", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "DX", "expected_rate": 0.00, "underpayment_threshold": 1.00},
+    {"payer_code": "COMP", "modality": "US", "expected_rate": 0.00, "underpayment_threshold": 1.00},
 
     # === MEDICARE CPT-SPECIFIC RATES (2025 MPFS, freestanding imaging center) ===
     # These are approximate Medicare Physician Fee Schedule rates for outpatient

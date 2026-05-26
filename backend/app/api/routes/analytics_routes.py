@@ -949,7 +949,7 @@ async def patient_detail(patient_name: str, db: AsyncSession = Depends(get_db)):
 
         # Check missing secondary
         missing_secondary = False
-        if primary > 0 and secondary == 0 and r.insurance_carrier in ("M/M", "CALOPTIMA"):
+        if primary > 0 and secondary == 0 and r.insurance_carrier in ("M/M",):
             missing_secondary = True
 
         visits.append({

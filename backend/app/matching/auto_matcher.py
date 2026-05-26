@@ -811,6 +811,17 @@ async def run_auto_match(session: AsyncSession) -> dict:
             if float(matched_br.total_payment or 0) == 0 and claim.paid_amount:
                 matched_br.total_payment = claim.paid_amount
 
+            # Flow-back ERA data to billing record for CPT-based underpayment detection
+            if claim.cpt_code and not getattr(matched_br, "cpt_code", None):
+                matched_br.cpt_code = claim.cpt_code
+            if claim.paid_amount is not None and getattr(matched_br, "era_paid_amount", None) is None:
+                matched_br.era_paid_amount = claim.paid_amount
+            if claim.billed_amount is not None and getattr(matched_br, "billed_amount", None) is None:
+                matched_br.billed_amount = claim.billed_amount
+            if era_payment and era_payment.payment_method and not getattr(matched_br, "payment_method", None):
+                from backend.app.revenue.underpayment_detector import normalize_payment_method
+                matched_br.payment_method = normalize_payment_method(era_payment.payment_method)
+
             pending_commits += 1
         else:
             stats["unmatched"] += 1
@@ -979,7 +990,8 @@ async def run_auto_match(session: AsyncSession) -> dict:
 
             carrier = "UNKNOWN"
             if era_payment and era_payment.payer_name:
-                carrier = era_payment.payer_name
+                from backend.app.revenue.carrier_normalization import normalize_era_payer
+                carrier = normalize_era_payer(era_payment.payer_name)
 
             stub_br = BillingRecord(
                 patient_name=claim.patient_name_835,

@@ -253,6 +253,16 @@ async def bulk_mark_secondary(
     return await bulk_mark_followup(db, body.ids, body.status)
 
 
+# --- CPT Fee Schedule Builder ---
+
+@router.post("/underpayments/rebuild-cpt-fees")
+async def rebuild_cpt_fees(db: AsyncSession = Depends(get_db)):
+    """Rebuild CPT-based fee schedule from ERA payment history."""
+    from backend.app.revenue.underpayment_detector import build_cpt_fee_schedule_from_era
+    count = await build_cpt_fee_schedule_from_era(db)
+    return {"status": "ok", "entries_created_or_updated": count}
+
+
 # --- Reconciliation Dashboard ---
 
 @router.get("/reconciliation/dashboard")

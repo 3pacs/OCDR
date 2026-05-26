@@ -167,7 +167,7 @@ async def _get_key_metrics(db: AsyncSession) -> dict:
     sec_q = select(func.count()).where(
         BillingRecord.primary_payment > 0,
         BillingRecord.secondary_payment == 0,
-        BillingRecord.insurance_carrier.in_(["M/M", "CALOPTIMA"]),
+        BillingRecord.insurance_carrier.in_(["M/M"]),
     )
     sec_missing = (await db.execute(sec_q)).scalar() or 0
 

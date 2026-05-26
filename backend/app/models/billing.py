@@ -84,6 +84,17 @@ class BillingRecord(Base):
     # Comma-separated ICD-10 codes (e.g., "C61,Z85.46,M54.5")
     diagnosis_codes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- DYNAMIC: CPT / charge detail (from ERA match or import) ---
+    cpt_code: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    charge_category: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    contrast_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    billed_amount: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    era_paid_amount: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    patient_responsibility: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    adjustment_amount: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    write_off_amount: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+
     # --- META: Import tracking ---
     import_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
     import_file_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
