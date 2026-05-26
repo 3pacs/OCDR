@@ -31,6 +31,9 @@ Pillow==11.1.0
 # --- 835 X12 Parsing (custom, but need segment utilities) ---
 # Custom parser built in backend/app/parsing/
 
+# --- Browser Automation ---
+browser-use==0.12.2
+
 # --- Task Scheduling ---
 apscheduler==3.10.4
 

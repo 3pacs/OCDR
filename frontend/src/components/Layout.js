@@ -32,6 +32,7 @@ function Layout() {
                 <NavDropdown.Item as={NavLink} to="/gado">Gado Contrast</NavDropdown.Item>
               </NavDropdown>
               <Nav.Link as={NavLink} to="/era-payments">ERA Payments</Nav.Link>
+              <Nav.Link as={NavLink} to="/browser-validation" className="text-info fw-bold">Validate</Nav.Link>
               <Nav.Link as={NavLink} to="/insights">Insights</Nav.Link>
             </Nav>
           </Navbar.Collapse>
