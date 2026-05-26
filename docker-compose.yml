@@ -38,6 +38,25 @@ services:
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - OCDR_PORTAL_URLS=${OCDR_PORTAL_URLS:-https://www.officeally.com/Logout.aspx?Timeout=1;https://x02.officeally.com/auth0bridge/Logon?ReturnUrl=/secure_oa.asp;https://myservices.optumhealthpaymentservices.com/registrationSignIn.do;https://identity.onehealthcareid.com/oneapp/index.html#/login}
+      - OCDR_PORTAL_DOWNLOAD_DIR=${OCDR_PORTAL_DOWNLOAD_DIR:-/app/data/portal-downloads}
+      - OCDR_PORTAL_STAGING_DIR=${OCDR_PORTAL_STAGING_DIR:-/app/data/portal-staging}
+      - OCDR_PORTAL_STATE_DIR=${OCDR_PORTAL_STATE_DIR:-/app/data/portal-state}
+      - OCDR_PORTAL_DOWNLOAD_EXTENSIONS=${OCDR_PORTAL_DOWNLOAD_EXTENSIONS:-.835,.edi,.txt,.dat,.era,.pdf,.csv,.xlsx,.xls,.zip}
+      - OCDR_PORTAL_MIN_AGE_SECONDS=${OCDR_PORTAL_MIN_AGE_SECONDS:-15}
+      - OCDR_PORTAL_MAX_AGE_HOURS=${OCDR_PORTAL_MAX_AGE_HOURS:-72}
+      - OCDR_OFFICEALLY_RESET_DELAY_SECONDS=${OCDR_OFFICEALLY_RESET_DELAY_SECONDS:-2}
+      - OCDR_SCANSNAP_HOST=${OCDR_SCANSNAP_HOST:-ocr-node}
+      - OCDR_SCANSNAP_STATUS_TIMEOUT_SECONDS=${OCDR_SCANSNAP_STATUS_TIMEOUT_SECONDS:-8}
+      - PAYER_PORTAL_URL=${PAYER_PORTAL_URL:-https://pm.officeally.com/pm/login.aspx}
+      - OFFICE_ALLY_USER=${OFFICE_ALLY_USER:-}
+      - OFFICE_ALLY_PASSWORD=${OFFICE_ALLY_PASSWORD:-}
+      - PACS_PORTAL_URL=${PACS_PORTAL_URL:-}
+      - PURVIEW_USER=${PURVIEW_USER:-}
+      - PURVIEW_PASSWORD=${PURVIEW_PASSWORD:-}
+      - BANK_PORTAL_URL=${BANK_PORTAL_URL:-}
+      - BANK_PORTAL_USER=${BANK_PORTAL_USER:-}
+      - BANK_PORTAL_PASSWORD=${BANK_PORTAL_PASSWORD:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
