@@ -62,6 +62,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./data:/app/data
+      - ${OCDR_BACKEND_SSH_DIR:-/tmp/ocdr-empty-ssh}:/root/.ssh:ro
     depends_on:
       postgres:
         condition: service_healthy
