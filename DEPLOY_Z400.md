@@ -1,6 +1,11 @@
 # z400 — Permanent OCMRI App Host: Deployment Runbook
 
 Goal: z400 = always-on Linux host for the OCMRI/MRI apps (OCDR billing first; others slot in).
+
+Current role boundary: keep z400 focused on the OCDR Docker stack. Do not run GRID
+permutation/gem-hunter workers or llama/vision services here. Alien is the preferred
+always-on node for Excel/document ingestion and interactive document access once
+SSH/key access is configured.
 Light box, **no GPU needed** (GPU work stays on the cluster). RAM note: BIOS v1.06 clamps to
 **3.8 GB** — Postgres+FastAPI fits but is tight; flash BIOS **v3.61** to unlock 16 GB when convenient.
 
@@ -54,6 +59,11 @@ NOTE: `billing_records` is a snapshot of the Excel "Current" sheet — only as f
 
 ## 6. Other MRI apps → permanent home here
 Same pattern — clone the Linux-friendly ones into `~/apps`: `OCMRI TOPAZ CLIENT` (python), `imaging-scheduler`, `scansnap-headless`, `OCMRI_forensics`. `EOB-Finder` has a Windows `.exe` — keep on a Windows box or port. (Check which exist as 3pacs repos: `gh repo list 3pacs`.)
+
+## 7. Node role boundaries
+- z400: OCDR Docker stack only (`postgres`, `backend`, `frontend`) plus lightweight support services.
+- Do not run GRID permutation/gem-hunter workers or llama/vision services on z400.
+- Alien: Excel/document ingestion and document-access workflows. Do not split OCDR Postgres/backend/frontend across Alien unless the entire stack is intentionally moved.
 
 ## NOTES / gotchas
 - **F-10 `backend/app/revenue/physician_statements.py` is currently UNCOMMITTED on ANIK** — commit+push to the branch (or copy the file to z400) so the clone includes it. PDF render needs `reportlab` (not yet in `requirements.txt` — add it, or render host-side per `data/exports/render_stmt.py`).
